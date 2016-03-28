@@ -652,6 +652,135 @@ class BwTree {
     return;
   }
 
+  /*
+   * GetNode() - Return the pointer mapped by a node ID
+   *
+   * This function checks the validity of the node ID
+   */
+  BaseNode *GetNode(NodeID node_id) {
+    assert(node_id != INVALID_NODE_ID);
+    assert(node_id < MAPPING_TABLE_SIZE);
+
+    return mapping_table[node_id].load();
+  }
+
+  /*
+   * LocateSeparatorForInnerNode() - Locate the child node for a key
+   *
+   * This functions works with any non-empty inner nodes. However
+   * it fails assertion with empty inner node
+   */
+  NodeID LocateSeparatorForInnerNode(InnerNode *inner_node_p,
+                                     KeyType search_key) {
+    std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
+
+    // We do not know what to do for an empty inner node
+    assert(sep_list_p->size() != 0UL);
+
+    auto iter1 = sep_list_p->begin();
+    auto iter2 = iter1 + 1;
+
+    // NOTE: If there is only one element then we would
+    // not be able to go into while() loop
+    // and in that case we just check for upper bound
+    //assert(iter2 != sep_list_p->end());
+
+    // TODO: Replace this with binary search
+    while(iter2 != sep_list_p->end()) {
+      if(KeyCmpGreaterEqual(search_key, iter1->key) && \
+         KeyCmpLess(search_key, iter2->key)) {
+        return iter1->node;
+      }
+
+      iter1++;
+      iter2++;
+    }
+
+    // This could only happen if we hit +Inf as separator
+    assert(iter1->node != INVALID_NODE_ID);
+    // If search key >= upper bound then we have hit the wrong
+    // inner node
+    assert(KeyCmpLess(search_key, inner_node_p->ubound));
+
+    return iter1->node;
+  }
+
+  /*
+   * SwitchToNewID() - Short hand helper function to update
+   * current node and current head node
+   *
+   * NOTE: This does not prev ID and prev pointer
+   */
+  inline void SwitchToNewID(NodeID new_id,
+                            BaseNode **current_node_pp,
+                            NodeType *current_node_type_p,
+                            BaseNode **current_head_node_pp,
+                            NodeType *current_head_node_type_p) {
+    *current_node_pp = GetNode(new_id);
+    *current_node_type_p = (*current_node_pp)->GetType();
+
+    *current_head_node_pp = *current_node_pp;
+    *current_head_node_type_p = *current_node_type_p;
+
+    return;
+  }
+
+  std::pair<NodeID, BaseNode *>
+  TraverseDown(KeyType &search_key) {
+    NodeID current_node_id = root_id.load();
+
+    // Whether or not this has changed depends on the order of
+    // this line and the CAS on the root (if there is one)
+    BaseNode *current_node_p;
+    // We need to update this while traversing down the delta chain
+    NodeType current_node_type;
+
+    // This always points to the head of delta chain
+    BaseNode *current_head_node_p;
+    NodeType current_head_node_type;
+
+    SwitchToNewID(current_node_id,
+                  &current_node_p,
+                  &current_node_type,
+                  &current_head_node_p,
+                  &current_head_node_type);
+
+    BaseNode *prev_head_node_p = nullptr;
+    NodeID prev_node_id = INVALID_NODE_ID;
+
+    while(1) {
+      if(current_node_type == NodeType::InnerType) {
+        bwt_printf("InnerType node\n");
+
+        InnerNode *inner_node_p = \
+          static_cast<InnerNode *>(current_node_p);
+        NodeID subtree_id = \
+          LocateSeparatorForInnerNode(inner_node_p, search_key);
+
+        // Need to save these manually
+        prev_head_node_p = current_head_node_p;
+        prev_node_id = current_node_id;
+
+        current_node_id = subtree_id;
+        SwitchToNewID(current_node_id,
+                      &current_node_p,
+                      &current_node_type,
+                      &current_head_node_p,
+                      &current_head_node_type);
+        continue;
+      } // If current node type == InnerType
+      else {
+        bwt_printf("ERROR: Unknown node type = %d\n", current_node_type);
+        bwt_printf("       node id = %lu\n", current_node_id);
+
+        assert(false);
+      }
+    }
+
+
+    return std::pair<NodeID, BaseNode *>(INVALID_NODE_ID, nullptr);
+  }
+
  /*
   * Private Method Implementation
   */

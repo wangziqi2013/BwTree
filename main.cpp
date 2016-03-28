@@ -47,7 +47,8 @@ int main() {
   bwt_printf("KeyComp: %d\n", t1->KeyCmpLess(k2, k3));
   bwt_printf("sizeof(class BwTree) = %lu\n", sizeof(BwTree<long double, long double>));
 
-  GetNextNodeIDTest(t1);
+  //GetNextNodeIDTest(t1);
+  t1->TraverseDown(k1);
 
   return 0;
 }
