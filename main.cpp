@@ -48,7 +48,8 @@ int main() {
   bwt_printf("sizeof(class BwTree) = %lu\n", sizeof(BwTree<long double, long double>));
 
   //GetNextNodeIDTest(t1);
-  t1->TraverseDown(k1);
+  BwTree<int, double>::PathHistory ph{};
+  t1->TraverseDownInnerNode(k1, &ph);
 
   return 0;
 }

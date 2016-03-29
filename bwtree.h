@@ -105,8 +105,19 @@ template <typename RawKeyType,
           typename KeyEqualityChecker = std::equal_to<RawKeyType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>>
 class BwTree {
+ /*
+  * Private & Public declaration (no definition)
+  */
+#ifndef ALL_PUBLIC
+ private:
+#else
+ public:
+#endif
   class InteractiveDebugger;
   friend InteractiveDebugger;
+
+ public:
+  class BaseNode;
 
  /*
   * private: Basic type definition
@@ -118,6 +129,9 @@ class BwTree {
 #endif
 
   using NodeID = uint64_t;
+  // We use this type to represent the path we traverse down the tree
+  using TreeSnapshot = std::pair<NodeID, BaseNode *>;
+  using PathHistory = std::vector<TreeSnapshot>;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -665,6 +679,23 @@ class BwTree {
   }
 
   /*
+   * IsLeafDeltaChainType() - Returns whether type is on of the
+   *                          possible types on a leaf delta chain
+   *
+   * NOTE: Since we distinguish between leaf and inner node on all
+   * SMOs it is easy to just judge underlying data node type using
+   * the top of delta chain
+   */
+  bool IsLeafDeltaChainType(NodeType type) {
+    return (type == NodeType::LeafDeleteType ||
+            type == NodeType::LeafInsertType ||
+            type == NodeType::LeafMergeType ||
+            type == NodeType::LeafRemoveType ||
+            type == NodeType::LeafSplitType ||
+            type == NodeType::LeafType);
+  }
+
+  /*
    * LocateSeparatorForInnerNode() - Locate the child node for a key
    *
    * This functions works with any non-empty inner nodes. However
@@ -709,24 +740,47 @@ class BwTree {
    * SwitchToNewID() - Short hand helper function to update
    * current node and current head node
    *
-   * NOTE: This does not prev ID and prev pointer
+   * NOTE: This also saves the new ID and new node pointer into
+   * a stack which could be used to retrieve path history
    */
   inline void SwitchToNewID(NodeID new_id,
                             BaseNode **current_node_pp,
                             NodeType *current_node_type_p,
                             BaseNode **current_head_node_pp,
-                            NodeType *current_head_node_type_p) {
+                            NodeType *current_head_node_type_p,
+                            PathHistory *path_list_p) {
     *current_node_pp = GetNode(new_id);
     *current_node_type_p = (*current_node_pp)->GetType();
 
     *current_head_node_pp = *current_node_pp;
     *current_head_node_type_p = *current_node_type_p;
 
+    // Save history for the new ID and new node pointer
+    path_list_p->push_back(std::make_pair(new_id, *current_node_pp));
+
     return;
   }
 
-  std::pair<NodeID, BaseNode *>
-  TraverseDown(KeyType &search_key) {
+  /*
+   * TraverseDownInnerNode() - Find the leaf page given a key
+   *
+   * Append pairs of NodeID and BaseNode * type to path list since
+   * these two fixed a view for the leaf page at the time we return it
+   * And after we have finishing the job, we need to validate whether we
+   * are still working on the latest snapshot, by CAS NodeID with the pointer
+   */
+  void TraverseDownInnerNode(KeyType &search_key,
+                             PathHistory *path_list_p,
+                             NodeID start_id = INVALID_NODE_ID) {
+
+    // There is a slight difference: If start ID is a valid one
+    // then we just use it; otherwise we need to fetch the root ID
+    // from an atomic variable
+    if(start_id == INVALID_NODE_ID)
+    {
+      start_id = root_id.load();
+    }
+
     NodeID current_node_id = root_id.load();
 
     // Whether or not this has changed depends on the order of
@@ -743,10 +797,8 @@ class BwTree {
                   &current_node_p,
                   &current_node_type,
                   &current_head_node_p,
-                  &current_head_node_type);
-
-    BaseNode *prev_head_node_p = nullptr;
-    NodeID prev_node_id = INVALID_NODE_ID;
+                  &current_head_node_type,
+                  path_list_p);
 
     while(1) {
       if(current_node_type == NodeType::InnerType) {
@@ -757,18 +809,22 @@ class BwTree {
         NodeID subtree_id = \
           LocateSeparatorForInnerNode(inner_node_p, search_key);
 
-        // Need to save these manually
-        prev_head_node_p = current_head_node_p;
-        prev_node_id = current_node_id;
-
         current_node_id = subtree_id;
         SwitchToNewID(current_node_id,
                       &current_node_p,
                       &current_node_type,
                       &current_head_node_p,
-                      &current_head_node_type);
+                      &current_head_node_type,
+                      path_list_p);
         continue;
       } // If current node type == InnerType
+      else if(IsLeafDeltaChainType(current_head_node_type)) {
+        bwt_printf("Leaf delta chain type (%d)\n", current_head_node_type);
+
+        // Current node and head pointer has been already pushed into
+        // the stack
+        return;
+      } // If IsLeafDeltaChainType(current_head_node_type)
       else {
         bwt_printf("ERROR: Unknown node type = %d\n", current_node_type);
         bwt_printf("       node id = %lu\n", current_node_id);
@@ -778,7 +834,7 @@ class BwTree {
     }
 
 
-    return std::pair<NodeID, BaseNode *>(INVALID_NODE_ID, nullptr);
+    return;
   }
 
  /*
