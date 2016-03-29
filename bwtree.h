@@ -837,6 +837,52 @@ class BwTree {
     return;
   }
 
+  /*
+   * IsKeyPresent() - Check whether the key is present in the tree
+   *
+   * This routine does not modify any of the tree structure, and
+   * therefore it does not need to keep any snapshot of the tree
+   * even if it might jump from one ID to another
+   */
+  bool IsKeyPresent(KeyType &search_key,
+                    BaseNode *leaf_head_node_p) const {
+    NodeType leaf_head_node_type = leaf_head_node_p->GetType();
+
+    while(1) {
+      switch(leaf_head_node_type) {
+        case NodeType::LeafType: {
+
+          break;
+        }
+        default: {
+          bwt_printf("ERROR: Unknown leaf (delta) node type: %d\n",
+                     leaf_head_node_type);
+          assert(false);
+        }
+      }
+    }
+
+    return false;
+  }
+
+  bool Insert(RawKeyType &raw_key, ValueType &value) {
+    PathHistory ph{};
+    KeyType search_key = GetWrappedKey(raw_key);
+
+    TraverseDownInnerNode(search_key, &ph);
+    assert(ph.size() > 1UL);
+
+    // Since it returns on seeing a leaf delta chain head
+    // We use reference here to avoid copy
+    const TreeSnapshot &ts = ph.back();
+    NodeID leaf_head_id = ts.first;
+    BaseNode *leaf_head_p = ts.second;
+
+    if(key_dup == false) {
+
+    }
+  }
+
  /*
   * Private Method Implementation
   */
