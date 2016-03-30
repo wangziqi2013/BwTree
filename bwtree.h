@@ -937,18 +937,24 @@ class BwTree {
    *
    * This function is read-only, so it does not need to validate any structure
    * change.
-   *
-   * If search key is specified by passing a non-empty pointer then we only
-   * collect the delta for that key. Otherwise all delta pages that are
-   * insert or delete are returned.
    */
-  BaseNode *CollectDeltaPointer(KeyType *search_key_p,
+  BaseNode *CollectDeltaPointer(KeyType &search_key,
                                 BaseNode *leaf_node_p,
                                 std::vector<BaseNode *> *pointer_list_p) const {
     while(1) {
       NodeType type = leaf_node_p->GetType();
       switch(type) {
         case NodeType::LeafType: {
+          // Make sure we are on the correct page
+          // NOTE: Even under a b-link design, we could still accurately locate
+          // a leaf node since split delta is actually the side pointer
+          LeafNode *leaf_p = static_cast<LeafNode *>(leaf_node_p);
+
+          // Even if we have seen merge and split this always hold
+          // since merge and split would direct to the correct page by sep key
+          assert(KeyCmpGreaterEqual(search_key, leaf_p->lbound) && \
+                 KeyCmpLess(search_key, leaf_p->ubound));
+
           return leaf_node_p;
         }
         case NodeType::LeafInsertType: {
@@ -957,9 +963,9 @@ class BwTree {
 
           // If key is not specified, then blindly push the delta
           // If key is specified and there is a match then push the delta
-          if(search_key_p == nullptr || \
-             KeyCmpEqual(*search_key_p, insert_node_p->insert_key)) {
+          if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
             bwt_printf("Push insert delta\n");
+
             pointer_list_p->push_back(leaf_node_p);
           }
 
@@ -971,8 +977,7 @@ class BwTree {
           LeafDeleteNode *delete_node_p = \
             static_cast<LeafDeleteNode *>(leaf_node_p);
 
-          if(search_key_p == nullptr || \
-             KeyCmpEqual(*search_key_p, delete_node_p->delete_key)) {
+          if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
             bwt_printf("Push delete delta\n");
 
             pointer_list_p->push_back(leaf_node_p);
@@ -1003,7 +1008,7 @@ class BwTree {
 
           // Decide which side we should choose
           // Using >= for separator key
-          if(KeyCmpGreaterEqual(*search_key_p, merge_node_p->merge_key)) {
+          if(KeyCmpGreaterEqual(search_key, merge_node_p->merge_key)) {
             leaf_node_p = merge_node_p->right_merge_p;
           } else {
             leaf_node_p = merge_node_p->child_node_p;
@@ -1017,7 +1022,7 @@ class BwTree {
           LeafSplitNode *split_node_p = \
             static_cast<LeafSplitNode *>(leaf_node_p);
 
-          if(KeyCmpGreaterEqual(*search_key_p, split_node_p->split_key)) {
+          if(KeyCmpGreaterEqual(search_key, split_node_p->split_key)) {
             NodeID split_sibling_id = split_node_p->split_sibling;
             leaf_node_p = GetNode(split_sibling_id);
           } else {
@@ -1041,10 +1046,28 @@ class BwTree {
 
 
   void ReplayLogOnLeafByKey(KeyType &search_key,
-                            BaseNode *leaf_head_node_p) {
+                            BaseNode *leaf_head_node_p,
+                            std::vector<ValueType *> *value_list_p) {
     std::vector<BaseNode *> delta_node_list_p{};
-    BaseNode *leaf_base_p = \
-      CollectDeltaPointer(&search_key, leaf_head_node_p, &delta_node_list_p);
+
+    // We specify a key for the rouine to collect
+    BaseNode *ret = \
+      CollectDeltaPointer(search_key, leaf_head_node_p, &delta_node_list_p);
+    assert(ret->GetType() == NodeType::LeafType);
+
+    LeafNode *leaf_base_p = static_cast<LeafNode *>(ret);
+    // Lambda is implemented with function object? Just wondering...
+    auto it = std::find_if(leaf_base_p->data_list.begin(),
+                           leaf_base_p->data_list.end(),
+                           [&search_key](const DataItem &di) { return KeyCmpEqual(di.key, search_key); });
+
+    std::vector<std::pair<ValueType *, bool>> value_list_temp{};
+    // Bulk load without checking for equality
+    if(it != leaf_base_p->data_list.end()) {
+      for(auto &it2 : it->value_list) {
+        value_list_temp.push_back(std::make_pair(&(*it2), true));
+      }
+    }
 
     return;
   }
