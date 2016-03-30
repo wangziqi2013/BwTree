@@ -196,14 +196,14 @@ class BwTree {
     /*
      * IsNegInf() - Whether the key value is -Inf
      */
-    bool IsNegInf() {
+    bool IsNegInf() const {
       return type == ExtendedKeyValue::NegInf;
     }
 
     /*
      * IsPosInf() - Whether the key value is +Inf
      */
-    bool IsPosInf() {
+    bool IsPosInf() const {
       return type == ExtendedKeyValue::PosInf;
     }
   };
@@ -213,7 +213,7 @@ class BwTree {
    *
    * Directly uses the comparison object
    */
-  inline bool RawKeyCmpLess(RawKeyType &key1, RawKeyType &key2) {
+  inline bool RawKeyCmpLess(const RawKeyType &key1, const RawKeyType &key2) {
     return key_cmp_obj(key1, key2);
   }
 
@@ -223,7 +223,7 @@ class BwTree {
    * We use the fast comparison object rather than traditional < && >
    * approach to avoid performance penalty
    */
-  inline bool RawKeyCmpEqual(RawKeyType &key1, RawKeyType &key2) {
+  inline bool RawKeyCmpEqual(const RawKeyType &key1, const RawKeyType &key2) {
     return key_eq_obj(key1, key2);
   }
 
@@ -232,7 +232,7 @@ class BwTree {
    *
    * It negates result of RawKeyCmpEqual()
    */
-  inline bool RawKeyCmpNotEqual(RawKeyType &key1, RawKeyType &key2) {
+  inline bool RawKeyCmpNotEqual(const RawKeyType &key1, const RawKeyType &key2) {
     return !RawKeyCmpEqual(key1, key2);
   }
 
@@ -241,7 +241,7 @@ class BwTree {
    *
    * It negates result of RawKeyCmpLess()
    */
-  inline bool RawKeyCmpGreaterEqual(RawKeyType &key1, RawKeyType &key2) {
+  inline bool RawKeyCmpGreaterEqual(const RawKeyType &key1, const RawKeyType &key2) {
     return !RawKeyCmpLess(key1, key2);
   }
 
@@ -250,7 +250,7 @@ class BwTree {
    *
    * It inverts input of RawKeyCmpLess()
    */
-  inline bool RawKeyCmpGreater(RawKeyType &key1, RawKeyType &key2) {
+  inline bool RawKeyCmpGreater(const RawKeyType &key1, const RawKeyType &key2) {
     return RawKeyCmpLess(key2, key1);
   }
 
@@ -259,7 +259,7 @@ class BwTree {
    *
    * It negates result of RawKeyCmpGreater()
    */
-  bool RawKeyCmpLessEqual(RawKeyType &key1, RawKeyType &key2) {
+  bool RawKeyCmpLessEqual(const RawKeyType &key1, const RawKeyType &key2) {
     return !RawKeyCmpGreater(key1, key2);
   }
 
@@ -270,7 +270,7 @@ class BwTree {
    * If key1 >= key2 return false
    * If comparison not defined assertion would fail
    */
-  bool KeyCmpLess(KeyType &key1, KeyType &key2) const {
+  bool KeyCmpLess(const KeyType &key1, const KeyType &key2) const {
     // As long as the second operand is not -Inf then
     // we return true
     if(key1.IsNegInf()) {
@@ -315,7 +315,7 @@ class BwTree {
    * NOTE: This property does not affect <= and >= since these
    * two are implemented using > and < respectively
    */
-  bool KeyCmpEqual(KeyType &key1, KeyType &key2) const {
+  bool KeyCmpEqual(const KeyType &key1, const KeyType &key2) const {
     if(key1.IsPosInf() || \
        key1.IsNegInf() || \
        key2.IsPosInf() || \
@@ -334,7 +334,7 @@ class BwTree {
    *
    * It negates result of keyCmpEqual()
    */
-  inline bool KeyCmpNotEqual(KeyType &key1, KeyType &key2) const {
+  inline bool KeyCmpNotEqual(const KeyType &key1, const KeyType &key2) const {
     return !KeyCmpEqual(key1, key2);
   }
 
@@ -343,7 +343,7 @@ class BwTree {
    *
    * It negates result of keyCmpLess()
    */
-  inline bool KeyCmpGreaterEqual(KeyType &key1, KeyType &key2) const {
+  inline bool KeyCmpGreaterEqual(const KeyType &key1, const KeyType &key2) const {
     return !KeyCmpLess(key1, key2);
   }
 
@@ -352,14 +352,14 @@ class BwTree {
    *
    * It flips input for keyCmpLess()
    */
-  inline bool KeyCmpGreater(KeyType &key1, KeyType &key2) const {
+  inline bool KeyCmpGreater(const KeyType &key1, const KeyType &key2) const {
     return KeyCmpLess(key2, key1);
   }
 
   /*
    * KeyCmpLessEqual() - Compare a pair of keys for <= relation
    */
-  inline bool KeyCmpLessEqual(KeyType &key1, KeyType &key2) const {
+  inline bool KeyCmpLessEqual(const KeyType &key1, const KeyType &key2) const {
     return !KeyCmpGreater(key1, key2);
   }
 
@@ -411,10 +411,10 @@ class BwTree {
    public:
     KeyComparator &key_cmp_obj;
 
-    DataItemComparator(KeyComparator &p_key_cmp_obj) :
+    DataItemComparator(const KeyComparator &p_key_cmp_obj) :
       key_cmp_obj{p_key_cmp_obj} {}
 
-    bool operator()(DataItem &d1, DataItem &d2) {
+    bool operator()(const DataItem &d1, const DataItem &d2) const {
       return key_cmp_obj(d1.key, d2.key);
     }
   };
@@ -476,6 +476,7 @@ class BwTree {
    * class LeafInsertNode - Insert record into a leaf node
    */
   class LeafInsertNode : public BaseNode {
+   public:
     KeyType insert_key;
     ValueType value;
 
@@ -494,6 +495,7 @@ class BwTree {
    * could use for sanity check
    */
   class LeafDeleteNode : public BaseNode {
+   public:
     KeyType delete_key;
     ValueType value;
 
@@ -568,6 +570,7 @@ class BwTree {
    * next_key then we know we should go to new_node_id
    */
   class InnerInsertNode : public BaseNode {
+   public:
     KeyType sep_key;
     KeyType next_key;
     NodeID new_node_id;
@@ -583,10 +586,9 @@ class BwTree {
    * to facilitate identifying current delta chain type
    */
   class InnerSplitNode : public BaseNode {
+   public:
     KeyType sep_key;
     NodeID split_sibling;
-
-    std::atomic<int> counter;
 
     BaseNode *child_node_p;
   };
@@ -777,7 +779,7 @@ class BwTree {
    *
    * This function checks the validity of the node ID
    */
-  BaseNode *GetNode(NodeID node_id) {
+  BaseNode *GetNode(const NodeID node_id) const {
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
 
@@ -792,7 +794,7 @@ class BwTree {
    * SMOs it is easy to just judge underlying data node type using
    * the top of delta chain
    */
-  bool IsLeafDeltaChainType(NodeType type) {
+  bool IsLeafDeltaChainType(const NodeType type) const {
     return (type == NodeType::LeafDeleteType ||
             type == NodeType::LeafInsertType ||
             type == NodeType::LeafMergeType ||
@@ -807,9 +809,9 @@ class BwTree {
    * This functions works with any non-empty inner nodes. However
    * it fails assertion with empty inner node
    */
-  NodeID LocateSeparatorForInnerNode(InnerNode *inner_node_p,
-                                     KeyType search_key) {
-    std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
+  NodeID LocateSeparatorForInnerNode(const KeyType &search_key,
+                                     InnerNode *inner_node_p) const {
+    const std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
 
     // We do not know what to do for an empty inner node
     assert(sep_list_p->size() != 0UL);
@@ -854,7 +856,7 @@ class BwTree {
                             NodeType *current_node_type_p,
                             BaseNode **current_head_node_pp,
                             NodeType *current_head_node_type_p,
-                            PathHistory *path_list_p) {
+                            PathHistory *path_list_p) const {
     *current_node_pp = GetNode(new_id);
     *current_node_type_p = (*current_node_pp)->GetType();
 
@@ -875,7 +877,7 @@ class BwTree {
    * And after we have finishing the job, we need to validate whether we
    * are still working on the latest snapshot, by CAS NodeID with the pointer
    */
-  void TraverseDownInnerNode(KeyType &search_key,
+  void TraverseDownInnerNode(const KeyType &search_key,
                              PathHistory *path_list_p,
                              NodeID start_id = INVALID_NODE_ID) {
 
@@ -913,7 +915,7 @@ class BwTree {
         InnerNode *inner_node_p = \
           static_cast<InnerNode *>(current_node_p);
         NodeID subtree_id = \
-          LocateSeparatorForInnerNode(inner_node_p, search_key);
+          LocateSeparatorForInnerNode(search_key, inner_node_p);
 
         current_node_id = subtree_id;
         SwitchToNewID(current_node_id,
@@ -953,12 +955,28 @@ class BwTree {
    * The pointer of leaf node is not pushed into the vector, and it is
    * returned as the return value.
    *
+   * Besides that this function takes an output argument which reports the current
+   * NodeID and BaseNode pointer in case that a LeafSplitNode or LeafRemoveNode
+   * redirects the current NodeID (for appending this is crucial). This argument
+   * is merely for output, and if no change on NodeID then the NodeID field
+   * is set to INVALID_NODE_ID and the pointer is set to nullptr
+   *
    * This function is read-only, so it does not need to validate any structure
    * change.
    */
-  BaseNode *CollectDeltaPointer(KeyType &search_key,
+  BaseNode *CollectDeltaPointer(const KeyType &search_key,
                                 BaseNode *leaf_node_p,
-                                std::vector<BaseNode *> *pointer_list_p) const {
+                                std::vector<BaseNode *> *pointer_list_p,
+                                TreeSnapshot *real_tree) const {
+    // If the NodeID does not change then these two are retnrned to
+    // signal the caller
+    real_tree->first = INVALID_NODE_ID;
+    real_tree->second = nullptr;
+
+    // This is used to test whether a remove node is valid
+    // since it could only be the first node on a delta chain
+    bool first_node = true;
+
     while(1) {
       NodeType type = leaf_node_p->GetType();
       switch(type) {
@@ -988,6 +1006,7 @@ class BwTree {
           }
 
           leaf_node_p = insert_node_p->child_node_p;
+          first_node = false;
 
           break;
         } // case LeafInsertType
@@ -1002,11 +1021,13 @@ class BwTree {
           }
 
           leaf_node_p = delete_node_p->child_node_p;
+          first_node = false;
 
           break;
         } // case LeafDeleteType
         case NodeType::LeafRemoveType: {
           bwt_printf("Observed a remove node on leaf delta chain\n");
+          assert(first_node == true);
 
           LeafRemoveNode *leaf_remove_node_p = \
             static_cast<LeafRemoveNode *>(leaf_node_p);
@@ -1015,6 +1036,14 @@ class BwTree {
           // goto its left sibling node by NodeID and continue
           NodeID left_node_id = leaf_remove_node_p->remove_sibling;
           leaf_node_p = GetNode(left_node_id);
+
+          // Since the NodeID has changed, we need to update path information
+          real_tree->first = left_node_id;
+          real_tree->second = leaf_node_p;
+
+          // We do not set first_node to false here since we switched to
+          // another new NodeID
+          first_node = true;
 
           break;
         } // case LeafRemoveType
@@ -1032,6 +1061,8 @@ class BwTree {
             leaf_node_p = merge_node_p->child_node_p;
           }
 
+          first_node = false;
+
           break;
         } // case LeafMergeType
         case NodeType::LeafSplitType: {
@@ -1043,8 +1074,23 @@ class BwTree {
           if(KeyCmpGreaterEqual(search_key, split_node_p->split_key)) {
             NodeID split_sibling_id = split_node_p->split_sibling;
             leaf_node_p = GetNode(split_sibling_id);
+
+            // Same as that in RemoveNode since the NodeID has changed
+            real_tree->first = split_sibling_id;
+            real_tree->second = leaf_node_p;
+
+            // Since we are on the branch side of a split node
+            // there should not be any record with search key in
+            // the chain from where we come since otherwise these
+            // records are misplaced
+            assert(pointer_list_p->size() == 0);
+
+            // Since we have switched to a new NodeID
+            first_node = true;
           } else {
             leaf_node_p = split_node_p->child_node_p;
+
+            first_node = false;
           }
 
           break;
@@ -1065,26 +1111,27 @@ class BwTree {
 
   void ReplayLogOnLeafByKey(KeyType &search_key,
                             BaseNode *leaf_head_node_p,
-                            std::vector<ValueType *> *value_list_p) {
+                            std::vector<ValueType *> *value_list_p) const {
     std::vector<BaseNode *> delta_node_list_p{};
 
     // We specify a key for the rouine to collect
     BaseNode *ret = \
-      CollectDeltaPointer(search_key, leaf_head_node_p, &delta_node_list_p);
+      CollectDeltaPointer(search_key, leaf_head_node_p, &delta_node_list_p, nullptr);
     assert(ret->GetType() == NodeType::LeafType);
 
     LeafNode *leaf_base_p = static_cast<LeafNode *>(ret);
     // Lambda is implemented with function object? Just wondering...
-    auto it = std::binary_search(leaf_base_p->data_list.begin(),
-                                 leaf_base_p->data_list.end(),
-                                 search_key,
-                                 DataItemComparator(key_cmp_obj));
+    auto it = std::find_if(leaf_base_p->data_list.begin(),
+                           leaf_base_p->data_list.end(),
+                           [&search_key, this](const DataItem &di) {
+                             return this->KeyCmpEqual(search_key, di.key);
+                           });
 
     std::vector<std::pair<ValueType *, bool>> value_list_temp{};
     // Bulk load without checking for equality
     if(it != leaf_base_p->data_list.end()) {
-      for(auto &it2 : it->value_list) {
-        value_list_temp.push_back(std::make_pair(&(*it2), true));
+      for(ValueType &value : it->value_list) {
+        value_list_temp.push_back(std::make_pair(&value, true));
       }
     }
 
@@ -1097,25 +1144,12 @@ class BwTree {
    * This routine does not modify any of the tree structure, and
    * therefore it does not need to keep any snapshot of the tree
    * even if it might jump from one ID to another
+   *
+   * Based on the same reason above this routine either does not
+   * require a NodeID
    */
   bool IsKeyPresent(KeyType &search_key,
                     BaseNode *leaf_head_node_p) const {
-    NodeType leaf_head_node_type = leaf_head_node_p->GetType();
-
-    while(1) {
-      switch(leaf_head_node_type) {
-        case NodeType::LeafType: {
-
-          break;
-        }
-        default: {
-          bwt_printf("ERROR: Unknown leaf (delta) node type: %d\n",
-                     leaf_head_node_type);
-          assert(false);
-        }
-      }
-    }
-
     // Just to pass compilation
     ReplayLogOnLeafByKey(search_key, nullptr, nullptr);
 
@@ -1136,10 +1170,10 @@ class BwTree {
     BaseNode *leaf_head_p = ts.second;
 
     if(key_dup == false) {
-
+      IsKeyPresent(search_key, leaf_head_p);
     }
 
-    IsKeyPresent(search_key);
+    return false;
   }
 
  /*
