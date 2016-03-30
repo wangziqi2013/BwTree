@@ -96,6 +96,7 @@ static void dummy(const char*, ...) {}
 static std::mutex debug_stop_mutex;
 #endif
 
+
 /*
  * class BwTree() - Lock-free BwTree index implementation
  */
@@ -457,7 +458,7 @@ class BwTree {
    * class LeafInsertNode - Insert record into a leaf node
    */
   class LeafInsertNode : public BaseNode {
-    KeyType key;
+    KeyType insert_key;
     ValueType value;
 
     // This records the current length of the delta chain
@@ -475,7 +476,7 @@ class BwTree {
    * could use for sanity check
    */
   class LeafDeleteNode : public BaseNode {
-    KeyType key;
+    KeyType delete_key;
     ValueType value;
 
     BaseNode *child_node_p;
@@ -489,12 +490,40 @@ class BwTree {
    */
   class LeafSplitNode : public BaseNode {
    public:
-    KeyType sep_key;
+    KeyType split_key;
     NodeID split_sibling;
 
-    // This records whether the SMO has completed (since split is
-    // the first step of the SMO
-    std::atomic<int> counter;
+    BaseNode *child_node_p;
+  };
+
+  /*
+   * class LeafRemoveNode - Remove all physical children and redirect
+   *                        all access to its logical left sibling
+   *
+   * It does not contain data and acts as merely a redirection flag
+   */
+  class LeafRemoveNode : public BaseNode {
+   public:
+    NodeID remove_sibling;
+
+    BaseNode *child_node_p;
+  };
+
+  /*
+   * class LeafMergeNode - Merge two delta chian structure into one node
+   *
+   * This structure uses two physical pointers to indicate that the right
+   * half has become part of the current node and there is no other way
+   * to access it
+   */
+  class LeafMergeNode : public BaseNode {
+   public:
+    KeyType merge_key;
+
+    // For merge nodes we use actual physical pointer
+    // to indicate that the right half is already part
+    // of the logical node
+    BaseNode *right_merge_p;
 
     BaseNode *child_node_p;
   };
@@ -564,7 +593,6 @@ class BwTree {
       key_eq_obj{p_key_eq_obj},
       value_eq_obj{p_value_eq_obj},
       key_dup{p_key_dup},
-      value_dup{p_value_dup},
       next_unused_node_id{0} {
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
@@ -897,9 +925,128 @@ class BwTree {
     return;
   }
 
+  /*
+   * CollectDeltaPointer() - Collect delta node pointer for insert and delete
+   *
+   * This function correctly deals with merge, split and remove, starting on
+   * the topmost node of a delta chain
+   *
+   * It pushes pointers of nodes into a vector, and stops at the leaf node.
+   * The pointer of leaf node is not pushed into the vector, and it is
+   * returned as the return value.
+   *
+   * This function is read-only, so it does not need to validate any structure
+   * change.
+   *
+   * If search key is specified by passing a non-empty pointer then we only
+   * collect the delta for that key. Otherwise all delta pages that are
+   * insert or delete are returned.
+   */
+  BaseNode *CollectDeltaPointer(KeyType *search_key_p,
+                                BaseNode *leaf_node_p,
+                                std::vector<BaseNode *> *pointer_list_p) const {
+    while(1) {
+      NodeType type = leaf_node_p->GetType();
+      switch(type) {
+        case NodeType::LeafType: {
+          return leaf_node_p;
+        }
+        case NodeType::LeafInsertType: {
+          LeafInsertNode *insert_node_p = \
+            static_cast<LeafInsertNode *>(leaf_node_p);
+
+          // If key is not specified, then blindly push the delta
+          // If key is specified and there is a match then push the delta
+          if(search_key_p == nullptr || \
+             KeyCmpEqual(*search_key_p, insert_node_p->insert_key)) {
+            bwt_printf("Push insert delta\n");
+            pointer_list_p->push_back(leaf_node_p);
+          }
+
+          leaf_node_p = insert_node_p->child_node_p;
+
+          break;
+        } // case LeafInsertType
+        case NodeType::LeafDeleteType: {
+          LeafDeleteNode *delete_node_p = \
+            static_cast<LeafDeleteNode *>(leaf_node_p);
+
+          if(search_key_p == nullptr || \
+             KeyCmpEqual(*search_key_p, delete_node_p->delete_key)) {
+            bwt_printf("Push delete delta\n");
+
+            pointer_list_p->push_back(leaf_node_p);
+          }
+
+          leaf_node_p = delete_node_p->child_node_p;
+
+          break;
+        } // case LeafDeleteType
+        case NodeType::LeafRemoveType: {
+          bwt_printf("Observed a remove node on leaf delta chain\n");
+
+          LeafRemoveNode *leaf_remove_node_p = \
+            static_cast<LeafRemoveNode *>(leaf_node_p);
+
+          // Remove node just acts as a redirection flag
+          // goto its left sibling node by NodeID and continue
+          NodeID left_node_id = leaf_remove_node_p->remove_sibling;
+          leaf_node_p = GetNode(left_node_id);
+
+          break;
+        } // case LeafRemoveType
+        case NodeType::LeafMergeType: {
+          bwt_printf("Observed a merge node on leaf delta chain\n");
+
+          LeafMergeNode *merge_node_p = \
+            static_cast<LeafMergeNode *>(leaf_node_p);
+
+          // Decide which side we should choose
+          // Using >= for separator key
+          if(KeyCmpGreaterEqual(*search_key_p, merge_node_p->merge_key)) {
+            leaf_node_p = merge_node_p->right_merge_p;
+          } else {
+            leaf_node_p = merge_node_p->child_node_p;
+          }
+
+          break;
+        } // case LeafMergeType
+        case NodeType::LeafSplitType: {
+          bwt_printf("Observed a split node on leaf delta chain\n");
+
+          LeafSplitNode *split_node_p = \
+            static_cast<LeafSplitNode *>(leaf_node_p);
+
+          if(KeyCmpGreaterEqual(*search_key_p, split_node_p->split_key)) {
+            NodeID split_sibling_id = split_node_p->split_sibling;
+            leaf_node_p = GetNode(split_sibling_id);
+          } else {
+            leaf_node_p = split_node_p->child_node_p;
+          }
+
+          break;
+        } // case LeafSplitType
+        default: {
+          bwt_printf("ERROR: Unknown leaf delta node type: %d\n",
+                     leaf_node_p->GetType());
+
+          assert(false);
+        } // default
+      } // switch
+    } // while
+
+    assert(false);
+    return nullptr;
+  } // function body
+
+
   void ReplayLogOnLeafByKey(KeyType &search_key,
                             BaseNode *leaf_head_node_p) {
+    std::vector<BaseNode *> delta_node_list_p{};
+    BaseNode *leaf_base_p = \
+      CollectDeltaPointer(&search_key, leaf_head_node_p, &delta_node_list_p);
 
+    return;
   }
 
   /*
@@ -976,10 +1123,6 @@ class BwTree {
   // This does not affect data layout, and will introduce extra overhead
   // for a given key. But it simplifies coding for duplicated values
   const bool key_dup;
-
-  // Whether we allow duplicated values even if their values are
-  // equal according to the value equality checker
-  const bool value_dup;
 
   std::atomic<NodeID> root_id;
   NodeID first_node_id;
