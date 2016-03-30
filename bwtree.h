@@ -16,13 +16,13 @@
 #include <atomic>
 #include <algorithm>
 #include <cassert>
-#include <stack>
 #include <unordered_map>
 #include <mutex>
 #include <string>
 #include <iostream>
 #include <cassert>
 #include <set>
+#include <unordered_set>
 
 #define BWTREE_DEBUG
 //#define INTERACTIVE_DEBUG
@@ -104,7 +104,8 @@ template <typename RawKeyType,
           typename ValueType,
           typename KeyComparator = std::less<RawKeyType>,
           typename KeyEqualityChecker = std::equal_to<RawKeyType>,
-          typename ValueEqualityChecker = std::equal_to<ValueType>>
+          typename ValueEqualityChecker = std::equal_to<ValueType>,
+          typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
  /*
   * Private & Public declaration (no definition)
@@ -133,6 +134,7 @@ class BwTree {
   // We use this type to represent the path we traverse down the tree
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
+  using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -361,6 +363,15 @@ class BwTree {
    */
   inline bool KeyCmpLessEqual(const KeyType &key1, const KeyType &key2) const {
     return !KeyCmpGreater(key1, key2);
+  }
+
+  /*
+   * ValueCmpEqual() - Compare value for equality relation
+   *
+   * It directly wraps value comparatpr object
+   */
+  inline bool ValueCmpEuqal(const ValueType &val1, const ValueType &val2) const {
+    return value_eq_obj(val1, val2);
   }
 
   /*
@@ -607,11 +618,12 @@ class BwTree {
   BwTree(KeyComparator p_key_cmp_obj = std::less<RawKeyType>{},
          KeyEqualityChecker p_key_eq_obj = std::equal_to<RawKeyType>{},
          ValueEqualityChecker p_value_eq_obj = std::equal_to<ValueType>{},
-         bool p_key_dup = false,
-         bool p_value_dup = false) :
+         ValueHashFunc p_value_hash_obj = std::hash<ValueType>{},
+         bool p_key_dup = false) :
       key_cmp_obj{p_key_cmp_obj},
       key_eq_obj{p_key_eq_obj},
       value_eq_obj{p_value_eq_obj},
+      value_hash_obj{p_value_hash_obj},
       key_dup{p_key_dup},
       next_unused_node_id{0} {
     bwt_printf("Bw-Tree Constructor called. "
@@ -1111,29 +1123,63 @@ class BwTree {
 
   void ReplayLogOnLeafByKey(KeyType &search_key,
                             BaseNode *leaf_head_node_p,
-                            std::vector<ValueType *> *value_list_p) const {
-    std::vector<BaseNode *> delta_node_list_p{};
+                            ValueSet *value_set_p) const {
+    std::vector<BaseNode *> delta_node_list{};
 
     // We specify a key for the rouine to collect
     BaseNode *ret = \
-      CollectDeltaPointer(search_key, leaf_head_node_p, &delta_node_list_p, nullptr);
+      CollectDeltaPointer(search_key, leaf_head_node_p, &delta_node_list, nullptr);
     assert(ret->GetType() == NodeType::LeafType);
 
     LeafNode *leaf_base_p = static_cast<LeafNode *>(ret);
     // Lambda is implemented with function object? Just wondering...
+    // Find whether the leaf contains the key, and if yes then load
+    // all values into the value set
     auto it = std::find_if(leaf_base_p->data_list.begin(),
                            leaf_base_p->data_list.end(),
                            [&search_key, this](const DataItem &di) {
                              return this->KeyCmpEqual(search_key, di.key);
                            });
 
-    std::vector<std::pair<ValueType *, bool>> value_list_temp{};
-    // Bulk load without checking for equality
     if(it != leaf_base_p->data_list.end()) {
+      assert(KeyCmpEqual(search_key, it->key));
+
       for(ValueType &value : it->value_list) {
-        value_list_temp.push_back(std::make_pair(&value, true));
+        value_set_p->insert(value);
       }
     }
+
+    // We use reverse iterator to traverse delta record
+    // and do log replay
+    for(auto rit = delta_node_list.rbegin();
+        rit != delta_node_list.rend();
+        rit++) {
+      NodeType type = (*rit)->GetType();
+
+      switch(type) {
+        case NodeType::LeafInsertType: {
+          LeafInsertNode *insert_node_p = \
+            static_cast<LeafInsertNode *>(*rit);
+
+          value_set_p->insert(insert_node_p->value);
+
+          break;
+        }
+        case NodeType::LeafDeleteType: {
+          LeafDeleteNode *delete_node_p = \
+            static_cast<LeafDeleteNode *>(*rit);
+
+          value_set_p->erase(delete_node_p->value);
+
+          break;
+        }
+        default: {
+          bwt_printf("ERROR: Unknown delta type: %d\n", type);
+
+          assert(false);
+        }
+      } // switch(type)
+    } // for(rit...)
 
     return;
   }
@@ -1199,6 +1245,8 @@ class BwTree {
   const KeyEqualityChecker key_eq_obj;
   // Check whether values are equivalent
   const ValueEqualityChecker value_eq_obj;
+  // Hash ValueType into a size_t
+  const ValueHashFunc value_hash_obj;
 
   // Whether we should allow keys to have multiple values
   // This does not affect data layout, and will introduce extra overhead
