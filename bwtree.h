@@ -1121,6 +1121,18 @@ class BwTree {
   } // function body
 
 
+  /*
+   * ReplayLogOnLeafByKey() - Replay the log for a certain key given leaf node
+   *
+   * This function traverses starting from the given pointer which is assumed
+   * to point to a leaf-related node. It traverses down the delta chain until
+   * a leaf node is encountered, pushing insert and delete deltas into a stack.
+   *
+   * Remove, split and merge are delat with correctly.
+   *
+   * Return value is stored in the output argument which is an unordered set
+   * of ValueType
+   */
   void ReplayLogOnLeafByKey(KeyType &search_key,
                             BaseNode *leaf_head_node_p,
                             ValueSet *value_set_p) const {
@@ -1203,6 +1215,8 @@ class BwTree {
   }
 
   bool Insert(const RawKeyType &raw_key, ValueType &value) {
+    bwt_printf("Insert called\n");
+
     PathHistory ph{};
     KeyType search_key = GetWrappedKey(raw_key);
 
@@ -1216,7 +1230,7 @@ class BwTree {
     BaseNode *leaf_head_p = ts.second;
 
     if(key_dup == false) {
-      IsKeyPresent(search_key, leaf_head_p);
+      //IsKeyPresent(search_key, leaf_head_p);
     }
 
     return false;
