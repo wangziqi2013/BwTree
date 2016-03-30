@@ -9,3 +9,6 @@ main.o: main.cpp bwtree.h
 
 bwtree.o: bwtree.cpp bwtree.h
 	g++ bwtree.cpp -c -pthread --std=c++11 -o bwtree.o
+
+clean:
+	rm -f *.o *.log

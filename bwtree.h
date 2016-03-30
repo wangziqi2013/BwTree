@@ -208,6 +208,61 @@ class BwTree {
   };
 
   /*
+   * RawKeyCmpLess() - Compare raw key for < relation
+   *
+   * Directly uses the comparison object
+   */
+  inline bool RawKeyCmpLess(RawKeyType &key1, RawKeyType &key2) {
+    return key_cmp_obj(key1, key2);
+  }
+
+  /*
+   * RawKeyCmpEqual() - Compare raw key for == relation
+   *
+   * We use the fast comparison object rather than traditional < && >
+   * approach to avoid performance penalty
+   */
+  inline bool RawKeyCmpEqual(RawKeyType &key1, RawKeyType &key2) {
+    return key_eq_obj(key1, key2);
+  }
+
+  /*
+   * RawKeyCmpNotEqual() - Compare raw key for != relation
+   *
+   * It negates result of RawKeyCmpEqual()
+   */
+  inline bool RawKeyCmpNotEqual(RawKeyType &key1, RawKeyType &key2) {
+    return !RawKeyCmpEqual(key1, key2);
+  }
+
+  /*
+   * RawKeyCmpGreaterEqual() - Compare raw key for >= relation
+   *
+   * It negates result of RawKeyCmpLess()
+   */
+  inline bool RawKeyCmpGreaterEqual(RawKeyType &key1, RawKeyType &key2) {
+    return !RawKeyCmpLess(key1, key2);
+  }
+
+  /*
+   * RawKeyCmpGreater() - Compare raw key for > relation
+   *
+   * It inverts input of RawKeyCmpLess()
+   */
+  inline bool RawKeyCmpGreater(RawKeyType &key1, RawKeyType &key2) {
+    return RawKeyCmpLess(key2, key1);
+  }
+
+  /*
+   * RawKeyCmpLessEqual() - Cmpare raw key for <= relation
+   *
+   * It negates result of RawKeyCmpGreater()
+   */
+  bool RawKeyCmpLessEqual(RawKeyType &key1, RawKeyType &key2) {
+    return !RawKeyCmpGreater(key1, key2);
+  }
+
+  /*
    * KeyCmpLess() - Compare two keys for "less than" relation
    *
    * If key1 < key2 return true
@@ -247,7 +302,7 @@ class BwTree {
     }
 
     // Then we need to compare real key
-    return key_comp_obj(key1.key, key2.key);
+    return key_cmp_obj(key1.key, key2.key);
   }
 
   /*
@@ -419,7 +474,7 @@ class BwTree {
    * to delete. In single value mode, value is redundant but what we
    * could use for sanity check
    */
-  class LeafDeleteNode {
+  class LeafDeleteNode : public BaseNode {
     KeyType key;
     ValueType value;
 
@@ -452,6 +507,9 @@ class BwTree {
     std::vector<SepItem> sep_list;
     KeyType lbound;
     KeyType ubound;
+
+    // Used even in inner node to prevent early consolidation
+    NodeID next_node_id;
   };
 
   /*
@@ -500,11 +558,13 @@ class BwTree {
   BwTree(KeyComparator p_key_cmp_obj = std::less<RawKeyType>{},
          KeyEqualityChecker p_key_eq_obj = std::equal_to<RawKeyType>{},
          ValueEqualityChecker p_value_eq_obj = std::equal_to<ValueType>{},
-         bool p_key_dup = false) :
-      key_comp_obj{p_key_cmp_obj},
+         bool p_key_dup = false,
+         bool p_value_dup = false) :
+      key_cmp_obj{p_key_cmp_obj},
       key_eq_obj{p_key_eq_obj},
       value_eq_obj{p_value_eq_obj},
       key_dup{p_key_dup},
+      value_dup{p_value_dup},
       next_unused_node_id{0} {
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
@@ -585,7 +645,7 @@ class BwTree {
 
   /*
    * GetWrappedKey() - Return an internally wrapped key type used
-   * to traverse the index
+   *                   to traverse the index
    */
   inline KeyType GetWrappedKey(RawKeyType key) {
     return KeyType {key, ExtendedKeyValue::RawKey};
@@ -837,6 +897,11 @@ class BwTree {
     return;
   }
 
+  void ReplayLogOnLeafByKey(KeyType &search_key,
+                            BaseNode *leaf_head_node_p) {
+
+  }
+
   /*
    * IsKeyPresent() - Check whether the key is present in the tree
    *
@@ -901,16 +966,20 @@ class BwTree {
  public:
 #endif
   // Compare key in a less than manner
-  KeyComparator key_comp_obj;
+  const KeyComparator key_cmp_obj;
   // It is faster to compare equality using this than using two <
-  KeyEqualityChecker key_eq_obj;
+  const KeyEqualityChecker key_eq_obj;
   // Check whether values are equivalent
-  ValueEqualityChecker value_eq_obj;
+  const ValueEqualityChecker value_eq_obj;
 
   // Whether we should allow keys to have multiple values
   // This does not affect data layout, and will introduce extra overhead
   // for a given key. But it simplifies coding for duplicated values
-  bool key_dup;
+  const bool key_dup;
+
+  // Whether we allow duplicated values even if their values are
+  // equal according to the value equality checker
+  const bool value_dup;
 
   std::atomic<NodeID> root_id;
   NodeID first_node_id;
