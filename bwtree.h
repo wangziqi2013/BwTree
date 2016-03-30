@@ -402,6 +402,24 @@ class BwTree {
   };
 
   /*
+   * class DataItemComparator - Data item comparator function object
+   *
+   * NOTE: Since we could not instanciate object comparator so in order
+   * to construct this object we need to pass in the object
+   */
+  class DataItemComparator {
+   public:
+    KeyComparator &key_cmp_obj;
+
+    DataItemComparator(KeyComparator &p_key_cmp_obj) :
+      key_cmp_obj{p_key_cmp_obj} {}
+
+    bool operator()(DataItem &d1, DataItem &d2) {
+      return key_cmp_obj(d1.key, d2.key);
+    }
+  };
+
+  /*
    * struct SepItem() - Separator item for inner nodes
    *
    * We choose not to use std::pair bacause we probably need to
@@ -1057,9 +1075,10 @@ class BwTree {
 
     LeafNode *leaf_base_p = static_cast<LeafNode *>(ret);
     // Lambda is implemented with function object? Just wondering...
-    auto it = std::find_if(leaf_base_p->data_list.begin(),
-                           leaf_base_p->data_list.end(),
-                           [&search_key](const DataItem &di) { return KeyCmpEqual(di.key, search_key); });
+    auto it = std::binary_search(leaf_base_p->data_list.begin(),
+                                 leaf_base_p->data_list.end(),
+                                 search_key,
+                                 DataItemComparator(key_cmp_obj));
 
     std::vector<std::pair<ValueType *, bool>> value_list_temp{};
     // Bulk load without checking for equality
@@ -1097,10 +1116,13 @@ class BwTree {
       }
     }
 
+    // Just to pass compilation
+    ReplayLogOnLeafByKey(search_key, nullptr, nullptr);
+
     return false;
   }
 
-  bool Insert(RawKeyType &raw_key, ValueType &value) {
+  bool Insert(const RawKeyType &raw_key, ValueType &value) {
     PathHistory ph{};
     KeyType search_key = GetWrappedKey(raw_key);
 
@@ -1116,6 +1138,8 @@ class BwTree {
     if(key_dup == false) {
 
     }
+
+    IsKeyPresent(search_key);
   }
 
  /*

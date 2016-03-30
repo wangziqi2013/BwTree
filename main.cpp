@@ -51,5 +51,8 @@ int main() {
   BwTree<int, double>::PathHistory ph{};
   t1->TraverseDownInnerNode(k1, &ph);
 
+  double b = 2.5;
+  t1->Insert(1, b);
+
   return 0;
 }
