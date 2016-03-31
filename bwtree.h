@@ -196,6 +196,23 @@ class BwTree {
     ExtendedKeyValue type;
 
     /*
+     * Constructor  - Use RawKeyType object to initialize
+     */
+    KeyType(const RawKeyType &p_key) : key{p_key} {}
+
+    /*
+     * Constructor - Use value type only (must not be raw value type)
+     */
+    KeyType(ExtendedKeyValue p_type) :
+      key{},
+      type{p_type}
+    {
+      // If it is raw type then we are having an empty key
+      assert(p_type != ExtendedKeyValue::RawKey);
+      return;
+    }
+
+    /*
      * IsNegInf() - Whether the key value is -Inf
      */
     bool IsNegInf() const {
@@ -447,7 +464,12 @@ class BwTree {
    */
   class BaseNode {
    public:
-    NodeType type;
+    const NodeType type;
+
+    /*
+     * Constructor - Initialize type
+     */
+    BaseNode(NodeType p_type) : type{p_type} {}
 
     /*
      * Destructor - This must be virtual in order to properly destroy
@@ -475,12 +497,24 @@ class BwTree {
    public:
     // We always hold data within a vector of vectors
     std::vector<DataItem> data_list;
-    KeyType lbound;
-    KeyType ubound;
+    const KeyType lbound;
+    const KeyType ubound;
 
     // If this is INVALID_NODE_ID then we know it is the
     // last node in the leaf chain
-    NodeID next_node_id;
+    const NodeID next_node_id;
+
+    /*
+     * Constructor - Initialize bounds and next node ID
+     */
+    LeafNode(const KeyType &p_lbound,
+             const KeyType &p_ubound,
+             NodeID p_next_node_id) :
+      BaseNode{NodeType::LeafType},
+      lbound{p_lbound},
+      ubound{p_ubound},
+      next_node_id{p_next_node_id}
+      {}
   };
 
   /*
@@ -488,14 +522,27 @@ class BwTree {
    */
   class LeafInsertNode : public BaseNode {
    public:
-    KeyType insert_key;
-    ValueType value;
+    const KeyType insert_key;
+    const ValueType value;
 
     // This records the current length of the delta chain
     // which facilitates consolidation
-    int depth;
+    const int depth;
 
-    BaseNode *child_node_p;
+    const BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    LeafInsertNode(const KeyType &p_insert_key,
+                   const ValueType &p_value,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+    insert_key{p_insert_key},
+    value{p_value},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -510,7 +557,22 @@ class BwTree {
     KeyType delete_key;
     ValueType value;
 
+    const int depth;
+
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    LeafDeleteNode(const KeyType &p_delete_key,
+                   const ValueType &p_value,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+    delete_key{p_delete_key},
+    value{p_value},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -524,7 +586,22 @@ class BwTree {
     KeyType split_key;
     NodeID split_sibling;
 
+    int depth;
+
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    LeafSplitNode(const KeyType &p_split_key,
+                  NodeID p_split_sibling,
+                  int p_depth,
+                  const BaseNode *p_child_node_p) :
+    split_key{p_split_key},
+    split_sibling{p_split_sibling},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -537,7 +614,20 @@ class BwTree {
    public:
     NodeID remove_sibling;
 
+    int depth;
+
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    LeafRemoveNode(NodeID p_remove_sibling,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+    remove_sibling{p_remove_sibling},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -555,8 +645,22 @@ class BwTree {
     // to indicate that the right half is already part
     // of the logical node
     BaseNode *right_merge_p;
+    int depth;
 
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    LeafMergeNode(const KeyType &p_merge_key,
+                  const BaseNode *p_right_merge_p,
+                  int p_depth,
+                  const BaseNode *p_child_node_p) :
+    merge_key{p_merge_key},
+    right_merge_p{p_right_merge_p},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -570,6 +674,18 @@ class BwTree {
 
     // Used even in inner node to prevent early consolidation
     NodeID next_node_id;
+
+    /*
+     * Constructor
+     */
+    InnerNode(const KeyType &p_lbound,
+              const KeyType &p_ubound,
+              NodeID p_next_node_id) :
+    BaseNode{NodeType::InnerType},
+    lbound{p_lbound},
+    ubound{p_ubound},
+    next_node_id{p_next_node_id}
+    {}
   };
 
   /*
@@ -582,11 +698,26 @@ class BwTree {
    */
   class InnerInsertNode : public BaseNode {
    public:
-    KeyType sep_key;
+    KeyType insert_key;
     KeyType next_key;
     NodeID new_node_id;
 
+    int depth;
+
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    InnerInsertNode(const KeyType &p_insert_key,
+                    const KeyType &p_next_key,
+                    int p_depth,
+                    const BaseNode *p_child_node_p) :
+    insert_key{p_insert_key},
+    next_key{p_next_key},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -598,10 +729,25 @@ class BwTree {
    */
   class InnerSplitNode : public BaseNode {
    public:
-    KeyType sep_key;
+    KeyType split_key;
     NodeID split_sibling;
 
+    int depth;
+
     BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    InnerSplitNode(const KeyType &p_split_key,
+                   NodeID p_split_sibling,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+    split_key{p_split_key},
+    split_sibling{p_split_sibling},
+    depth{p_depth},
+    child_node_p{p_child_node_p}
+    {}
   };
 
 
@@ -660,10 +806,8 @@ class BwTree {
     SepItem neg_si {GetNegInfKey(), first_node_id};
     SepItem pos_si {GetPosInfKey(), INVALID_NODE_ID};
 
-    InnerNode *root_node_p = new InnerNode{};
-    root_node_p->type = NodeType::InnerType;
-    root_node_p->lbound = GetNegInfKey();
-    root_node_p->ubound = GetPosInfKey();
+    InnerNode *root_node_p = \
+      new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
     root_node_p->sep_list.push_back(neg_si);
     root_node_p->sep_list.push_back(pos_si);
@@ -675,11 +819,8 @@ class BwTree {
 
     InstallNewNode(root_id, root_node_p);
 
-    LeafNode *left_most_leaf = new LeafNode{};
-    left_most_leaf->lbound = GetNegInfKey();
-    left_most_leaf->ubound = GetPosInfKey();
-    left_most_leaf->type = NodeType::LeafType;
-    left_most_leaf->next_node_id = INVALID_NODE_ID;
+    LeafNode *left_most_leaf = \
+      new LeafNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
     InstallNewNode(first_node_id, left_most_leaf);
 
@@ -708,7 +849,7 @@ class BwTree {
    *                   to traverse the index
    */
   inline KeyType GetWrappedKey(RawKeyType key) {
-    return KeyType {key, ExtendedKeyValue::RawKey};
+    return KeyType {key};
   }
 
   /*
@@ -717,7 +858,7 @@ class BwTree {
    * Assumes there is a trivial constructor for RawKeyType
    */
   inline KeyType GetPosInfKey() {
-    return KeyType {RawKeyType{}, ExtendedKeyValue::PosInf};
+    return KeyType {ExtendedKeyValue::PosInf};
   }
 
   /*
@@ -726,7 +867,7 @@ class BwTree {
    * Assumes there is a trivial constructor for RawKeyType
    */
   inline KeyType GetNegInfKey() {
-    return KeyType {RawKeyType{}, ExtendedKeyValue::NegInf};
+    return KeyType {ExtendedKeyValue::NegInf};
   }
 
   /*
