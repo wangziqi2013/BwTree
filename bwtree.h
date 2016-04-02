@@ -135,6 +135,8 @@ class BwTree {
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
+  using KeyValueSet = std::map<RawKeyType, ValueSet>;
+  using NodePointerList = std::vector<BaseNode *>;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -1129,7 +1131,7 @@ class BwTree {
    */
   const BaseNode *CollectDeltaPointer(const KeyType &search_key,
                                       const BaseNode *leaf_node_p,
-                                      std::vector<const BaseNode *> *pointer_list_p,
+                                      NodePointerList *pointer_list_p,
                                       TreeSnapshot *real_tree) const {
     if(real_tree != nullptr) {
       // If the NodeID does not change then these two are retnrned to
@@ -1162,8 +1164,7 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(leaf_node_p);
 
-          // If key is not specified, then blindly push the delta
-          // If key is specified and there is a match then push the delta
+          // If there is a match then push the delta
           if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
             bwt_printf("Push insert delta\n");
 
@@ -1298,7 +1299,7 @@ class BwTree {
   void ReplayLogOnLeafByKey(const KeyType &search_key,
                             const BaseNode *leaf_head_node_p,
                             ValueSet *value_set_p) const {
-    std::vector<const BaseNode *> delta_node_list{};
+    NodePointerList delta_node_list{};
 
     // We specify a key for the rouine to collect
     const BaseNode *ret = \
@@ -1359,17 +1360,133 @@ class BwTree {
   }
 
   /*
-   * CollectAllValuesOnLeaf() - Collect all values given a pointer
+   * CollectAllValuesOnLeafRecursive() - Collect all values given a
+   *                                     pointer recursively
    *
    * It does not need NodeID to collect values since only read-only
    * routine calls this one, so no validation is ever needed even in
    * its caller.
    *
+   * This function only travels using physical pointer, which implies
+   * that it does not deal with LeafSplitNode and LeafRemoveNode
+   * For LeafSplitNode it only collects value on child node
+   * For LeafRemoveNode it just returns
+   * If LeafRemoveNode is not the topmost node it fails
    *
+   * NOTE: This function calls itself to collect values in a merge node
+   * since logically speaking merge node consists of two delta chains
+   * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
+   * "Recursive" suffix)
    */
-  void CollectAllValuesOnLeaf(const BaseNode *leaf_node_p,
-                              ValueSet *value_set_p) const {
+  void
+  CollectAllValuesOnLeafRecursive(const BaseNode *leaf_node_p,
+                                  KeyValueSet *key_value_set_p,
+                                  NodePointerList *node_list_p,
+                                  const KeyType *upper_bound_key_p,
+                                  const KeyType *prev_bound_key_p) const {
+    bool first_time = true;
 
+    while(1) {
+      NodeType type = leaf_node_p->GetType();
+
+      switch(type) {
+        // When we see a leaf node, just copy all keys together with
+        // all values into the value set
+        case NodeType::LeafNode: {
+          const LeafNode *leaf_node_p = \
+            static_cast<const LeafNode *>(leaf_node_p);
+
+          for(auto &data_item : leaf_node_p->data_list) {
+            // If we find a key in the leaf page which is >= the latest
+            // separator key of a split node (if there is one) then ignore
+            // these key since they have been now stored in another leaf
+            if(upper_bound_key_p != nullptr && \
+               KeyCmpGreaterEqual(data_item.key, *upper_bound_key_p)) {
+              bwt_printf("Obsolete key has already been placed"
+                         " into split sibling\n");
+
+              continue;
+            }
+
+            auto ret = key_value_set_p->emplace();
+
+            // Assert the item is always newly created
+            assert(ret.second == true);
+            // First element is iterator to newly inserted element
+            auto it = ret.first;
+
+            // Add all values into the output set
+            for(auto &it2 : data_item.value_list) {
+              it->insert(it2);
+            } // for auto it2 : data_item.value_list ...
+          } // for auto it : data_item ...
+
+          return;
+        } // case LeafNode
+        case NodeType::LeafInsertNode: {
+          const LeafInsertNode *insert_node_p = \
+            static_cast<const LeafInsertNode *>(leaf_node_p);
+
+          node_list_p->push_back(insert_node_p);
+
+          leaf_node_p = insert_node_p->child_node_p;
+        } // case LeafInsertNode
+        case NodeType::LeafDeleteNode: {
+          const LeafInsertNode *delete_node_p = \
+            static_cast<const LeafDeleteNode *>(leaf_node_p);
+
+          node_list_p->push_back(delete_node_p);
+
+          leaf_node_p = delete_node_p->child_node_p;
+        } // case LeafDeleteNode
+        case NodeType::LeafRemoveType: {
+          // If we see a remove node, then this node is removed
+          // and in that case we just return silently
+          assert(first_time == true);
+
+          // These two are trivial but just put them here for safety
+          assert(node_list_p->size() == 0);
+          assert(key_value_set_p->size() == 0);
+
+          return;
+        } // case LeafRemoveType
+        case NodeType::LeafSplitType: {
+          const LeafSplitNode *split_node_p = \
+            static_cast<const LeafSplitNode *>(leaf_node_p);
+
+          // If we have not seen a split node, then this is the first one
+          // and we need to remember the upperbound for the logical page
+          // Since this is the latest change to its upperbound
+          if(upper_bound_key_p == nullptr) {
+            upper_bound_key_p = &split_node_p->split_key;
+          } else if(prev_bound_key_p != nullptr) {
+            // Even if it is not the first split node we have seen
+            // it is good for us to verify that the newer split node
+            // having a more strict bound than the older
+            // since lower bound never change once it is mapped,
+            // the only possible trend for upperbound is to become more
+            // and more strict
+            assert(KeyCmpLess(split_node_p->split_key, *prev_bound_key_p));
+          }
+
+          prev_bound_key_p = &split_node_p->split_key;
+
+          leaf_node_p = split_node_p->child_node_p;
+        } // case LeafSplitType
+        case NodeType::LeafMergeType: {
+          const LeafMergeNode *merge_node_p = \
+            static_cast<const LeafMergeNode *>(leaf_node_p);
+
+
+
+          leaf_node_p = merge_node_p->child_node_p;
+        } // case LeafMergeType
+      }
+
+      first_time = false;
+    }
+
+    return;
   }
 
   /*
