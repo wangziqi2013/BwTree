@@ -67,9 +67,9 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   //DataItem dt8{8, {8.88}};
   leaf2->data_list.push_back({6, {6.66}});
   leaf2->data_list.push_back({7, {7.77}});
-  leaf2->data_list.push_back({8, {8.88}});
+  leaf2->data_list.push_back({8, {8.188}});
 
-  LeafInsertNode *insert2 = new LeafInsertNode{8, 8.88, 1, leaf2};
+  LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
 
   LeafNode *leaf3 = new LeafNode{11, 16, INVALID_NODE_ID};
   //DataItem dt12{12, {12.12}};
@@ -79,7 +79,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
 
   LeafInsertNode *insert3 = new LeafInsertNode{11, 11.11, 1, leaf3};
   LeafSplitNode *split1 = new LeafSplitNode{10, 102, 2, insert2};
-  LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.88, 3, split1};
+  LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.288, 3, split1};
 
   LeafMergeNode *merge1 = new LeafMergeNode{6, delete1, 2, insert1};
   LeafRemoveNode *remove1 = new LeafRemoveNode{100, 4, delete1};
@@ -89,7 +89,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   t->InstallNewNode(102, insert3);
 
   ValueSet value_set{};
-  t->ReplayLogOnLeafByKey(3, remove1, &value_set);
+  t->ReplayLogOnLeafByKey(14, remove1, &value_set);
 
   for(auto it: value_set) {
     bwt_printf("Values = %lf\n", it);

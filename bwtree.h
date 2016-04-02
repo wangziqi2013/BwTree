@@ -1223,8 +1223,12 @@ class BwTree {
           // Decide which side we should choose
           // Using >= for separator key
           if(KeyCmpGreaterEqual(search_key, merge_node_p->merge_key)) {
+            bwt_printf("Take leaf merge right branch\n");
+
             leaf_node_p = merge_node_p->right_merge_p;
           } else {
+            bwt_printf("Take leaf merge left branch\n");
+
             leaf_node_p = merge_node_p->child_node_p;
           }
 
@@ -1239,6 +1243,8 @@ class BwTree {
             static_cast<const LeafSplitNode *>(leaf_node_p);
 
           if(KeyCmpGreaterEqual(search_key, split_node_p->split_key)) {
+            bwt_printf("Take leaf split right (NodeID branch)\n");
+
             NodeID split_sibling_id = split_node_p->split_sibling;
             leaf_node_p = GetNode(split_sibling_id);
 
@@ -1276,7 +1282,6 @@ class BwTree {
     assert(false);
     return nullptr;
   } // function body
-
 
   /*
    * ReplayLogOnLeafByKey() - Replay the log for a certain key given leaf node
@@ -1351,6 +1356,20 @@ class BwTree {
     } // for(rit...)
 
     return;
+  }
+
+  /*
+   * CollectAllValuesOnLeaf() - Collect all values given a pointer
+   *
+   * It does not need NodeID to collect values since only read-only
+   * routine calls this one, so no validation is ever needed even in
+   * its caller.
+   *
+   *
+   */
+  void CollectAllValuesOnLeaf(const BaseNode *leaf_node_p,
+                              ValueSet *value_set_p) const {
+
   }
 
   /*
