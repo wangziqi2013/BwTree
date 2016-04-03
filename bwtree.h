@@ -1565,7 +1565,10 @@ class BwTree {
 
     // Next for each insert/delete delta, replay the change on top
     // of base page values
-    for(const BaseNode *node_p : node_list) {
+    for(auto node_p_it = node_list.rbegin();
+        node_p_it != node_list.rend();
+        node_p_it++) {
+      const BaseNode *node_p = *node_p_it;
       NodeType type = node_p->GetType();
 
       switch(type) {
