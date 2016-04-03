@@ -121,6 +121,7 @@ class BwTree {
  public:
   class BaseNode;
   class KeyType;
+  class WrappedKeyComparator;
 
  /*
   * private: Basic type definition
@@ -136,8 +137,8 @@ class BwTree {
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
-  using RawKeyValueSet = std::map<RawKeyType, ValueSet>;
-  using KeyValueSet = std::map<KeyType, ValueSet>;
+  using RawKeyValueSet = std::map<RawKeyType, ValueSet, KeyComparator>;
+  using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
   using NodePointerList = std::vector<BaseNode *>;
   using ConstNodePointerList = std::vector<const BaseNode *>;
 
@@ -228,6 +229,13 @@ class BwTree {
      */
     bool IsPosInf() const {
       return type == ExtendedKeyValue::PosInf;
+    }
+  };
+
+  class WrappedKeyComparator {
+   public:
+    bool operator()(const KeyType &key1, const KeyType &key2) {
+      return KeyComparator{}(key1.key, key2.key);
     }
   };
 
@@ -1417,11 +1425,11 @@ class BwTree {
       switch(type) {
         // When we see a leaf node, just copy all keys together with
         // all values into the value set
-        case NodeType::LeafNode: {
-          const LeafNode *leaf_node_p = \
+        case NodeType::LeafType: {
+          const LeafNode *leaf_base_p = \
             static_cast<const LeafNode *>(leaf_node_p);
 
-          for(auto &data_item : leaf_node_p->data_list) {
+          for(auto &data_item : leaf_base_p->data_list) {
             // If we find a key in the leaf page which is >= the latest
             // separator key of a split node (if there is one) then ignore
             // these key since they have been now stored in another leaf
@@ -1433,7 +1441,10 @@ class BwTree {
               continue;
             }
 
-            auto ret = key_value_set_p->emplace();
+            // For each new key, make a new value in-place
+            // (they are stored as <key, value> pair in std::map)
+            auto ret = key_value_set_p->emplace(std::make_pair(data_item.key,
+                                                               ValueSet{}));
 
             // Assert the item is always newly created
             assert(ret.second == true);
@@ -1442,13 +1453,13 @@ class BwTree {
 
             // Add all values into the output set
             for(auto &it2 : data_item.value_list) {
-              it->insert(it2);
+              it->second.insert(it2);
             } // for auto it2 : data_item.value_list ...
           } // for auto it : data_item ...
 
           return;
-        } // case LeafNode
-        case NodeType::LeafInsertNode: {
+        } // case LeafType
+        case NodeType::LeafInsertType: {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(leaf_node_p);
 
@@ -1457,9 +1468,9 @@ class BwTree {
           leaf_node_p = insert_node_p->child_node_p;
 
           break;
-        } // case LeafInsertNode
-        case NodeType::LeafDeleteNode: {
-          const LeafInsertNode *delete_node_p = \
+        } // case LeafInsertType
+        case NodeType::LeafDeleteType: {
+          const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(leaf_node_p);
 
           node_list_p->push_back(delete_node_p);
@@ -1467,8 +1478,10 @@ class BwTree {
           leaf_node_p = delete_node_p->child_node_p;
 
           break;
-        } // case LeafDeleteNode
+        } // case LeafDeleteType
         case NodeType::LeafRemoveType: {
+          bwt_printf("ERROR: LeafRemoveNode not allowed\n");
+
           // If we see a remove node, then this node is removed
           // and in that case we just return silently
           assert(first_time == true);
@@ -1496,6 +1509,8 @@ class BwTree {
           break;
         } // case LeafSplitType
         case NodeType::LeafMergeType: {
+          bwt_printf("Observe LeafMergeNode; recursively collect nodes\n");
+
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(leaf_node_p);
 
@@ -1523,6 +1538,92 @@ class BwTree {
       }
 
       first_time = false;
+    }
+
+    return;
+  }
+
+  /*
+   * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
+   *                            leaf node
+   *
+   * This function is the non-recursive wrapper of the resursive core function.
+   * It calls the recursive version to collect all base leaf nodes, and then
+   * it replays delta records on top of them.
+   */
+  void
+  CollectAllValuesOnLeaf(const BaseNode *leaf_node_p,
+                         KeyValueSet *key_value_set_p) {
+    ConstNodePointerList node_list{};
+
+    // For the first call always use nullptr as upperbound key since
+    // only split and merge nodes overwrite the natural upperbound
+    CollectAllValuesOnLeafRecursive(leaf_node_p,
+                                    key_value_set_p,
+                                    &node_list,
+                                    nullptr);
+
+    // Next for each insert/delete delta, replay the change on top
+    // of base page values
+    for(const BaseNode *node_p : node_list) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::LeafInsertType: {
+          const LeafInsertNode *insert_node_p = \
+            static_cast<const LeafInsertNode *>(node_p);
+
+          auto it = key_value_set_p->find(insert_node_p->insert_key);
+          if(it == key_value_set_p->end()) {
+            auto ret = key_value_set_p->emplace( \
+              std::make_pair(insert_node_p->insert_key,
+                             ValueSet{})
+            );
+
+            // Insertion always happen
+            assert(ret.second == true);
+            // Now assign the newly allocated slot for the new key to it
+            // so that we could use it later
+            it = ret.first;
+          }
+
+          // it is either newly allocated or already exists
+          it->second.insert(insert_node_p->value);
+
+          break;
+        } // case LeafInsertType
+        case NodeType::LeafDeleteType: {
+          const LeafDeleteNode *delete_node_p = \
+            static_cast<const LeafDeleteNode *>(node_p);
+
+          auto it = key_value_set_p->find(delete_node_p->delete_key);
+          if(it == key_value_set_p->end()) {
+            bwt_printf("ERROR: Delete a value that does not exist\n");
+
+            assert(false);
+          }
+
+          it->second.erase(delete_node_p->value);
+
+          break;
+        } // case LeafDeleteType
+        default: {
+          bwt_printf("ERROR: Unknown delta node type: %d\n", type);
+
+          assert(false);
+        } // default
+      } // case type
+    } // for node_p in node_list
+
+    // Remove those whose value set is empty
+    for(auto it = key_value_set_p->begin();
+        it != key_value_set_p->end();
+        it++) {
+
+      // Hopefully this does not invalidate it...
+      if(it->second.size() == 0) {
+        key_value_set_p->erase(it->first);
+      }
     }
 
     return;

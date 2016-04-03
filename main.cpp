@@ -21,6 +21,7 @@ using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
 using NodeID = typename TreeType::NodeID;
 using ValueSet = typename TreeType::ValueSet;
+using KeyValueSet = typename TreeType::KeyValueSet;
 using KeyType = typename TreeType::KeyType;
 
 NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
@@ -62,6 +63,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   leaf2->data_list.push_back({6, {6.66}});
   leaf2->data_list.push_back({7, {7.77}});
   leaf2->data_list.push_back({8, {8.188}});
+  leaf2->data_list.push_back({15, {15.15}});
 
   LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
 
@@ -73,7 +75,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   LeafSplitNode *split1 = new LeafSplitNode{10, 102, 2, insert2};
   LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.288, 3, split1};
 
-  // NOTE: Merge needs also to keep a upperbound
+  // NOTE: Merge needs also to keep an upperbound
   LeafMergeNode *merge1 = new LeafMergeNode{6, 11, delete1, 2, insert1};
   LeafRemoveNode *remove1 = new LeafRemoveNode{100, 4, delete1};
 
@@ -82,10 +84,21 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   t->InstallNewNode(102, insert3);
 
   ValueSet value_set{};
-  t->ReplayLogOnLeafByKey(14, remove1, &value_set);
+  t->ReplayLogOnLeafByKey(14, merge1, &value_set);
 
   for(auto it: value_set) {
     bwt_printf("Values = %lf\n", it);
+  }
+
+  KeyValueSet key_value_set{};
+  t->CollectAllValuesOnLeaf(merge1, &key_value_set);
+
+  for(auto &it : key_value_set) {
+    bwt_printf("key = %d\n", it.first.key);
+
+    for(double it2 : key_value_set[it.first]) {
+      bwt_printf("    Value = %lf\n", it2);
+    }
   }
 
   return;
