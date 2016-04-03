@@ -52,9 +52,6 @@ void GetNextNodeIDTest(BwTree<int, double> *tree_p) {
 
 void CollectDeltaPoniterTest1(TreeType *t) {
   LeafNode *leaf1 = new LeafNode{1, 6, 101};
-  //DataItem dt1;
-  //DataItem dt2;
-  //DataItem dt4;
   leaf1->data_list.push_back({1, {1.11}});
   leaf1->data_list.push_back({2, {2.22}});
   leaf1->data_list.push_back({4, {4.44}});
@@ -62,9 +59,6 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   LeafInsertNode *insert1 = new LeafInsertNode{3, 3.33, 1, leaf1};
 
   LeafNode *leaf2 = new LeafNode{6, 11, 102};
-  //DataItem dt6{6, {6.66}};
-  //DataItem dt7{7, {7.77}};
-  //DataItem dt8{8, {8.88}};
   leaf2->data_list.push_back({6, {6.66}});
   leaf2->data_list.push_back({7, {7.77}});
   leaf2->data_list.push_back({8, {8.188}});
@@ -72,8 +66,6 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
 
   LeafNode *leaf3 = new LeafNode{11, 16, INVALID_NODE_ID};
-  //DataItem dt12{12, {12.12}};
-  //DataItem dt14{14, {14.14}};
   leaf3->data_list.push_back({12, {12.12}});
   leaf3->data_list.push_back({14, {14.14}});
 
@@ -81,7 +73,8 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   LeafSplitNode *split1 = new LeafSplitNode{10, 102, 2, insert2};
   LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.288, 3, split1};
 
-  LeafMergeNode *merge1 = new LeafMergeNode{6, delete1, 2, insert1};
+  // NOTE: Merge needs also to keep a upperbound
+  LeafMergeNode *merge1 = new LeafMergeNode{6, 11, delete1, 2, insert1};
   LeafRemoveNode *remove1 = new LeafRemoveNode{100, 4, delete1};
 
   t->InstallNewNode(100, merge1);

@@ -20,9 +20,9 @@
 #include <mutex>
 #include <string>
 #include <iostream>
-#include <cassert>
 #include <set>
 #include <unordered_set>
+#include <map>
 
 #define BWTREE_DEBUG
 //#define INTERACTIVE_DEBUG
@@ -120,6 +120,7 @@ class BwTree {
 
  public:
   class BaseNode;
+  class KeyType;
 
  /*
   * private: Basic type definition
@@ -135,8 +136,10 @@ class BwTree {
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
-  using KeyValueSet = std::map<RawKeyType, ValueSet>;
+  using RawKeyValueSet = std::map<RawKeyType, ValueSet>;
+  using KeyValueSet = std::map<KeyType, ValueSet>;
   using NodePointerList = std::vector<BaseNode *>;
+  using ConstNodePointerList = std::vector<const BaseNode *>;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -647,10 +650,16 @@ class BwTree {
    public:
     KeyType merge_key;
 
+    // Since merge delta also changes the upper bound of a
+    // logical node, we need to record this as an update
+    // to "upperbound" field of a logical page, and
+    KeyType merge_ubound;
+
     // For merge nodes we use actual physical pointer
     // to indicate that the right half is already part
     // of the logical node
     const BaseNode *right_merge_p;
+
     int depth;
 
     const BaseNode *child_node_p;
@@ -659,11 +668,13 @@ class BwTree {
      * Constructor
      */
     LeafMergeNode(const KeyType &p_merge_key,
+                  const KeyType &p_merge_ubound,
                   const BaseNode *p_right_merge_p,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
     BaseNode{NodeType::LeafMergeType},
     merge_key{p_merge_key},
+    merge_ubound{p_merge_ubound},
     right_merge_p{p_right_merge_p},
     depth{p_depth},
     child_node_p{p_child_node_p}
@@ -1131,7 +1142,7 @@ class BwTree {
    */
   const BaseNode *CollectDeltaPointer(const KeyType &search_key,
                                       const BaseNode *leaf_node_p,
-                                      NodePointerList *pointer_list_p,
+                                      ConstNodePointerList *pointer_list_p,
                                       TreeSnapshot *real_tree) const {
     if(real_tree != nullptr) {
       // If the NodeID does not change then these two are retnrned to
@@ -1299,7 +1310,7 @@ class BwTree {
   void ReplayLogOnLeafByKey(const KeyType &search_key,
                             const BaseNode *leaf_head_node_p,
                             ValueSet *value_set_p) const {
-    NodePointerList delta_node_list{};
+    ConstNodePointerList delta_node_list{};
 
     // We specify a key for the rouine to collect
     const BaseNode *ret = \
@@ -1370,20 +1381,34 @@ class BwTree {
    * This function only travels using physical pointer, which implies
    * that it does not deal with LeafSplitNode and LeafRemoveNode
    * For LeafSplitNode it only collects value on child node
-   * For LeafRemoveNode it just returns
-   * If LeafRemoveNode is not the topmost node it fails
+   * For LeafRemoveNode it fails assertion
+   * If LeafRemoveNode is not the topmost node it also fails assertion
    *
    * NOTE: This function calls itself to collect values in a merge node
    * since logically speaking merge node consists of two delta chains
    * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
    * "Recursive" suffix)
+   *
+   * NOTE 2: This function tracks the upperbound of a logical
+   * page using split node and merge node, since logically they are both
+   * considered to be overwriting the uppberbound. All keys larger than
+   * the upperbound will not be collected, since during a node split,
+   * it is possible that there are obsolete keys left in the base leaf
+   * page.
+   *
+   * NOTE 3: This function only collects delta node pointers, and
+   * arrange key-values pairs ONLY in base page. What should be done in
+   * the wrapper is to replay all deltas onto key_value_set_p
+   * For merge delta nodes, it would serialize delta updates to its
+   * two children but that does not matter, since delta updates in
+   * the two branches do not have any key in common (if we do it correctly)
+   *
    */
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *leaf_node_p,
                                   KeyValueSet *key_value_set_p,
-                                  NodePointerList *node_list_p,
-                                  const KeyType *upper_bound_key_p,
-                                  const KeyType *prev_bound_key_p) const {
+                                  ConstNodePointerList *node_list_p,
+                                  const KeyType *upper_bound_key_p) const {
     bool first_time = true;
 
     while(1) {
@@ -1430,6 +1455,8 @@ class BwTree {
           node_list_p->push_back(insert_node_p);
 
           leaf_node_p = insert_node_p->child_node_p;
+
+          break;
         } // case LeafInsertNode
         case NodeType::LeafDeleteNode: {
           const LeafInsertNode *delete_node_p = \
@@ -1438,6 +1465,8 @@ class BwTree {
           node_list_p->push_back(delete_node_p);
 
           leaf_node_p = delete_node_p->child_node_p;
+
+          break;
         } // case LeafDeleteNode
         case NodeType::LeafRemoveType: {
           // If we see a remove node, then this node is removed
@@ -1448,7 +1477,8 @@ class BwTree {
           assert(node_list_p->size() == 0);
           assert(key_value_set_p->size() == 0);
 
-          return;
+          // Fail here
+          assert(false);
         } // case LeafRemoveType
         case NodeType::LeafSplitType: {
           const LeafSplitNode *split_node_p = \
@@ -1459,28 +1489,37 @@ class BwTree {
           // Since this is the latest change to its upperbound
           if(upper_bound_key_p == nullptr) {
             upper_bound_key_p = &split_node_p->split_key;
-          } else if(prev_bound_key_p != nullptr) {
-            // Even if it is not the first split node we have seen
-            // it is good for us to verify that the newer split node
-            // having a more strict bound than the older
-            // since lower bound never change once it is mapped,
-            // the only possible trend for upperbound is to become more
-            // and more strict
-            assert(KeyCmpLess(split_node_p->split_key, *prev_bound_key_p));
           }
 
-          prev_bound_key_p = &split_node_p->split_key;
-
           leaf_node_p = split_node_p->child_node_p;
+
+          break;
         } // case LeafSplitType
         case NodeType::LeafMergeType: {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(leaf_node_p);
 
+          if(upper_bound_key_p == nullptr) {
+            upper_bound_key_p = &merge_node_p->merge_ubound;
+          }
 
+          /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
+          CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
+                                          key_value_set_p,
+                                          node_list_p,
+                                          upper_bound_key_p);
+          CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
+                                          key_value_set_p,
+                                          node_list_p,
+                                          upper_bound_key_p);
 
-          leaf_node_p = merge_node_p->child_node_p;
+          return;
         } // case LeafMergeType
+        default: {
+          bwt_printf("ERROR: Unknown node type: %d\n", type);
+
+          assert(false);
+        } // default
       }
 
       first_time = false;
