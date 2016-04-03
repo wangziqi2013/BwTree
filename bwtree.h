@@ -778,6 +778,132 @@ class BwTree {
     {}
   };
 
+  /*
+   * LogicalLeafNode() - A logical representation of a logical node
+   *                     which is physically one or more chains of
+   *                     delta node, SMO node and base nodes.
+   *
+   * This structure is usually used as a container to hold intermediate
+   * results for a whole page operation. The caller fills in ID and pointer
+   * field, while callee would fill the other fields
+   */
+  class LogicalLeafNode {
+   public:
+    // These fields are filled by callee
+    KeyValueSet key_value_set;
+    // These two needs to be null to indicate whether
+    // they are valid or not
+    const KeyType *ubound_p;
+    const KeyType *lbound_p;
+    NodeID next_node_id;
+
+    // This is used to temporarily hold results, and should be empty
+    // after all deltas has been applied
+    ConstNodePointerList pointer_list;
+
+    // Two components are usually provided by the caller
+    TreeSnapshot snapshot;
+
+    /*
+     * Constructor - Initialize logical ID and physical pointer
+     *               as the tree snapshot
+     */
+    LogicalLeafNode(TreeSnapshot p_snapshot) :
+      key_value_set{},
+      ubound_p{nullptr},
+      lbound_p{nullptr},
+      next_node_id{INVALID_NODE_ID},
+      pointer_list{},
+      snapshot{p_snapshot}
+    {}
+
+    /*
+     * BulkLoadValue() - Load a vector of ValueType into the given key
+     *
+     * Parameter is given by a DataItem reference which points to the
+     * data field from some leaf base node
+     */
+    void BulkLoadValue(const DataItem &item) {
+      auto ret = key_value_set.emplace(std::make_pair(item.key, ValueSet{}));
+      // Make sure it does not already exist in key value set
+      assert(ret.second == true);
+      // This points to the newly constructed ValueSet
+      auto it = ret.first;
+
+      // Take advantange of the bulk load method in unordered_map
+      it->second.insert(item.value_list.begin(), item.value_list.end());
+
+      return;
+    }
+
+    /*
+     * ReplayLog() - This function iterates through delta nodes
+     *               in the reverse order that they are pushed
+     *               and apply them to the key value set
+     */
+    void ReplayLog() {
+      // For each insert/delete delta, replay the change on top
+      // of base page values
+      for(auto node_p_it = pointer_list.rbegin();
+          node_p_it != pointer_list.rend();
+          node_p_it++) {
+        const BaseNode *node_p = *node_p_it;
+        NodeType type = node_p->GetType();
+
+        switch(type) {
+          case NodeType::LeafInsertType: {
+            const LeafInsertNode *insert_node_p = \
+              static_cast<const LeafInsertNode *>(node_p);
+
+            auto it = key_value_set.find(insert_node_p->insert_key);
+            if(it == key_value_set.end()) {
+              // If the key does not exist yet we create a new value set
+              auto ret = key_value_set.emplace( \
+                std::make_pair(insert_node_p->insert_key,
+                               ValueSet{})
+              );
+
+              // Insertion always happen
+              assert(ret.second == true);
+
+              // Now assign the newly allocated slot for the new key to it
+              // so that we could use it later
+              it = ret.first;
+            }
+
+            // it is either newly allocated or already exists
+            it->second.insert(insert_node_p->value);
+
+            break;
+          } // case LeafInsertType
+          case NodeType::LeafDeleteType: {
+            const LeafDeleteNode *delete_node_p = \
+              static_cast<const LeafDeleteNode *>(node_p);
+
+            auto it = key_value_set.find(delete_node_p->delete_key);
+            if(it == key_value_set.end()) {
+              bwt_printf("ERROR: Delete a value that does not exist\n");
+
+              assert(false);
+            }
+
+            it->second.erase(delete_node_p->value);
+
+            break;
+          } // case LeafDeleteType
+          default: {
+            bwt_printf("ERROR: Unknown delta node type: %d\n", type);
+
+            assert(false);
+          } // default
+        } // case type
+      } // for node_p in node_list
+
+      return;
+    }
+
+  };
+
 
  /*
   * Interface Method Implementation
@@ -1271,6 +1397,11 @@ class BwTree {
             if(real_tree != nullptr) {
               // Same as that in RemoveNode since the NodeID has changed
               real_tree->first = split_sibling_id;
+
+              // We must keep using the same pointer to ensure consistency:
+              // GetNode() actually serializes access to a node's physical pointer
+              // so that in 1 atomic operation we could have only 1 such
+              // serialization point
               real_tree->second = const_cast<BaseNode *>(leaf_node_p);
             }
 
@@ -1414,9 +1545,9 @@ class BwTree {
    */
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *leaf_node_p,
-                                  KeyValueSet *key_value_set_p,
-                                  ConstNodePointerList *node_list_p,
-                                  const KeyType *upper_bound_key_p) const {
+                                  LogicalLeafNode *logical_node_p,
+                                  bool collect_lbound,
+                                  bool collect_ubound) const {
     bool first_time = true;
 
     while(1) {
@@ -1433,29 +1564,34 @@ class BwTree {
             // If we find a key in the leaf page which is >= the latest
             // separator key of a split node (if there is one) then ignore
             // these key since they have been now stored in another leaf
-            if(upper_bound_key_p != nullptr && \
-               KeyCmpGreaterEqual(data_item.key, *upper_bound_key_p)) {
+            if(logical_node_p->ubound_p != nullptr && \
+               KeyCmpGreaterEqual(data_item.key, *logical_node_p->ubound_p)) {
               bwt_printf("Obsolete key has already been placed"
                          " into split sibling\n");
 
               continue;
             }
 
-            // For each new key, make a new value in-place
-            // (they are stored as <key, value> pair in std::map)
-            auto ret = key_value_set_p->emplace(std::make_pair(data_item.key,
-                                                               ValueSet{}));
-
-            // Assert the item is always newly created
-            assert(ret.second == true);
-            // First element is iterator to newly inserted element
-            auto it = ret.first;
-
-            // Add all values into the output set
-            for(auto &it2 : data_item.value_list) {
-              it->second.insert(it2);
-            } // for auto it2 : data_item.value_list ...
+            // Load all values in the vector using the given key
+            logical_node_p->BulkLoadValue(data_item);
           } // for auto it : data_item ...
+
+          // Then try to fill in ubound and lbound
+          if(collect_lbound == true) {
+            // Since lbound should not be changed by delta nodes
+            // it must be not set by any other nodes
+            assert(logical_node_p->lbound_p == nullptr);
+
+            logical_node_p->lbound_p = &leaf_base_p->lbound;
+          }
+
+          // If we want to collect upperbound and also the ubound
+          // has not been set by delta nodes then just set it here
+          // as the leaf's ubound
+          if(collect_ubound == true && \
+             logical_node_p->ubound_p == nullptr) {
+            logical_node_p->ubound_p = &leaf_base_p->ubound;
+          }
 
           return;
         } // case LeafType
@@ -1463,7 +1599,7 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(leaf_node_p);
 
-          node_list_p->push_back(insert_node_p);
+          logical_node_p->pointer_list.push_back(insert_node_p);
 
           leaf_node_p = insert_node_p->child_node_p;
 
@@ -1473,7 +1609,7 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(leaf_node_p);
 
-          node_list_p->push_back(delete_node_p);
+          logical_node_p->pointer_list.push_back(delete_node_p);
 
           leaf_node_p = delete_node_p->child_node_p;
 
@@ -1487,8 +1623,8 @@ class BwTree {
           assert(first_time == true);
 
           // These two are trivial but just put them here for safety
-          assert(node_list_p->size() == 0);
-          assert(key_value_set_p->size() == 0);
+          assert(logical_node_p->key_value_set.size() == 0);
+          assert(logical_node_p->pointer_list.size() == 0);
 
           // Fail here
           assert(false);
@@ -1500,8 +1636,9 @@ class BwTree {
           // If we have not seen a split node, then this is the first one
           // and we need to remember the upperbound for the logical page
           // Since this is the latest change to its upperbound
-          if(upper_bound_key_p == nullptr) {
-            upper_bound_key_p = &split_node_p->split_key;
+          if(logical_node_p->ubound_p == nullptr && \
+             collect_ubound == true) {
+            logical_node_p->ubound_p = &split_node_p->split_key;
           }
 
           leaf_node_p = split_node_p->child_node_p;
@@ -1514,19 +1651,21 @@ class BwTree {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(leaf_node_p);
 
-          if(upper_bound_key_p == nullptr) {
-            upper_bound_key_p = &merge_node_p->merge_ubound;
+          if(logical_node_p->ubound_p == nullptr && \
+             collect_ubound == true) {
+            logical_node_p->ubound_p = &merge_node_p->merge_ubound;
           }
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
-                                          key_value_set_p,
-                                          node_list_p,
-                                          upper_bound_key_p);
+                                          logical_node_p,
+                                          collect_lbound,
+                                          false); // Always not collect ubound
+
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
-                                          key_value_set_p,
-                                          node_list_p,
-                                          upper_bound_key_p);
+                                          logical_node_p,
+                                          false, // Always not collect lbound
+                                          collect_ubound);
 
           return;
         } // case LeafMergeType
@@ -1552,82 +1691,18 @@ class BwTree {
    * it replays delta records on top of them.
    */
   void
-  CollectAllValuesOnLeaf(const BaseNode *leaf_node_p,
-                         KeyValueSet *key_value_set_p) {
-    ConstNodePointerList node_list{};
+  CollectAllValuesOnLeaf(LogicalLeafNode *logical_node_p) {
 
-    // For the first call always use nullptr as upperbound key since
-    // only split and merge nodes overwrite the natural upperbound
-    CollectAllValuesOnLeafRecursive(leaf_node_p,
-                                    key_value_set_p,
-                                    &node_list,
-                                    nullptr);
+    // We want to collect both ubound and lbound in this call
+    // These two flags will be set to false for every node
+    // that is neither a left not right most node
+    CollectAllValuesOnLeafRecursive(logical_node_p->snapshot.second,
+                                    logical_node_p,
+                                    true,
+                                    true);
 
-    // Next for each insert/delete delta, replay the change on top
-    // of base page values
-    for(auto node_p_it = node_list.rbegin();
-        node_p_it != node_list.rend();
-        node_p_it++) {
-      const BaseNode *node_p = *node_p_it;
-      NodeType type = node_p->GetType();
-
-      switch(type) {
-        case NodeType::LeafInsertType: {
-          const LeafInsertNode *insert_node_p = \
-            static_cast<const LeafInsertNode *>(node_p);
-
-          auto it = key_value_set_p->find(insert_node_p->insert_key);
-          if(it == key_value_set_p->end()) {
-            auto ret = key_value_set_p->emplace( \
-              std::make_pair(insert_node_p->insert_key,
-                             ValueSet{})
-            );
-
-            // Insertion always happen
-            assert(ret.second == true);
-            // Now assign the newly allocated slot for the new key to it
-            // so that we could use it later
-            it = ret.first;
-          }
-
-          // it is either newly allocated or already exists
-          it->second.insert(insert_node_p->value);
-
-          break;
-        } // case LeafInsertType
-        case NodeType::LeafDeleteType: {
-          const LeafDeleteNode *delete_node_p = \
-            static_cast<const LeafDeleteNode *>(node_p);
-
-          auto it = key_value_set_p->find(delete_node_p->delete_key);
-          if(it == key_value_set_p->end()) {
-            bwt_printf("ERROR: Delete a value that does not exist\n");
-
-            assert(false);
-          }
-
-          it->second.erase(delete_node_p->value);
-
-          break;
-        } // case LeafDeleteType
-        default: {
-          bwt_printf("ERROR: Unknown delta node type: %d\n", type);
-
-          assert(false);
-        } // default
-      } // case type
-    } // for node_p in node_list
-
-    // Remove those whose value set is empty
-    for(auto it = key_value_set_p->begin();
-        it != key_value_set_p->end();
-        it++) {
-
-      // Hopefully this does not invalidate it...
-      if(it->second.size() == 0) {
-        key_value_set_p->erase(it->first);
-      }
-    }
+    // Apply delta changes to the base key value set
+    logical_node_p->ReplayLog();
 
     return;
   }
