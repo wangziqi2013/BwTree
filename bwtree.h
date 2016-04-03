@@ -840,6 +840,12 @@ class BwTree {
      * ReplayLog() - This function iterates through delta nodes
      *               in the reverse order that they are pushed
      *               and apply them to the key value set
+     *
+     * NOTE: This method does not check for empty keys, i.e. even if
+     * the value set for a given key is empty, we still let it be
+     * So don't rely on the key map size to determine space needed
+     * to store the list; also when packing this into a leaf node
+     * we need to check for emptiness and remove
      */
     void ReplayLog() {
       // For each insert/delete delta, replay the change on top
@@ -902,6 +908,9 @@ class BwTree {
       return;
     }
 
+    void ToLeafNode() {
+
+    }
   };
 
 
@@ -1585,6 +1594,15 @@ class BwTree {
             logical_node_p->lbound_p = &leaf_base_p->lbound;
           }
 
+          // fill in next node id if it has not been changed by
+          // some slit delta
+          if(logical_node_p->next_node_id == INVALID_NODE_ID && \
+             collect_ubound == true) {
+            // This logically updates the next node pointer for a
+            // logical node
+            logical_node_p->next_node_id = leaf_base_p->next_node_id;
+          }
+
           // If we want to collect upperbound and also the ubound
           // has not been set by delta nodes then just set it here
           // as the leaf's ubound
@@ -1639,6 +1657,15 @@ class BwTree {
           if(logical_node_p->ubound_p == nullptr && \
              collect_ubound == true) {
             logical_node_p->ubound_p = &split_node_p->split_key;
+          }
+
+          // Must test collect_ubound since we only collect
+          // next node id for the right most node
+          if(logical_node_p->next_node_id == INVALID_NODE_ID && \
+             collect_ubound == true) {
+            // This logically updates the next node pointer for a
+            // logical node
+            logical_node_p->next_node_id = split_node_p->split_sibling;
           }
 
           leaf_node_p = split_node_p->child_node_p;
