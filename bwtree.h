@@ -420,9 +420,26 @@ class BwTree {
     // logic to identify situation to data manipulation routines
     std::vector<ValueType> value_list;
 
+    /*
+     * Constructor - Use a value vector to construct
+     *
+     * This method is mainly called for debugging purpose
+     */
     DataItem(const KeyType &p_key, const std::vector<ValueType> &p_value_list) :
       key{p_key},
-      value_list{p_value_list} {}
+      value_list{p_value_list}
+    {}
+
+    /*
+     * Constructor - Use a value set to construct
+     *
+     * It bulk loads the value vector with an unordered set's begin()
+     * and end() iterator
+     */
+    DataItem(const KeyType &p_key, const ValueSet &p_value_set, bool) :
+      key{p_key},
+      value_list{p_value_set.begin(), p_value_set.end()}
+    {}
 
     /*
      * Move Constructor - We move value list to save space
@@ -908,9 +925,35 @@ class BwTree {
       return;
     }
 
-    void ToLeafNode() {
+    /*
+     * ToLeafNode() - Convert this logical node into a leaf node
+     *
+     * The most significant change would be to marshal the hash table
+     * and map used to store keys and values into a two dimentional vector
+     * of keys and values
+     *
+     * NOTE: This routine allocates memory for leaf page!!!!!!!!!!!!!
+     */
+    LeafNode *ToLeafNode() {
+      LeafNode *leaf_node_p = new LeafNode(*lbound_p, *ubound_p, next_node_id);
 
+      // The key is already ordered, we just need to check for value
+      // emptiness
+      for(auto &it : key_value_set) {
+        if(it.second.size() == 0) {
+          bwt_printf("Skip empty value set\n");
+
+          continue;
+        }
+
+        // Construct a data item in-place
+        // NOTE: The third parameter is just for disambiguity
+        leaf_node_p->data_list.emplace({it.first, it->second}, true);
+      }
+
+      return leaf_node_p;
     }
+
   };
 
 
