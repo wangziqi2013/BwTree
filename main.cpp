@@ -25,6 +25,8 @@ using KeyValueSet = typename TreeType::KeyValueSet;
 using KeyType = typename TreeType::KeyType;
 using LogicalLeafNode = typename TreeType::LogicalLeafNode;
 using TreeSnapshot = typename TreeType::TreeSnapshot;
+using LogicalInnerNode = typename TreeType::LogicalInnerNode;
+using BaseNode = typename TreeType::BaseNode;
 
 NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
 
@@ -114,6 +116,38 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   return;
 }
 
+void LocateLeftSiblingTest(TreeType *t) {
+  LogicalInnerNode lin{{0, nullptr}};
+
+  KeyType ubound{50};
+  KeyType lbound{1};
+
+  lin.ubound_p = &ubound;
+  lin.lbound_p = &lbound;
+
+  /*
+  lin.key_value_map[KeyType{1}] = 1;
+  lin.key_value_map[KeyType{10}] = 2;
+  lin.key_value_map[KeyType{20}] = 3;
+  lin.key_value_map[KeyType{30}] = 4;
+  lin.key_value_map[KeyType{40}] = 5;
+  */
+
+  //lin.key_value_map[KeyType{1}] = 1;
+  //lin.key_value_map[KeyType{10}] = 2;
+
+  //KeyType search_key{1};
+  //KeyType search_key{12};
+  //KeyType search_key{30};
+  KeyType search_key{9};
+
+  NodeID node_id = t->LocateLeftSiblingByKey(search_key, &lin);
+
+  bwt_printf("Left sib NodeId for key %d is %lu\n", search_key.key, node_id);
+
+  return;
+}
+
 
 int main() {
   BwTree<int, double> *t1 = new BwTree<int, double>{};
@@ -131,6 +165,7 @@ int main() {
   t1->TraverseDownInnerNode(k1, &ph);
 
   CollectDeltaPoniterTest1(t1);
+  LocateLeftSiblingTest(t1);
 
   return 0;
 }

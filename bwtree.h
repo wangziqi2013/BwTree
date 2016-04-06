@@ -137,7 +137,6 @@ class BwTree {
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
-  using RawKeyValueSet = std::map<RawKeyType, ValueSet, KeyComparator>;
   using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
   using NodePointerList = std::vector<BaseNode *>;
   using ConstNodePointerList = std::vector<const BaseNode *>;
@@ -997,6 +996,7 @@ class BwTree {
    * be able to sequentially access all separators
    */
   class LogicalInnerNode {
+   public:
     KeySingleValueMap key_value_map;
 
     const KeyType *lbound_p;
@@ -1200,6 +1200,14 @@ class BwTree {
    * GetNode() - Return the pointer mapped by a node ID
    *
    * This function checks the validity of the node ID
+   *
+   * NOTE: This function fixes a snapshot; its counterpart using
+   * CAS instruction to install a new node creates new snapshot
+   * and the serialization order of these two atomic operations
+   * determines actual serialization order
+   *
+   * If we want to keep the same snapshot then we should only
+   * call GetNode() once and stick to that physical pointer
    */
   BaseNode *GetNode(const NodeID node_id) const {
     assert(node_id != INVALID_NODE_ID);
@@ -1280,9 +1288,16 @@ class BwTree {
    */
   NodeID LocateLeftSiblingByKey(const KeyType &search_key,
                                 const LogicalInnerNode *logical_inner_p) {
-    // This could happen at runtime, so make it an error report
-    if(KeyCmpLess(search_key, *logical_inner_p->ubound_p)) {
+    // This could happen when the inner node splits
+    if(KeyCmpGreaterEqual(search_key, *logical_inner_p->ubound_p)) {
       bwt_printf("ERROR: Search key >= inner node upper bound!\n");
+
+      assert(false);
+    }
+
+    // This is definitely an error no matter whar happened
+    if(KeyCmpLess(search_key, *logical_inner_p->lbound_p)) {
+      bwt_printf("ERROR: Search key < inner node lower bound!\n");
 
       assert(false);
     }
@@ -1300,9 +1315,17 @@ class BwTree {
     // Initialize two iterators from an ordered map
     // We are guaranteed that it1 and it2 are not null
     auto it1 = logical_inner_p->key_value_map.begin();
-    auto it2 = it1 + 1;
-    auto it3 = it2 + 1;
 
+    // NOTE: std::map iterators are only bidirectional, which means it does
+    // not support random + operation. Must use std::move or std::advance
+    auto it2 = std::next(it1, 1);
+    // Since we only restrict # of elements to be >= 2, it3 could be end()
+    auto it3 = std::next(it2, 1);
+
+    // We should not match first entry since there is no direct left
+    // and in the situation of remove, we always do not remove
+    // the left most child in any node since this would change
+    // the lower bound of that node which is guaranteed not to change
     if(KeyCmpGreaterEqual(search_key, it1->first) && \
        KeyCmpLess(search_key, it2->first)) {
       bwt_printf("ERROR: First entry is matched\n");
@@ -1334,6 +1357,8 @@ class BwTree {
       it2++;
       it3++;
     }
+
+    bwt_printf("ERROR: Left sibling not found; Please check key before entering\n");
 
     // Loop will not break to here
     assert(false);
