@@ -1594,12 +1594,19 @@ class BwTree {
    * two children but that does not matter, since delta updates in
    * the two branches do not have any key in common (if we do it correctly)
    *
+   * NOTE 4: Despite the seemingly obsecure naming, this function actually
+   * has an option that serves as an optimization when we only want metadata
+   * (e.g. ubound, lbound, next ID) but not actual value. This saves some
+   * computing resource. We need metadata only e.g. when we are going to verify
+   * whether the upperbound of a page matches the lower bound of a given page
+   * to confirm that we have found the left sibling of a node
    */
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *leaf_node_p,
                                   LogicalLeafNode *logical_node_p,
                                   bool collect_lbound,
-                                  bool collect_ubound) const {
+                                  bool collect_ubound,
+                                  bool collect_value) const {
     bool first_time = true;
 
     while(1) {
@@ -1612,21 +1619,24 @@ class BwTree {
           const LeafNode *leaf_base_p = \
             static_cast<const LeafNode *>(leaf_node_p);
 
-          for(auto &data_item : leaf_base_p->data_list) {
-            // If we find a key in the leaf page which is >= the latest
-            // separator key of a split node (if there is one) then ignore
-            // these key since they have been now stored in another leaf
-            if(logical_node_p->ubound_p != nullptr && \
-               KeyCmpGreaterEqual(data_item.key, *logical_node_p->ubound_p)) {
-              bwt_printf("Obsolete key has already been placed"
-                         " into split sibling\n");
+          // If we collect values into logical node pointer
+          if(collect_value == true) {
+            for(auto &data_item : leaf_base_p->data_list) {
+              // If we find a key in the leaf page which is >= the latest
+              // separator key of a split node (if there is one) then ignore
+              // these key since they have been now stored in another leaf
+              if(logical_node_p->ubound_p != nullptr && \
+                 KeyCmpGreaterEqual(data_item.key, *logical_node_p->ubound_p)) {
+                bwt_printf("Obsolete key has already been placed"
+                           " into split sibling\n");
 
-              continue;
-            }
+                continue;
+              }
 
-            // Load all values in the vector using the given key
-            logical_node_p->BulkLoadValue(data_item);
-          } // for auto it : data_item ...
+              // Load all values in the vector using the given key
+              logical_node_p->BulkLoadValue(data_item);
+            } // for auto it : data_item ...
+          }
 
           // Then try to fill in ubound and lbound
           if(collect_lbound == true) {
@@ -1638,7 +1648,7 @@ class BwTree {
           }
 
           // fill in next node id if it has not been changed by
-          // some slit delta
+          // some split delta way down the delta chain
           if(logical_node_p->next_node_id == INVALID_NODE_ID && \
              collect_ubound == true) {
             // This logically updates the next node pointer for a
