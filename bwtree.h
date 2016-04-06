@@ -1740,12 +1740,14 @@ class BwTree {
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
                                           logical_node_p,
                                           collect_lbound,
-                                          false); // Always not collect ubound
+                                          false,  // Always not collect ubound
+                                          collect_value);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
                                           logical_node_p,
                                           false, // Always not collect lbound
-                                          collect_ubound);
+                                          collect_ubound,
+                                          collect_value);
 
           return;
         } // case LeafMergeType
@@ -1779,10 +1781,34 @@ class BwTree {
     CollectAllValuesOnLeafRecursive(logical_node_p->snapshot.second,
                                     logical_node_p,
                                     true,
+                                    true,
                                     true);
 
     // Apply delta changes to the base key value set
     logical_node_p->ReplayLog();
+
+    return;
+  }
+
+  /*
+   * CollectMetadataOnLeaf() - Collects next ID, lbound and ubound on leaf
+   *
+   * This function wraps the recursive version of value collector, and
+   * it sets the flag to disable value collection
+   */
+  void CollectMetadataOnLeaf(LogicalLeafNode *logical_node_p) {
+    // We set collect_value flag to false to indicate that we are
+    // only interested in metadata itself
+    CollectAllValuesOnLeafRecursive(logical_node_p->snapshot.second,
+                                    logical_node_p,
+                                    true,
+                                    true,
+                                    false);
+
+    // Assume metadata are at least not empty, and there is no value
+    assert(logical_node_p->lbound_p != nullptr);
+    assert(logical_node_p->ubound_p != nullptr);
+    assert(logical_node_p->key_value_set.size() == 0);
 
     return;
   }
