@@ -93,6 +93,8 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   }
 
   LogicalLeafNode logical_leaf{{100, merge1}};
+  LogicalLeafNode logical_leaf_2{{100, merge1}};
+
   t->CollectAllValuesOnLeaf(&logical_leaf);
 
   for(auto &it : logical_leaf.key_value_set) {
@@ -106,6 +108,8 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   bwt_printf("Upperbound = %d, lowerbound = %d\n,",
              logical_leaf.ubound_p->key,
              logical_leaf.lbound_p->key);
+
+  t->CollectMetadataOnLeaf(&logical_leaf_2);
 
   return;
 }

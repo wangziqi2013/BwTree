@@ -142,6 +142,9 @@ class BwTree {
   using NodePointerList = std::vector<BaseNode *>;
   using ConstNodePointerList = std::vector<const BaseNode *>;
 
+  // This is used to hold single key and single value ordered mapping relation
+  using KeySingleValueMap = std::map<KeyType, ValueType, WrappedKeyComparator>;
+
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
@@ -515,6 +518,25 @@ class BwTree {
     virtual NodeType GetType() const final {
       return type;
     }
+
+    /*
+     * IsLeafRemoveNode() - Return true if it is
+     *
+     * This function is specially defined since we want to test
+     * for remove node as a special case
+     */
+    virtual bool IsLeafRemoveNode() const final {
+      return type == NodeType::LeafRemoveType;
+    }
+
+    /*
+     * IsInnerRemoveNode() - Return true if it is
+     *
+     * Same reason as above
+     */
+    virtual bool IsInnerRemoveNode() const final {
+      return type == NodeType::InnerRemoveType;
+    }
   };
 
   /*
@@ -599,11 +621,11 @@ class BwTree {
                    const ValueType &p_value,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::LeafDeleteType},
-    delete_key{p_delete_key},
-    value{p_value},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::LeafDeleteType},
+      delete_key{p_delete_key},
+      value{p_value},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -629,11 +651,11 @@ class BwTree {
                   NodeID p_split_sibling,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::LeafSplitType},
-    split_key{p_split_key},
-    split_sibling{p_split_sibling},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::LeafSplitType},
+      split_key{p_split_key},
+      split_sibling{p_split_sibling},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -657,10 +679,10 @@ class BwTree {
     LeafRemoveNode(NodeID p_remove_sibling,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::LeafRemoveType},
-    remove_sibling{p_remove_sibling},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::LeafRemoveType},
+      remove_sibling{p_remove_sibling},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -697,12 +719,12 @@ class BwTree {
                   const BaseNode *p_right_merge_p,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::LeafMergeType},
-    merge_key{p_merge_key},
-    merge_ubound{p_merge_ubound},
-    right_merge_p{p_right_merge_p},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::LeafMergeType},
+      merge_key{p_merge_key},
+      merge_ubound{p_merge_ubound},
+      right_merge_p{p_right_merge_p},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -724,10 +746,10 @@ class BwTree {
     InnerNode(const KeyType &p_lbound,
               const KeyType &p_ubound,
               NodeID p_next_node_id) :
-    BaseNode{NodeType::InnerType},
-    lbound{p_lbound},
-    ubound{p_ubound},
-    next_node_id{p_next_node_id}
+      BaseNode{NodeType::InnerType},
+      lbound{p_lbound},
+      ubound{p_ubound},
+      next_node_id{p_next_node_id}
     {}
   };
 
@@ -756,11 +778,11 @@ class BwTree {
                     const KeyType &p_next_key,
                     int p_depth,
                     const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::InnerInsertType},
-    insert_key{p_insert_key},
-    next_key{p_next_key},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::InnerInsertType},
+      insert_key{p_insert_key},
+      next_key{p_next_key},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -787,11 +809,11 @@ class BwTree {
                    NodeID p_split_sibling,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::InnerSplitType},
-    split_key{p_split_key},
-    split_sibling{p_split_sibling},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+      BaseNode{NodeType::InnerSplitType},
+      split_key{p_split_key},
+      split_sibling{p_split_sibling},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
     {}
   };
 
@@ -953,6 +975,47 @@ class BwTree {
 
       return leaf_node_p;
     }
+
+  };
+
+  /*
+   * LogicalInnerNode - Logical representation of an inner node
+   *
+   * This corresponds to a single-key single-value version logical
+   * page node with all delta changes applied to separator list
+   *
+   * The structure of this logical node is even more similar to
+   * InnerNode than its counterart for leaf. The reason is that
+   * for inner nodes, we do not have to worry about multi-value
+   * single-key, and thus the reconstruction algorithm does not
+   * require replaying the log.
+   *
+   * In order to do down-traversal we do not have to compress
+   * delta chain into a single logical node since the inner delta
+   * node is already optimized for doing traversal. However, when
+   * we perform left sibling locating, it is crucial for us to
+   * be able to sequentially access all separators
+   */
+  class LogicalInnerNode {
+    KeySingleValueMap key_value_map;
+
+    const KeyType *lbound_p;
+    const KeyType *ubound_p;
+
+    NodeID next_node_id;
+
+    TreeSnapshot snapshot;
+
+    /*
+     * Constructor - Accept an initial starting point and init others
+     */
+    LogicalInnerNode(TreeSnapshot p_snapshot) :
+      key_value_map{},
+      lbound_p{nullptr},
+      ubound_p{nullptr},
+      next_node_id{INVALID_NODE_ID},
+      snapshot{p_snapshot}
+    {}
 
   };
 
@@ -1163,13 +1226,13 @@ class BwTree {
   }
 
   /*
-   * LocateSeparatorForInnerNode() - Locate the child node for a key
+   * LocateSeparatorByKey() - Locate the child node for a key
    *
    * This functions works with any non-empty inner nodes. However
    * it fails assertion with empty inner node
    */
-  NodeID LocateSeparatorForInnerNode(const KeyType &search_key,
-                                     InnerNode *inner_node_p) const {
+  NodeID LocateSeparatorByKey(const KeyType &search_key,
+                              const InnerNode *inner_node_p) const {
     const std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
 
     // We do not know what to do for an empty inner node
@@ -1201,6 +1264,80 @@ class BwTree {
     assert(KeyCmpLess(search_key, inner_node_p->ubound));
 
     return iter1->node;
+  }
+
+  /*
+   * LocateLeftSiblingByKey() - Locate the left sibling given a key
+   *
+   * If the left sibling is not found (i.e. this is already the left most
+   * sep-key pair) then return INVALID_NODE_ID (Since we do not allow
+   * removing the left most node for each inner node)
+   *
+   * If the key is not in the range of the inner node (this is possible
+   * if the key was once included in the node, but then node splited)
+   * then assertion fail. This condition should be checked before calling
+   * this routine
+   */
+  NodeID LocateLeftSiblingByKey(const KeyType &search_key,
+                                const LogicalInnerNode *logical_inner_p) {
+    // This could happen at runtime, so make it an error report
+    if(KeyCmpLess(search_key, *logical_inner_p->ubound_p)) {
+      bwt_printf("ERROR: Search key >= inner node upper bound!\n");
+
+      assert(false);
+    }
+
+    // This could not happen, so make it an assert
+    assert(KeyCmpGreaterEqual(search_key, *logical_inner_p->lbound_p));
+
+    if(logical_inner_p->key_value_map.size() < 2) {
+      bwt_printf("ERROR: There is only %lu entry\n",
+                 logical_inner_p->key_value_map.size());
+
+      assert(false);
+    }
+
+    // Initialize two iterators from an ordered map
+    // We are guaranteed that it1 and it2 are not null
+    auto it1 = logical_inner_p->key_value_map.begin();
+    auto it2 = it1 + 1;
+    auto it3 = it2 + 1;
+
+    if(KeyCmpGreaterEqual(search_key, it1->first) && \
+       KeyCmpLess(search_key, it2->first)) {
+      bwt_printf("ERROR: First entry is matched\n");
+
+      assert(false);
+    }
+
+    while(1) {
+      // If we already reached the last sep-ID pair
+      // then only test the last sep
+      if(it3 == logical_inner_p->key_value_map.end()) {
+        if(KeyCmpGreaterEqual(search_key, it2->first)) {
+          return it1->second;
+        } else {
+          // This should not happen since we already tested it
+          // by upper bound
+          assert(false);
+        }
+      }
+
+      // If the second iterator matches the key (tested also with it3)
+      // then we return the first iterator's node ID
+      if(KeyCmpLess(search_key, it3->first) && \
+         KeyCmpGreaterEqual(search_key, it2->first)) {
+        return it1->second;
+      }
+
+      it1++;
+      it2++;
+      it3++;
+    }
+
+    // Loop will not break to here
+    assert(false);
+    return INVALID_NODE_ID;
   }
 
   /*
@@ -1274,7 +1411,7 @@ class BwTree {
         InnerNode *inner_node_p = \
           static_cast<InnerNode *>(current_node_p);
         NodeID subtree_id = \
-          LocateSeparatorForInnerNode(search_key, inner_node_p);
+          LocateSeparatorByKey(search_key, inner_node_p);
 
         current_node_id = subtree_id;
         SwitchToNewID(current_node_id,
