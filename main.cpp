@@ -81,7 +81,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
 
   // NOTE: Merge needs also to keep an upperbound
   LeafMergeNode *merge1 = new LeafMergeNode{6, 11, delete1, 2, insert1};
-  LeafRemoveNode *remove1 = new LeafRemoveNode{100, 4, delete1};
+  LeafRemoveNode *remove1 = new LeafRemoveNode{4, delete1};
 
   t->InstallNewNode(100, merge1);
   t->InstallNewNode(101, remove1);

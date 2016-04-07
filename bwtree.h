@@ -488,6 +488,11 @@ class BwTree {
   struct SepItem {
     KeyType key;
     NodeID node;
+
+    SepItem(const KeyType &p_key, NodeID p_node) :
+      key{p_key},
+      node{p_node}
+    {}
   };
 
   /*
@@ -666,8 +671,6 @@ class BwTree {
    */
   class LeafRemoveNode : public BaseNode {
    public:
-    NodeID remove_sibling;
-
     int depth;
 
     const BaseNode *child_node_p;
@@ -675,11 +678,9 @@ class BwTree {
     /*
      * Constructor
      */
-    LeafRemoveNode(NodeID p_remove_sibling,
-                   int p_depth,
+    LeafRemoveNode(int p_depth,
                    const BaseNode *p_child_node_p) :
       BaseNode{NodeType::LeafRemoveType},
-      remove_sibling{p_remove_sibling},
       depth{p_depth},
       child_node_p{p_child_node_p}
     {}
@@ -786,6 +787,47 @@ class BwTree {
   };
 
   /*
+   * class InnerDeleteNode - Delete node
+   *
+   * NOTE: There are three keys associated with this node, two of them
+   * defining
+   */
+  class InnerDeleteNode : public BaseNode {
+   public:
+    KeyType delete_key;
+    // These two defines a new range associated with this delete node
+    KeyType next_key;
+    KeyType prev_key;
+
+    NodeID merged_node_id;
+
+    int depth;
+
+    const BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     *
+     * NOTE: We need to provide three keys, two for defining a new
+     * range, and one for removing the index term from base node
+     */
+    InnerDeleteNode(const KeyType &p_delete_key,
+                    const KeyType &p_next_key,
+                    const KeyType &p_prev_key,
+                    NodeID p_merged_node_id,
+                    int p_depth,
+                    const BaseNode *p_child_node_p) :
+      BaseNode{NodeType::InnerDeleteType},
+      delete_key{p_delete_key},
+      next_key{p_next_key},
+      prev_key{p_prev_key},
+      merged_node_id{p_merged_node_id},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
+    {}
+  };
+
+  /*
    * class InnerSplitNode - Split inner nodes into two
    *
    * It has the same layout as leaf split node except for
@@ -811,6 +853,57 @@ class BwTree {
       BaseNode{NodeType::InnerSplitType},
       split_key{p_split_key},
       split_sibling{p_split_sibling},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
+    {}
+  };
+
+  /*
+   * class InnerMergeNode - Merge delta for inner nodes
+   */
+  class InnerMergeNode : public BaseNode {
+   public:
+    KeyType merge_key;
+
+    KeyType merge_ubound;
+    const BaseNode *right_merge_p;
+
+    int depth;
+
+    const BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    InnerMergeNode(const KeyType &p_merge_key,
+                   const KeyType &p_merge_ubound,
+                   const BaseNode *p_right_merge_p,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+      BaseNode{NodeType::InnerMergeType},
+      merge_key{p_merge_key},
+      merge_ubound{p_merge_ubound},
+      right_merge_p{p_right_merge_p},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
+    {}
+  };
+
+  /*
+   * class InnerRemoveNode
+   */
+  class InnerRemoveNode : public BaseNode {
+   public:
+    int depth;
+
+    BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    InnerRemoveNode(int p_depth,
+                    BaseNode *p_child_node_p) :
+      BaseNode{NodeType::InnerRemoveType},
       depth{p_depth},
       child_node_p{p_child_node_p}
     {}
@@ -968,7 +1061,10 @@ class BwTree {
         }
 
         // Construct a data item in-place
-        // NOTE: The third parameter is just for disambiguity
+        // NOTE: The third parameter is just for disambiguity (we overloaded
+        // the constructor to let it either receive an array of values or
+        // <key, value-vector> initializers). Compiler could not disambiguate
+        // without the extra dummy argument
         leaf_node_p->data_list.emplace({it.first, it->second}, true);
       }
 
@@ -1017,6 +1113,23 @@ class BwTree {
       snapshot{p_snapshot}
     {}
 
+    /*
+     * ToInnerNode() - Convert to inner node object
+     *
+     * This function allocates a chunk of memory from the heap, which
+     * should be freed by epoch manager.
+     */
+    InnerNode *ToInnerNode() {
+      InnerNode *inner_node_p = \
+        new InnerNode{*lbound_p, *ubound_p, next_node_id};
+
+      // Iterate through the ordered map and push separator items
+      for(auto &it : key_value_map) {
+        inner_node_p->sep_list.emplace({it.first, it.second});
+      }
+
+      return inner_node_p;
+    }
   };
 
 
