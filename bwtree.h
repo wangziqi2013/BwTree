@@ -1325,6 +1325,34 @@ class BwTree {
             type == NodeType::LeafType);
   }
 
+  /*
+   * CollectNewNodesSinceLastSnaoshot() - This function compares two different
+   *                                      snapshots
+   *
+   * If CAS fails then we know the snaoshot is no longer most up-to-date
+   * in which case we need to find out what happened between the time
+   * we took the snapshot and the time we did CAS
+   *
+   * There are three possibilities:
+   * (1) There are delta nodes appended onto the delta chain
+   *     In this case we could find pointer after traversing down
+   *     for some number of nodes
+   *     All new nodes excluding the common one and below are
+   *     pushed into node_list_p, and return false
+   * (2) The old delta chain has been consolidated and replaced
+   *     with a brand new one. There is no old pointers in the
+   *     new delta chain (epoch manager guarantees they will not
+   *     be recycled before the current thread exits)
+   *     In this case we will traverse down to the base node
+   *     and could not find a matching pointer
+   *     In this case the entire delta chain is pushed (naturally
+   *     because there is no common pointer) and return true
+   * (3) The NodeID has been deleted (so that new_pointer_p is nullptr)
+   *     because the NodeID has been removed and merged into its left
+   *     sibling.
+   *     Return true and node_list_p is empty
+   *
+   */
   bool CollectNewNodesSinceLastSnapshot(BaseNode *old_node_p,
                                         BaseNode *new_node_p,
                                         ConstNodePointerList *node_list_p) {
@@ -1334,6 +1362,8 @@ class BwTree {
 
     // Return true means the entire delta chain has changed
     if(new_node_p == nullptr) {
+      bwt_printf("The NodeID has been released permanently\n");
+
       return true;
     }
 
@@ -1341,23 +1371,28 @@ class BwTree {
       if(new_node_p != old_node_p) {
         node_list_p->push_back(new_node_p);
       } else {
+        bwt_printf("Find common pointer! Delta chain append.\n")
+
         // We have found two equivalent pointers
         // which implies the delta chain is only prolonged
         // but not consolidated or removed
         return false;
       }
 
-      NodeType type = new_node_p->GetType();
+      if(!new_node_p->IsDeltaNode()) {
+        bwt_printf("Did not find common pointer! Delta chian consolidated\n");
 
-      if(type == NodeType::InnerType || \
-         type == NodeType::LeafType) {
         // If we have reached the bottom and still do not
         // see equivalent pointers then the entire delta
         // chain has been consolidated
         return true;
       }
 
-      //new_node_p = new_node_p->
+      // Try next one
+      const DeltaNode *delta_node_p = \
+        static_cast<const DeltaNode *>(new_node_p);
+
+      new_node_p = delta_node_p->child_node_p;
     }
 
     assert(false);
@@ -1396,8 +1431,10 @@ class BwTree {
       iter2++;
     }
 
-    // This could only happen if we hit +Inf as separator
+    // This assertion failure could only happen if we
+    // hit +Inf as separator
     assert(iter1->node != INVALID_NODE_ID);
+
     // If search key >= upper bound then we have hit the wrong
     // inner node
     assert(KeyCmpLess(search_key, inner_node_p->ubound));
