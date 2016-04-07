@@ -541,6 +541,45 @@ class BwTree {
     virtual bool IsInnerRemoveNode() const final {
       return type == NodeType::InnerRemoveType;
     }
+
+    /*
+     * IsDeltaNode() - Return whether a node is delta node
+     *
+     * All nodes that are neither inner nor leaf type are of
+     * delta node type
+     */
+    virtual bool IsDeltaNode() const final {
+      if(type == NodeType::InnerType || \
+         type == NodeType::LeafType) {
+        return false;
+      } else {
+        return true;
+      }
+    }
+  };
+
+  /*
+   * class DeltaNode - Common element in a delta node
+   *
+   * Common elements include depth of the node and pointer to
+   * children node
+   */
+  class DeltaNode : public BaseNode {
+   public:
+    const int depth;
+
+    const BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    DeltaNode(NodeType p_type,
+              int p_depth,
+              const BaseNode *p_child_node_p) :
+      BaseNode{p_type},
+      depth{p_depth},
+      child_node_p{p_child_node_p}
+    {}
   };
 
   /*
@@ -576,16 +615,10 @@ class BwTree {
   /*
    * class LeafInsertNode - Insert record into a leaf node
    */
-  class LeafInsertNode : public BaseNode {
+  class LeafInsertNode : public DeltaNode {
    public:
     const KeyType insert_key;
     const ValueType value;
-
-    // This records the current length of the delta chain
-    // which facilitates consolidation
-    const int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -594,11 +627,9 @@ class BwTree {
                    const ValueType &p_value,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-    BaseNode{NodeType::LeafInsertType},
+    DeltaNode{NodeType::LeafInsertType, p_depth, p_child_node_p},
     insert_key{p_insert_key},
-    value{p_value},
-    depth{p_depth},
-    child_node_p{p_child_node_p}
+    value{p_value}
     {}
   };
 
@@ -609,14 +640,10 @@ class BwTree {
    * to delete. In single value mode, value is redundant but what we
    * could use for sanity check
    */
-  class LeafDeleteNode : public BaseNode {
+  class LeafDeleteNode : public DeltaNode {
    public:
     KeyType delete_key;
     ValueType value;
-
-    const int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -625,11 +652,9 @@ class BwTree {
                    const ValueType &p_value,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::LeafDeleteType},
+      DeltaNode{NodeType::LeafDeleteType, p_depth, p_child_node_p},
       delete_key{p_delete_key},
-      value{p_value},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      value{p_value}
     {}
   };
 
@@ -639,14 +664,10 @@ class BwTree {
    * It includes a separator key to direct search to a correct direction
    * and a physical pointer to find the current next node in delta chain
    */
-  class LeafSplitNode : public BaseNode {
+  class LeafSplitNode : public DeltaNode {
    public:
     KeyType split_key;
     NodeID split_sibling;
-
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -655,11 +676,9 @@ class BwTree {
                   NodeID p_split_sibling,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::LeafSplitType},
+      DeltaNode{NodeType::LeafSplitType, p_depth, p_child_node_p},
       split_key{p_split_key},
-      split_sibling{p_split_sibling},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      split_sibling{p_split_sibling}
     {}
   };
 
@@ -669,20 +688,15 @@ class BwTree {
    *
    * It does not contain data and acts as merely a redirection flag
    */
-  class LeafRemoveNode : public BaseNode {
+  class LeafRemoveNode : public DeltaNode {
    public:
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
      */
     LeafRemoveNode(int p_depth,
                    const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::LeafRemoveType},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      DeltaNode{NodeType::LeafRemoveType, p_depth, p_child_node_p}
     {}
   };
 
@@ -693,7 +707,7 @@ class BwTree {
    * half has become part of the current node and there is no other way
    * to access it
    */
-  class LeafMergeNode : public BaseNode {
+  class LeafMergeNode : public DeltaNode {
    public:
     KeyType merge_key;
 
@@ -707,10 +721,6 @@ class BwTree {
     // of the logical node
     const BaseNode *right_merge_p;
 
-    int depth;
-
-    const BaseNode *child_node_p;
-
     /*
      * Constructor
      */
@@ -719,12 +729,10 @@ class BwTree {
                   const BaseNode *p_right_merge_p,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::LeafMergeType},
+      DeltaNode{NodeType::LeafMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
       merge_ubound{p_merge_ubound},
-      right_merge_p{p_right_merge_p},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      right_merge_p{p_right_merge_p}
     {}
   };
 
@@ -761,15 +769,11 @@ class BwTree {
    * If the search key lies in the range between sep_key and
    * next_key then we know we should go to new_node_id
    */
-  class InnerInsertNode : public BaseNode {
+  class InnerInsertNode : public DeltaNode {
    public:
     KeyType insert_key;
     KeyType next_key;
     NodeID new_node_id;
-
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -778,11 +782,9 @@ class BwTree {
                     const KeyType &p_next_key,
                     int p_depth,
                     const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::InnerInsertType},
+      DeltaNode{NodeType::InnerInsertType, p_depth, p_child_node_p},
       insert_key{p_insert_key},
-      next_key{p_next_key},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      next_key{p_next_key}
     {}
   };
 
@@ -792,7 +794,7 @@ class BwTree {
    * NOTE: There are three keys associated with this node, two of them
    * defining
    */
-  class InnerDeleteNode : public BaseNode {
+  class InnerDeleteNode : public DeltaNode {
    public:
     KeyType delete_key;
     // These two defines a new range associated with this delete node
@@ -800,10 +802,6 @@ class BwTree {
     KeyType prev_key;
 
     NodeID merged_node_id;
-
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -817,13 +815,11 @@ class BwTree {
                     NodeID p_merged_node_id,
                     int p_depth,
                     const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::InnerDeleteType},
+      DeltaNode{NodeType::InnerDeleteType, p_depth, p_child_node_p},
       delete_key{p_delete_key},
       next_key{p_next_key},
       prev_key{p_prev_key},
-      merged_node_id{p_merged_node_id},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      merged_node_id{p_merged_node_id}
     {}
   };
 
@@ -834,14 +830,10 @@ class BwTree {
    * the base class type variable. We make such distinguishment
    * to facilitate identifying current delta chain type
    */
-  class InnerSplitNode : public BaseNode {
+  class InnerSplitNode : public DeltaNode {
    public:
     KeyType split_key;
     NodeID split_sibling;
-
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -850,27 +842,21 @@ class BwTree {
                    NodeID p_split_sibling,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::InnerSplitType},
+      DeltaNode{NodeType::InnerSplitType, p_depth, p_child_node_p},
       split_key{p_split_key},
-      split_sibling{p_split_sibling},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      split_sibling{p_split_sibling}
     {}
   };
 
   /*
    * class InnerMergeNode - Merge delta for inner nodes
    */
-  class InnerMergeNode : public BaseNode {
+  class InnerMergeNode : public DeltaNode {
    public:
     KeyType merge_key;
 
     KeyType merge_ubound;
     const BaseNode *right_merge_p;
-
-    int depth;
-
-    const BaseNode *child_node_p;
 
     /*
      * Constructor
@@ -880,32 +866,25 @@ class BwTree {
                    const BaseNode *p_right_merge_p,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
-      BaseNode{NodeType::InnerMergeType},
+      DeltaNode{NodeType::InnerMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
       merge_ubound{p_merge_ubound},
-      right_merge_p{p_right_merge_p},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      right_merge_p{p_right_merge_p}
     {}
   };
 
   /*
    * class InnerRemoveNode
    */
-  class InnerRemoveNode : public BaseNode {
+  class InnerRemoveNode : public DeltaNode {
    public:
-    int depth;
-
-    BaseNode *child_node_p;
 
     /*
      * Constructor
      */
     InnerRemoveNode(int p_depth,
                     BaseNode *p_child_node_p) :
-      BaseNode{NodeType::InnerRemoveType},
-      depth{p_depth},
-      child_node_p{p_child_node_p}
+      DeltaNode{NodeType::InnerRemoveType, p_depth, p_child_node_p}
     {}
   };
 
