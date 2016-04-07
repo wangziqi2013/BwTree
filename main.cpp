@@ -133,13 +133,13 @@ void LocateLeftSiblingTest(TreeType *t) {
   lin.key_value_map[KeyType{40}] = 5;
   */
 
-  //lin.key_value_map[KeyType{1}] = 1;
-  //lin.key_value_map[KeyType{10}] = 2;
+  lin.key_value_map[KeyType{1}] = 1;
+  lin.key_value_map[KeyType{10}] = 2;
 
   //KeyType search_key{1};
   //KeyType search_key{12};
   //KeyType search_key{30};
-  KeyType search_key{9};
+  KeyType search_key{11};
 
   NodeID node_id = t->LocateLeftSiblingByKey(search_key, &lin);
 

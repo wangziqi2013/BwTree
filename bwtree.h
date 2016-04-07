@@ -1277,11 +1277,14 @@ class BwTree {
   /*
    * LocateLeftSiblingByKey() - Locate the left sibling given a key
    *
-   * If the left sibling is not found (i.e. this is already the left most
-   * sep-key pair) then return INVALID_NODE_ID (Since we do not allow
-   * removing the left most node for each inner node)
+   * If the search key matches the left most separator then return
+   * INVALID_NODE_ID to imply the left sibling is in another node of
+   * the same level. For searching removed node's left sibling this
+   * should be treated as an error; but if we are searching for the
+   * real left sibling then it is a signal for us to jump to the left
+   * sibling of the current node to search again
    *
-   * If the key is not in the range of the inner node (this is possible
+   * If the key is not in the right range of the inner node (this is possible
    * if the key was once included in the node, but then node splited)
    * then assertion fail. This condition should be checked before calling
    * this routine
@@ -1295,22 +1298,29 @@ class BwTree {
       assert(false);
     }
 
-    // This is definitely an error no matter whar happened
+    // This is definitely an error no matter what happened
     if(KeyCmpLess(search_key, *logical_inner_p->lbound_p)) {
       bwt_printf("ERROR: Search key < inner node lower bound!\n");
 
       assert(false);
     }
 
-    // This could not happen, so make it an assert
-    assert(KeyCmpGreaterEqual(search_key, *logical_inner_p->lbound_p));
+    size_t node_size = logical_inner_p->key_value_map.size();
 
-    if(logical_inner_p->key_value_map.size() < 2) {
-      bwt_printf("ERROR: There is only %lu entry\n",
-                 logical_inner_p->key_value_map.size());
+    if(node_size == 0) {
+      bwt_printf("Logical inner node is empty\n");
 
       assert(false);
+    } else if(node_size == 1) {
+      bwt_printf("There is only 1 entry, implying jumping left\n");
+      // We already guaranteed the key is in the range of the node
+      // So as long as the node is consistent (bounds and actual seps)
+      // then the key must match this sep
+      // So we need to go left
+      return INVALID_NODE_ID;
     }
+
+    // From this line we know the number of seps is >= 2
 
     // Initialize two iterators from an ordered map
     // We are guaranteed that it1 and it2 are not null
@@ -1328,9 +1338,9 @@ class BwTree {
     // the lower bound of that node which is guaranteed not to change
     if(KeyCmpGreaterEqual(search_key, it1->first) && \
        KeyCmpLess(search_key, it2->first)) {
-      bwt_printf("ERROR: First entry is matched\n");
+      bwt_printf("First entry is matched. Implying jumping left\n");
 
-      assert(false);
+      return INVALID_NODE_ID;
     }
 
     while(1) {
@@ -1353,10 +1363,16 @@ class BwTree {
         return it1->second;
       }
 
+      // This points to the left sib
       it1++;
+      // This points to current node under testing
       it2++;
+      // This points to next node as upperbound for current node
       it3++;
     }
+
+    // After this line we already know that for every sep
+    // the key is not matched
 
     bwt_printf("ERROR: Left sibling not found; Please check key before entering\n");
 
@@ -1364,6 +1380,8 @@ class BwTree {
     assert(false);
     return INVALID_NODE_ID;
   }
+
+  //NodeID Find
 
   /*
    * SwitchToNewID() - Short hand helper function to update
