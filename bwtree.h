@@ -1346,6 +1346,45 @@ class BwTree {
             type == NodeType::LeafType);
   }
 
+  bool CollectNewNodesSinceLastSnapshot(BaseNode *old_node_p,
+                                        BaseNode *new_node_p,
+                                        ConstNodePointerList *node_list_p) {
+    // We only call this function is CAS fails, so these two pointers
+    // must be different
+    assert(new_node_p != old_node_p);
+
+    // Return true means the entire delta chain has changed
+    if(new_node_p == nullptr) {
+      return true;
+    }
+
+    while(1) {
+      if(new_node_p != old_node_p) {
+        node_list_p->push_back(new_node_p);
+      } else {
+        // We have found two equivalent pointers
+        // which implies the delta chain is only prolonged
+        // but not consolidated or removed
+        return false;
+      }
+
+      NodeType type = new_node_p->GetType();
+
+      if(type == NodeType::InnerType || \
+         type == NodeType::LeafType) {
+        // If we have reached the bottom and still do not
+        // see equivalent pointers then the entire delta
+        // chain has been consolidated
+        return true;
+      }
+
+      //new_node_p = new_node_p->
+    }
+
+    assert(false);
+    return false;
+  }
+
   /*
    * LocateSeparatorByKey() - Locate the child node for a key
    *
