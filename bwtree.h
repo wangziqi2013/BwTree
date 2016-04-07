@@ -1381,7 +1381,20 @@ class BwTree {
     return INVALID_NODE_ID;
   }
 
-  //NodeID Find
+  /*
+   * CollectAllSpesOnInnerRecursive() - This is the counterpart on inner node
+   *
+   * Please refer to the function on leaf node for details. These two share
+   * almost the same structure
+   */
+  void
+  CollectAllSepsOnInnerRecursive(const BaseNode *inner_node_p,
+                                 LogicalInnerNode *logical_node_p,
+                                 bool collect_lbound,
+                                 bool collect_ubound,
+                                 bool collect_sep) const {
+
+  }
 
   /*
    * SwitchToNewID() - Short hand helper function to update
@@ -1487,7 +1500,7 @@ class BwTree {
   /*
    * CollectDeltaPointer() - Collect delta node pointer for insert and delete
    *
-   * This function correctly deals with merge, split and remove, starting on
+   * This function correctly deals with merge and split, starting on
    * the topmost node of a delta chain
    *
    * It pushes pointers of nodes into a vector, and stops at the leaf node.
@@ -1495,13 +1508,13 @@ class BwTree {
    * returned as the return value.
    *
    * Besides that this function takes an output argument which reports the current
-   * NodeID and BaseNode pointer in case that a LeafSplitNode or LeafRemoveNode
+   * NodeID and BaseNode pointer in case that a LeafSplitNode with a side pointer
    * redirects the current NodeID (for appending this is crucial). This argument
    * is merely for output, and if no change on NodeID then the NodeID field
    * is set to INVALID_NODE_ID and the pointer is set to nullptr.
    *
-   * If real_tree is not needed (as for read-only routines) then it will not be
-   * updated.
+   * If real_tree is not needed (as for read-only routines) then just set it
+   * to nullptr and it will not be accessed
    *
    * This function is read-only, so it does not need to validate any structure
    * change.
@@ -1511,11 +1524,17 @@ class BwTree {
                                       ConstNodePointerList *pointer_list_p,
                                       TreeSnapshot *real_tree) const {
     if(real_tree != nullptr) {
-      // If the NodeID does not change then these two are retnrned to
+      // If the NodeID does not change then these two are returned to
       // signal the caller
       real_tree->first = INVALID_NODE_ID;
       real_tree->second = nullptr;
     }
+
+    // Since upperbound could be updated by split delta, we just
+    // record the newest ubound using a pointer; If this is nullptr
+    // at leaf page then just use the ubound in leaf page
+    const KeyType *ubound_p = nullptr;
+    const KeyType *lbound_p = nullptr;
 
     // This is used to test whether a remove node is valid
     // since it could only be the first node on a delta chain
@@ -1530,10 +1549,18 @@ class BwTree {
           // a leaf node since split delta is actually the side pointer
           const LeafNode *leaf_p = static_cast<const LeafNode *>(leaf_node_p);
 
+          if(lbound_p == nullptr) {
+            lbound_p = &leaf_p->lbound;
+          }
+
+          if(ubound_p == nullptr) {
+            ubound_p = &leaf_p->ubound;
+          }
+
           // Even if we have seen merge and split this always hold
           // since merge and split would direct to the correct page by sep key
-          assert(KeyCmpGreaterEqual(search_key, leaf_p->lbound) && \
-                 KeyCmpLess(search_key, leaf_p->ubound));
+          assert(KeyCmpGreaterEqual(search_key, *lbound_p) && \
+                 KeyCmpLess(search_key, *ubound_p));
 
           return leaf_node_p;
         }
@@ -1569,28 +1596,10 @@ class BwTree {
           break;
         } // case LeafDeleteType
         case NodeType::LeafRemoveType: {
-          bwt_printf("Observed a remove node on leaf delta chain\n");
+          bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
+
           assert(first_node == true);
-
-          const LeafRemoveNode *leaf_remove_node_p = \
-            static_cast<const LeafRemoveNode *>(leaf_node_p);
-
-          // Remove node just acts as a redirection flag
-          // goto its left sibling node by NodeID and continue
-          NodeID left_node_id = leaf_remove_node_p->remove_sibling;
-          leaf_node_p = GetNode(left_node_id);
-
-          if(real_tree != nullptr) {
-            // Since the NodeID has changed, we need to update path information
-            real_tree->first = left_node_id;
-            real_tree->second = const_cast<BaseNode *>(leaf_node_p);
-          }
-
-          // We do not set first_node to false here since we switched to
-          // another new NodeID
-          first_node = true;
-
-          break;
+          assert(false);
         } // case LeafRemoveType
         case NodeType::LeafMergeType: {
           bwt_printf("Observed a merge node on leaf delta chain\n");
@@ -1646,6 +1655,12 @@ class BwTree {
             // Since we have switched to a new NodeID
             first_node = true;
           } else {
+            // Since we follow the child physical pointer, it is necessary
+            // to update upper bound to have a better bounds checking
+            if(ubound_p == nullptr) {
+              ubound_p = &split_node_p->split_key;
+            }
+
             leaf_node_p = split_node_p->child_node_p;
 
             first_node = false;
