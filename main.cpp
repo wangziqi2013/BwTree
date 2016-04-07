@@ -17,6 +17,14 @@ using LeafDeleteNode = typename TreeType::LeafDeleteNode;
 using LeafSplitNode = typename TreeType::LeafSplitNode;
 using LeafMergeNode = typename TreeType::LeafMergeNode;
 using LeafNode = typename TreeType::LeafNode;
+
+using InnerRemoveNode = typename TreeType::InnerRemoveNode;
+using InnerInsertNode = typename TreeType::InnerInsertNode;
+using InnerDeleteNode = typename TreeType::InnerDeleteNode;
+using InnerSplitNode = typename TreeType::InnerSplitNode;
+using InnerMergeNode = typename TreeType::InnerMergeNode;
+using InnerNode = typename TreeType::LeafNode;
+
 using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
 using NodeID = typename TreeType::NodeID;
@@ -27,6 +35,7 @@ using LogicalLeafNode = typename TreeType::LogicalLeafNode;
 using TreeSnapshot = typename TreeType::TreeSnapshot;
 using LogicalInnerNode = typename TreeType::LogicalInnerNode;
 using BaseNode = typename TreeType::BaseNode;
+using ConstNodePointerList = typename TreeType::ConstNodePointerList;
 
 NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
 
@@ -148,9 +157,45 @@ void LocateLeftSiblingTest(TreeType *t) {
   return;
 }
 
+void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
+  LeafNode *leaf_1_p = new LeafNode{0, 0, INVALID_NODE_ID};
+  LeafRemoveNode *remove_1_p = new LeafRemoveNode{1, leaf_1_p};
+  LeafRemoveNode *remove_2_p = new LeafRemoveNode{2, remove_1_p};
+  LeafRemoveNode *remove_3_p = new LeafRemoveNode{3, remove_2_p};
+  LeafRemoveNode *remove_4_p = new LeafRemoveNode{4, remove_3_p};
+  LeafRemoveNode *remove_5_p = new LeafRemoveNode{5, remove_4_p};
+  LeafRemoveNode *remove_6_p = new LeafRemoveNode{6, remove_5_p};
+
+  LeafNode *leaf_2_p = new LeafNode{1, 1, INVALID_NODE_ID};
+  LeafRemoveNode *remove_7_p = new LeafRemoveNode{1, leaf_2_p};
+  LeafRemoveNode *remove_8_p = new LeafRemoveNode{2, remove_7_p};
+  LeafRemoveNode *remove_9_p = new LeafRemoveNode{3, remove_8_p};
+
+  bwt_printf("remove_1_p = %p\n", remove_1_p);
+  bwt_printf("remove_2_p = %p\n", remove_2_p);
+  bwt_printf("remove_3_p = %p\n", remove_3_p);
+  bwt_printf("remove_4_p = %p\n", remove_4_p);
+  bwt_printf("remove_5_p = %p\n", remove_5_p);
+  bwt_printf("remove_6_p = %p\n", remove_6_p);
+  bwt_printf("remove_7_p = %p\n", remove_7_p);
+  bwt_printf("remove_8_p = %p\n", remove_8_p);
+  bwt_printf("remove_9_p = %p\n", remove_9_p);
+
+  ConstNodePointerList node_list{};
+
+  bool ret = \
+    t->CollectNewNodesSinceLastSnapshot(remove_3_p, remove_9_p, &node_list);
+
+  bwt_printf("ret = %d\n", ret);
+  for(auto p : node_list) {
+    bwt_printf("ptr = %p\n", p);
+  }
+
+  return;
+}
 
 int main() {
-  BwTree<int, double> *t1 = new BwTree<int, double>{};
+  TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
 
   BwTree<int, double>::KeyType k1 = t1->GetWrappedKey(3);
@@ -166,6 +211,7 @@ int main() {
 
   CollectDeltaPoniterTest1(t1);
   LocateLeftSiblingTest(t1);
+  CollectNewNodeSinceLastSnapshotTest(t1);
 
   return 0;
 }

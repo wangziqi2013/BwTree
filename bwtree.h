@@ -1353,8 +1353,8 @@ class BwTree {
    *     Return true and node_list_p is empty
    *
    */
-  bool CollectNewNodesSinceLastSnapshot(BaseNode *old_node_p,
-                                        BaseNode *new_node_p,
+  bool CollectNewNodesSinceLastSnapshot(const BaseNode *old_node_p,
+                                        const BaseNode *new_node_p,
                                         ConstNodePointerList *node_list_p) {
     // We only call this function is CAS fails, so these two pointers
     // must be different
