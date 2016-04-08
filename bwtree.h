@@ -1347,6 +1347,7 @@ class BwTree {
    *     and could not find a matching pointer
    *     In this case the entire delta chain is pushed (naturally
    *     because there is no common pointer) and return true
+   *     NOTE: In this case the base page is also in the node list
    * (3) The NodeID has been deleted (so that new_pointer_p is nullptr)
    *     because the NodeID has been removed and merged into its left
    *     sibling.
@@ -1556,12 +1557,28 @@ class BwTree {
    * almost the same structure
    */
   void
-  CollectAllSepsOnInnerRecursive(const BaseNode *inner_node_p,
+  CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
                                  LogicalInnerNode *logical_node_p,
                                  bool collect_lbound,
                                  bool collect_ubound,
                                  bool collect_sep) const {
+    // Validate remove node, if any
+    bool first_time = true;
 
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::InnerType: {
+          const InnerNode *inner_node_p = \
+            static_cast<const InnerNode *>(node_p);
+
+          for(auto &item : inner_node_p->sep_list) {
+            //logical_node_p->
+          }
+        } // case InnerType
+      }
+    }
   }
 
   /*
@@ -1660,7 +1677,6 @@ class BwTree {
         assert(false);
       }
     }
-
 
     return;
   }
