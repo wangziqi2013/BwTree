@@ -1,5 +1,4 @@
 
-
 #include "bwtree.h"
 #include <thread>
 
