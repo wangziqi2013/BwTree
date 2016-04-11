@@ -1,5 +1,5 @@
 # BwTree
-This is a street strength implementation of Bw-Tree which is currently deployed in SQL Server Hekaton, Azure and other Microsoft products.
+This is a street strength implementation of Bw-Tree which is currently deployed in SQL Server Hekaton, Azure DocumentDB and other Microsoft products.
 
 Paper for reference
 ===================
