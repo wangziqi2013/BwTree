@@ -14,7 +14,16 @@
 
 namespace peloton {
 namespace index {
-
-
+/*
+template <typename RawKeyType,
+          typename ValueType,
+          typename KeyComparator,
+          typename KeyEqualityChecker,
+          typename ValueEqualityChecker,
+          typename ValueHashFunc>
+const typename BwTree<RawKeyType, ValueType, KeyComparator, KeyEqualityChecker, ValueEqualityChecker, ValueHashFunc>::NodeID \
+  BwTree<RawKeyType, ValueType, KeyComparator, KeyEqualityChecker, ValueEqualityChecker, ValueHashFunc>::INVALID_NODE_ID = \
+typename BwTree<RawKeyType, ValueType, KeyComparator, KeyEqualityChecker, ValueEqualityChecker, ValueHashFunc>::NodeID(-1);
+*/
 }
 }

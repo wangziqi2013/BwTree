@@ -26,7 +26,7 @@ using InnerNode = typename TreeType::LeafNode;
 
 using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
-using NodeID = typename TreeType::NodeID;
+//using NodeID = typename TreeType::NodeID;
 using ValueSet = typename TreeType::ValueSet;
 using KeyValueSet = typename TreeType::KeyValueSet;
 using KeyType = typename TreeType::KeyType;
@@ -36,7 +36,7 @@ using LogicalInnerNode = typename TreeType::LogicalInnerNode;
 using BaseNode = typename TreeType::BaseNode;
 using ConstNodePointerList = typename TreeType::ConstNodePointerList;
 
-NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
+//NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
 
 template <typename Fn, typename... Args>
 void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
@@ -211,6 +211,8 @@ int main() {
   CollectDeltaPoniterTest1(t1);
   LocateLeftSiblingTest(t1);
   CollectNewNodeSinceLastSnapshotTest(t1);
+
+  t1->CollectAllSepsOnInnerRecursive(nullptr, nullptr, false, false, false);
 
   return 0;
 }

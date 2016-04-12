@@ -96,6 +96,9 @@ static void dummy(const char*, ...) {}
 static std::mutex debug_stop_mutex;
 #endif
 
+using NodeID = uint64_t;
+// We use uint64_t(-1) as invalid node ID
+constexpr NodeID INVALID_NODE_ID = NodeID(-1);
 
 /*
  * class BwTree() - Lock-free BwTree index implementation
@@ -132,7 +135,7 @@ class BwTree {
  public:
 #endif
 
-  using NodeID = uint64_t;
+  //using NodeID = uint64_t;
   // We use this type to represent the path we traverse down the tree
   using TreeSnapshot = std::pair<NodeID, BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
@@ -147,8 +150,7 @@ class BwTree {
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
-  // We use uint64_t(-1) as invalid node ID
-  constexpr static NodeID INVALID_NODE_ID = std::numeric_limits<NodeID>::max();
+
 
   // Debug constant: The maximum number of iterations we could do
   // It prevents dead loop hopefully
@@ -1077,6 +1079,7 @@ class BwTree {
     const KeyType *lbound_p;
     const KeyType *ubound_p;
 
+    // This will be collected on split node or base inner node
     NodeID next_node_id;
 
     TreeSnapshot snapshot;
@@ -1326,7 +1329,7 @@ class BwTree {
   }
 
   /*
-   * CollectNewNodesSinceLastSnaoshot() - This function compares two different
+   * CollectNewNodesSinceLastSnapshot() - This function compares two different
    *                                      snapshots
    *
    * If CAS fails then we know the snaoshot is no longer most up-to-date
@@ -1573,12 +1576,164 @@ class BwTree {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
-          for(auto &item : inner_node_p->sep_list) {
-            //logical_node_p->
+          // If the caller cares about the actual content
+          if(collect_sep) {
+            for(const SepItem &item : inner_node_p->sep_list) {
+              // Since we are using INVALID_NODE_ID to mark deleted nodes
+              // we check for other normal node id to avoid accidently
+              // having a bug and deleting random keys
+              assert(item.node != INVALID_NODE_ID);
+
+              // If we observed a out of range key (brought about by split)
+              // just ignore it (>= high key, if exists a high key)
+              if(logical_node_p->ubound_p != nullptr && \
+                 KeyCmpGreaterEqual(item.key, *logical_node_p->ubound_p)) {
+                continue;
+              }
+
+              // If the sep key has already been collected, then ignore
+              logical_node_p->key_value_map.insert( \
+                typename decltype(logical_node_p->key_value_map)::value_type( \
+                  item.key, item.node));
+            } // for item : sep_list
+          } // if collect_sep
+
+          // If we collect low key (i.e. on the left most branch
+          // of a merge tree)
+          if(collect_lbound == true) {
+            assert(logical_node_p->lbound_p == nullptr);
+
+            logical_node_p->lbound_p = &inner_node_p->lbound;
           }
+
+          // If we collect high key (i.e. on the right most beanch
+          // of a merge tree, and the high key has not been determined yet
+          // maybe by a split node delta)
+          if(collect_ubound == true && \
+             logical_node_p->ubound_p == nullptr) {
+            logical_node_p->ubound_p = &inner_node_p->ubound;
+          }
+
+          // If it is the rightmost node, and we have not seen
+          // a split node that would change its next node ID
+          if(collect_ubound == true && \
+             logical_node_p->next_node_id == INVALID_NODE_ID) {
+            logical_node_p->next_node_id = inner_node_p->next_node_id;
+          }
+
+          // Remove all keys with INVALID_NODE_ID as target node id
+          // since they should have been deleted, and we just put them
+          // into the map to block any further key operation
+          for(auto &item : logical_node_p->key_value_map) {
+            if(item.second == INVALID_NODE_ID) {
+              logical_node_p->key_value_map.erase(item.first);
+            }
+          }
+
+          return;
         } // case InnerType
-      }
-    }
+        case NodeType::InnerRemoveType: {
+          bwt_printf("ERROR: Observed an inner remove node\n");
+
+          assert(false);
+          return;
+        } // case InnerRemoveType
+        case NodeType::InnerInsertType: {
+          const InnerInsertNode *insert_node_p = \
+            static_cast<const InnerInsertNode *>(node_p);
+
+          const KeyType &insert_key = insert_node_p->insert_key;
+          assert(insert_node_p->new_node_id != INVALID_NODE_ID);
+
+          // Only insert the key if it is not in split sibling node
+          if(logical_node_p->ubound_p != nullptr && \
+             KeyCmpLess(insert_key, *logical_node_p->ubound_p)) {
+            // This will insert if key does not exist yet
+            logical_node_p->key_value_map.insert( \
+              typename decltype(logical_node_p->key_value_map)::value_type( \
+                insert_key, insert_node_p->new_node_id));
+          }
+
+          // Go to next node
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // case InnerInsertType
+        case NodeType::InnerDeleteType: {
+          const InnerDeleteNode *delete_node_p = \
+            static_cast<const InnerDeleteNode *>(node_p);
+
+          // For deleted keys, we first add it with INVALID ID
+          // to block all further updates
+          // In the last stage we just remove all keys with
+          // INVALID_NODE_ID as node ID
+          const KeyType &delete_key = delete_node_p->delete_key;
+
+          // Only delete key if it is in range (not in a split node)
+          if(logical_node_p->ubound_p != nullptr && \
+             KeyCmpLess(delete_key, *logical_node_p->ubound_p)) {
+            logical_node_p->key_value_map.insert( \
+              typename decltype(logical_node_p->key_value_map)::value_type( \
+                delete_node_p->delete_key,
+                INVALID_NODE_ID));
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // case InnerDeleteType
+        case NodeType::InnerSplitType: {
+          const InnerSplitNode *split_node_p = \
+            static_cast<const InnerSplitNode *>(node_p);
+
+          // If we are collecting high key, and the high key has not
+          // been set yet, just set it
+          if(collect_ubound == true && \
+             logical_node_p->ubound_p == nullptr) {
+            logical_node_p->ubound_p = &split_node_p->split_key;
+          }
+
+          // If we are the right most branch, then also update next ID
+          if(collect_ubound == true && \
+             logical_node_p->next_node_id == INVALID_NODE_ID) {
+            logical_node_p->next_node_id = split_node_p->split_sibling;
+          }
+
+          node_p = split_node_p->child_node_p;
+
+          break;
+        } // case InnerSplitType
+        case NodeType::InnerMergeType: {
+          const InnerMergeNode *merge_node_p = \
+            static_cast<const InnerMergeNode *>(node_p);
+
+          // Merge node defines a new (larger) high key for logical node
+          if(collect_ubound == true && \
+             logical_node_p->ubound_p == nullptr) {
+            logical_node_p->ubound_p = &merge_node_p->merge_ubound;
+          }
+
+          // Use different flags to collect on left and right branch
+          CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
+                                         logical_node_p,
+                                         collect_lbound, // Take care!
+                                         false,
+                                         collect_sep);
+          CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
+                                         logical_node_p,
+                                         false,
+                                         collect_ubound, // Take care!
+                                         collect_sep);
+
+          // There is no unvisited node
+          return;
+        } // case InnerMergeType
+      } // switch type
+    } // while(1)
+
+    // Should not get to here
+    assert(false);
+    return;
   }
 
   /*
@@ -2015,7 +2170,7 @@ class BwTree {
               // Load all values in the vector using the given key
               logical_node_p->BulkLoadValue(data_item);
             } // for auto it : data_item ...
-          }
+          } // if collect value == true
 
           // Then try to fill in ubound and lbound
           if(collect_lbound == true) {
@@ -2049,7 +2204,15 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(leaf_node_p);
 
-          logical_node_p->pointer_list.push_back(insert_node_p);
+          // Only collect split delta if its key is in
+          // the range
+          if(logical_node_p->ubound_p != nullptr && \
+             KeyCmpGreaterEqual(insert_node_p->insert_key,
+                                *logical_node_p->ubound_p)) {
+            bwt_printf("Insert key not in range (>= high key)\n");
+          } else {
+            logical_node_p->pointer_list.push_back(insert_node_p);
+          }
 
           leaf_node_p = insert_node_p->child_node_p;
 
@@ -2059,7 +2222,16 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(leaf_node_p);
 
-          logical_node_p->pointer_list.push_back(delete_node_p);
+          // Only collect delete delta if it is in the range
+          // i.e. < newest high key, since otherwise it will
+          // be in splited nodes
+          if(logical_node_p->ubound_p != nullptr && \
+             KeyCmpGreaterEqual(delete_node_p->delete_key,
+                                *logical_node_p->ubound_p)) {
+            bwt_printf("Delete key not in range (>= high key)\n");
+          } else {
+            logical_node_p->pointer_list.push_back(delete_node_p);
+          }
 
           leaf_node_p = delete_node_p->child_node_p;
 
