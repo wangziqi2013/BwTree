@@ -1374,7 +1374,8 @@ class BwTree {
    */
   bool CollectNewNodesSinceLastSnapshot(const BaseNode *old_node_p,
                                         const BaseNode *new_node_p,
-                                        ConstNodePointerList *node_list_p) {
+                                        ConstNodePointerList *node_list_p)
+    const {
     // We only call this function is CAS fails, so these two pointers
     // must be different
     assert(new_node_p != old_node_p);
@@ -1494,7 +1495,8 @@ class BwTree {
    * this routine
    */
   NodeID LocateLeftSiblingByKey(const KeyType &search_key,
-                                const LogicalInnerNode *logical_inner_p) {
+                                const LogicalInnerNode *logical_inner_p)
+    const {
     // This could happen when the inner node splits
     if(KeyCmpGreaterEqual(search_key, *logical_inner_p->ubound_p)) {
       bwt_printf("ERROR: Search key >= inner node upper bound!\n");
@@ -1597,12 +1599,17 @@ class BwTree {
    *
    * However, if we have reached a base node, for debugging purposes we
    * need to test current search key against low key and high key
+   *
+   * NOTE: This function returns a NodeID, instead of TreeSnapshot since
+   * its behaviour is not dependent on the actual content of the physical
+   * pointer associated with the node ID, so we could choose to fix the
+   * snapshot later
    */
-  void NavigateInnerNode(const KeyType &search_key,
-                         const BaseNode *node_p,
-                         TreeSnapshot *real_tree) {
+  NodeID NavigateInnerNode(const KeyType &search_key,
+                           const BaseNode *node_p,
+                           TreeSnapshot *real_tree) const {
     // We  track current artificial high key brought about by split node
-    const KeyType *current_ubound = nullptr;
+    const KeyType *ubound_p = nullptr;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -1612,8 +1619,59 @@ class BwTree {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
+          NodeID target_id = \
+            LocateSeparatorByKey(search_key, inner_node_p, ubound_p);
 
-        }
+          bwt_printf("Found an inner node ID = %lu\n", target_id);
+
+          return target_id;
+        } // case InnerType
+        case NodeType::InnerRemoveType: {
+          // TODO: Fix this to let it deal with remove node
+          assert(false);
+        } // case InnerRemoveType
+        case NodeType::InnerInsertType: {
+          const InnerInsertNode *insert_node_p = \
+            static_cast<InnerInsertNode *>(node_p);
+
+          const KeyType &insert_low_key = insert_node_p->insert_key;
+          const KeyType &insert_high_key = insert_node_p->next_key;
+          NodeID target_id = insert_node_p->new_node_id;
+
+          if(KeyCmpGreaterEqual(search_key, insert_low_key) && \
+             KeyCmpLess(search_key, insert_high_key)) {
+            bwt_printf("Find target ID = %lu in insert delta\n", target_id);
+
+            return target_id;
+          }
+
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // InnerInsertType
+        case NodeType::InnerDeleteType: {
+          const InnerDeleteNode *delete_node_p = \
+            static_cast<const InnerDeleteNode *>(node_p);
+
+          // For inner delete node, we record its left and right sep
+          // as a fast path
+          // The node ID stored inside inner delete node is the NodeID
+          // of its left sibling before deletion
+          const KeyType &delete_low_key = delete_node_p->prev_key;
+          const KeyType &delete_high_key = delete_node_p->next_key;
+          NodeID target_id = delete_node_p->merged_node_id;
+
+          if(KeyCmpGreaterEqual(search_key, delete_low_key) && \
+             KeyCmpLess(search_key, delete_high_key)) {
+            bwt_printf("Find target ID = %lu in delete delta\n", target_id);
+
+            return target_id;
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // InnerDeleteType
       } // switch type
     } // while 1
   }
