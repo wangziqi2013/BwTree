@@ -64,25 +64,36 @@ void GetNextNodeIDTest(BwTree<int, double> *tree_p) {
 }
 
 void CollectDeltaPoniterTest1(TreeType *t) {
-  LeafNode *leaf1 = new LeafNode{1, 6, 101};
-  leaf1->data_list.push_back({1, {1.11}});
-  leaf1->data_list.push_back({2, {2.22}});
-  leaf1->data_list.push_back({4, {4.44}});
+  LeafNode *leaf1 = t->DebugGetLeafNode(1, 6, 101,
+                                        {1, 2, 4},
+                                        {{1.11},
+                                         {2.22, 2.222},
+                                         {4.44, 4.4444}}
+                                       );
 
   LeafInsertNode *insert1 = new LeafInsertNode{3, 3.33, 1, leaf1};
 
-  LeafNode *leaf2 = new LeafNode{6, 11, 102};
-  leaf2->data_list.push_back({6, {6.66}});
-  leaf2->data_list.push_back({7, {7.77}});
-  leaf2->data_list.push_back({8, {8.188}});
-  leaf2->data_list.push_back({15, {15.15}});
+  LeafNode *leaf2 = t->DebugGetLeafNode(6, 11, 102,
+                                        {6, 7, 8, 15},
+                                        {{6.66},
+                                         {7.77},
+                                         {8.188},
+                                         {15.15}}
+                                        );
 
   LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
 
+/*
   LeafNode *leaf3 = new LeafNode{11, 16, INVALID_NODE_ID};
   leaf3->data_list.push_back({12, {12.12}});
   leaf3->data_list.push_back({14, {14.14}});
+*/
 
+  LeafNode *leaf3 = t->DebugGetLeafNode(11, 16, INVALID_NODE_ID,
+                                        {12, 14},
+                                        {{12.12, 12.1212},
+                                         {14.14, 14.1414}}
+                                       );
   LeafInsertNode *insert3 = new LeafInsertNode{11, 11.11, 1, leaf3};
   LeafSplitNode *split1 = new LeafSplitNode{10, 102, 2, insert2};
   LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.188, 3, split1};

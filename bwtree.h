@@ -208,7 +208,10 @@ class BwTree {
     /*
      * Constructor  - Use RawKeyType object to initialize
      */
-    KeyType(const RawKeyType &p_key) : key{p_key} {}
+    KeyType(const RawKeyType &p_key) :
+      key{p_key},
+      type{ExtendedKeyValue::RawKey} // DO NOT FORGET THIS!
+    {}
 
     /*
      * Constructor - Use value type only (must not be raw value type)
@@ -446,11 +449,23 @@ class BwTree {
     {}
 
     /*
+     * Copy Constructor - Copy construct key and value vector
+     *
+     * We must declare this function since we defined a move constructor
+     * and move assignment, copy constructor is deleted by default
+     */
+    DataItem(const DataItem &di) :
+      key{di.key},
+      value_list{di.value_list}
+    {}
+
+    /*
      * Move Constructor - We move value list to save space
      */
     DataItem(DataItem &&di) :
       key{di.key},
-      value_list{std::move(di.value_list)} {}
+      value_list{std::move(di.value_list)}
+    {}
 
     /*
      * Move Assignment - Fast assignment
@@ -2035,6 +2050,7 @@ class BwTree {
   void ReplayLogOnLeafByKey(const KeyType &search_key,
                             const BaseNode *leaf_head_node_p,
                             ValueSet *value_set_p) const {
+    bwt_printf("KeyType = %d, key = %d\n", search_key.type, search_key.key);
     ConstNodePointerList delta_node_list{};
 
     // We specify a key for the rouine to collect
@@ -2456,12 +2472,13 @@ class BwTree {
    * pointer, we could make it as static. However, making it static might
    * cause complex grammar, so we make it a member function
    */
-  InnerNode DebugGetInnerNode(const RawKeyType &p_lbound,
-                              const RawKeyType &p_ubound,
-                              NodeID p_next_node_id,
-                              std::vector<RawKeyType> raw_key_list,
-                              std::vector<NodeID> node_id_list) {
-    InnerNode temp_node{p_lbound, p_ubound, p_next_node_id};
+  InnerNode *DebugGetInnerNode(const RawKeyType &p_lbound,
+                               const RawKeyType &p_ubound,
+                               NodeID p_next_node_id,
+                               std::vector<RawKeyType> raw_key_list,
+                               std::vector<NodeID> node_id_list) {
+    InnerNode *temp_node_p = \
+      new InnerNode{p_lbound, p_ubound, p_next_node_id};
 
     assert(raw_key_list.size() == node_id_list.size());
 
@@ -2469,10 +2486,10 @@ class BwTree {
     for(int i = 0;i < raw_key_list.size();i++) {
       SepItem item{KeyType{raw_key_list[i]}, node_id_list[i]};
 
-      temp_node.sep_list.push_back(item);
+      temp_node_p->sep_list.push_back(item);
     }
 
-    return temp_node;
+    return temp_node_p;
   }
 
   /*
@@ -2481,12 +2498,13 @@ class BwTree {
    *
    * This function is only used for debugging.
    */
-  LeafNode DebugGetLeafNode(const RawKeyType &p_lbound,
-                            const RawKeyType &p_ubound,
-                            NodeID p_next_node_id,
-                            std::vector<RawKeyType> raw_key_list,
-                            std::vector<std::vector<ValueType>> value_list_list) {
-    LeafNode temp_node{p_lbound, p_ubound, p_next_node_id};
+  LeafNode *DebugGetLeafNode(const RawKeyType &p_lbound,
+                             const RawKeyType &p_ubound,
+                             NodeID p_next_node_id,
+                             std::vector<RawKeyType> raw_key_list,
+                             std::vector<std::vector<ValueType>> value_list_list) {
+    LeafNode *temp_node_p = \
+      new LeafNode{p_lbound, p_ubound, p_next_node_id};
 
     assert(raw_key_list.size() == value_list_list.size());
 
@@ -2495,10 +2513,10 @@ class BwTree {
       DataItem item{KeyType{raw_key_list[i]},
                     value_list_list[i]};
 
-      temp_node.data_list.push_back(item);
+      temp_node_p->data_list.push_back(item);
     }
 
-    return temp_node;
+    return temp_node_p;
   }
 
 };
