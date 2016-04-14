@@ -2441,13 +2441,65 @@ class BwTree {
   std::array<std::atomic<BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
  /*
-  * Utility class definition
+  * Debug function definition
   */
-#ifndef ALL_PUBLIC
- private:
-#else
  public:
-#endif
+
+  /*
+   * DebugGetInnerNode() - Debug routine. Return inner node given two
+   *                       lists of keys and values
+   *
+   * This is only used for debugging externally - please do not call
+   * this function in side the class
+   *
+   * NOTE: Since this function does not actually require "this"
+   * pointer, we could make it as static. However, making it static might
+   * cause complex grammar, so we make it a member function
+   */
+  InnerNode DebugGetInnerNode(const RawKeyType &p_lbound,
+                              const RawKeyType &p_ubound,
+                              NodeID p_next_node_id,
+                              std::vector<RawKeyType> raw_key_list,
+                              std::vector<NodeID> node_id_list) {
+    InnerNode temp_node{p_lbound, p_ubound, p_next_node_id};
+
+    assert(raw_key_list.size() == node_id_list.size());
+
+    // Push item into the node 1 by 1
+    for(int i = 0;i < raw_key_list.size();i++) {
+      SepItem item{KeyType{raw_key_list[i]}, node_id_list[i]};
+
+      temp_node.sep_list.push_back(item);
+    }
+
+    return temp_node;
+  }
+
+  /*
+   * DebugGetLeafNode() - Return a leaf node given a list of keys
+   *                      and a list of list of values
+   *
+   * This function is only used for debugging.
+   */
+  LeafNode DebugGetLeafNode(const RawKeyType &p_lbound,
+                            const RawKeyType &p_ubound,
+                            NodeID p_next_node_id,
+                            std::vector<RawKeyType> raw_key_list,
+                            std::vector<std::vector<ValueType>> value_list_list) {
+    LeafNode temp_node{p_lbound, p_ubound, p_next_node_id};
+
+    assert(raw_key_list.size() == value_list_list.size());
+
+    for(int i = 0;i < raw_key_list.size();i++) {
+      // Construct the data item using a key and a list of values
+      DataItem item{KeyType{raw_key_list[i]},
+                    value_list_list[i]};
+
+      temp_node.data_list.push_back(item);
+    }
+
+    return temp_node;
+  }
 
 };
 
