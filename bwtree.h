@@ -1423,9 +1423,23 @@ class BwTree {
    *
    * This functions works with any non-empty inner nodes. However
    * it fails assertion with empty inner node
+   *
+   * NOTE: This function takes a pointer that points to a new high key
+   * if we have met a split delta node before reaching the base node.
+   * The new high key is used to test against the search key
+   *
+   * NOTE 2: This function will hit assertion failure if the key
+   * range is not correct OR the node ID is invalid
    */
   NodeID LocateSeparatorByKey(const KeyType &search_key,
-                              const InnerNode *inner_node_p) const {
+                              const InnerNode *inner_node_p,
+                              const KeyType *ubound_p) const {
+    // If the upper bound is not set because we have not met a
+    // split delta node, then just set to the current upperbound
+    if(ubound_p == nullptr) {
+      ubound_p = &inner_node_p->ubound;
+    }
+
     const std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
 
     // We do not know what to do for an empty inner node
@@ -1454,9 +1468,12 @@ class BwTree {
     // hit +Inf as separator
     assert(iter1->node != INVALID_NODE_ID);
 
-    // If search key >= upper bound then we have hit the wrong
-    // inner node
-    assert(KeyCmpLess(search_key, inner_node_p->ubound));
+    // If search key >= upper bound (natural or artificial) then
+    // we have hit the wrong inner node
+    assert(KeyCmpLess(search_key, *ubound_p));
+    // Search key must be greater than or equal to the lower bound
+    // which is assumed to be a constant associated with a NodeID
+    assert(KeyCmpGreaterEqual(search_key, inner_node_p->lbound));
 
     return iter1->node;
   }
@@ -1569,10 +1586,43 @@ class BwTree {
   }
 
   /*
+   * NavigateInnerNode() - Traverse down through the inner node delta chain
+   *                       and probably horizontally to right sibling nodes
+   *
+   * This function does not have to always reach the base node in order to
+   * find the target since we know for inner nodes it is always single key
+   * single node mapping. Therefore there is neither need to keep a delta
+   * pointer list to recover full key-value mapping, nor returning a base node
+   * pointer to test low key and high key.
+   *
+   * However, if we have reached a base node, for debugging purposes we
+   * need to test current search key against low key and high key
+   */
+  void NavigateInnerNode(const KeyType &search_key,
+                         const BaseNode *node_p,
+                         TreeSnapshot *real_tree) {
+    // We  track current artificial high key brought about by split node
+    const KeyType *current_ubound = nullptr;
+
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::InnerType: {
+          const InnerNode *inner_node_p = \
+            static_cast<const InnerNode *>(node_p);
+
+
+        }
+      } // switch type
+    } // while 1
+  }
+
+  /*
    * CollectAllSpesOnInnerRecursive() - This is the counterpart on inner node
    *
-   * Please refer to the function on leaf node for details. These two share
-   * almost the same structure
+   * Please refer to the function on leaf node for details. These two have
+   * almost the same logical flow
    */
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
@@ -1599,7 +1649,7 @@ class BwTree {
               // having a bug and deleting random keys
               assert(item.node != INVALID_NODE_ID);
 
-              // If we observed a out of range key (brought about by split)
+              // If we observed an out of range key (brought about by split)
               // just ignore it (>= high key, if exists a high key)
               if(logical_node_p->ubound_p != nullptr && \
                  KeyCmpGreaterEqual(item.key, *logical_node_p->ubound_p)) {
@@ -1751,6 +1801,8 @@ class BwTree {
     return;
   }
 
+
+
   /*
    * SwitchToNewID() - Short hand helper function to update
    * current node and current head node
@@ -1822,7 +1874,7 @@ class BwTree {
         InnerNode *inner_node_p = \
           static_cast<InnerNode *>(current_node_p);
         NodeID subtree_id = \
-          LocateSeparatorByKey(search_key, inner_node_p);
+          LocateSeparatorByKey(search_key, inner_node_p, nullptr);
 
         current_node_id = subtree_id;
         SwitchToNewID(current_node_id,

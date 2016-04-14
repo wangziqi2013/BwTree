@@ -83,12 +83,6 @@ void CollectDeltaPoniterTest1(TreeType *t) {
 
   LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
 
-/*
-  LeafNode *leaf3 = new LeafNode{11, 16, INVALID_NODE_ID};
-  leaf3->data_list.push_back({12, {12.12}});
-  leaf3->data_list.push_back({14, {14.14}});
-*/
-
   LeafNode *leaf3 = t->DebugGetLeafNode(11, 16, INVALID_NODE_ID,
                                         {12, 14},
                                         {{12.12, 12.1212},
