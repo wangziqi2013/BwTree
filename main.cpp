@@ -245,7 +245,7 @@ void TestNavigateInnerNode(TreeType *t) {
              logical_node.next_node_id);
 
   TreeSnapshot ts{};
-  NodeID node_id = t->NavigateInnerNode(8, merge_node_p, &ts);
+  NodeID node_id = t->NavigateInnerNode(6, merge_node_p, &ts);
 
   bwt_printf("Node id = %lu; ts.id = %lu;\n", node_id, ts.first);
 

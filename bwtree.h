@@ -1761,6 +1761,7 @@ class BwTree {
                                  bool collect_sep) const {
     // Validate remove node, if any
     bool first_time = true;
+
     // Used to restrict the upper bound in a local branch
     // If we are collecting upper bound, then this will finally
     // be assign to the logical node
@@ -1773,11 +1774,6 @@ class BwTree {
         case NodeType::InnerType: {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
-
-          // A base node also defines the high key
-          if(ubound_p == nullptr) {
-            ubound_p = &inner_node_p->ubound;
-          }
 
           // If the caller cares about the actual content
           if(collect_sep) {
@@ -1811,6 +1807,11 @@ class BwTree {
             logical_node_p->lbound_p = &inner_node_p->lbound;
           }
 
+          // A base node also defines the high key
+          if(ubound_p == nullptr) {
+            ubound_p = &inner_node_p->ubound;
+          }
+
           // If we clooect high key, then it is set to the local branch
           if(collect_ubound == true) {
             assert(logical_node_p->ubound_p == nullptr);
@@ -1839,6 +1840,7 @@ class BwTree {
         case NodeType::InnerRemoveType: {
           bwt_printf("ERROR: Observed an inner remove node\n");
 
+          assert(first_time == true);
           assert(false);
           return;
         } // case InnerRemoveType
@@ -1936,15 +1938,20 @@ class BwTree {
           // There is no unvisited node
           return;
         } // case InnerMergeType
+        default: {
+          bwt_printf("ERROR: Unknown inner node type\n");
+
+          return;
+        }
       } // switch type
+
+      first_time = false;
     } // while(1)
 
     // Should not get to here
     assert(false);
     return;
   }
-
-
 
   /*
    * SwitchToNewID() - Short hand helper function to update
@@ -2353,6 +2360,10 @@ class BwTree {
                                   bool collect_ubound,
                                   bool collect_value) const {
     bool first_time = true;
+    // This is the high key for local branch
+    // At the end of the loop if we are collecting high key then
+    // this value will be set into logical node as its high key
+    const KeyType *ubound_p = nullptr;
 
     while(1) {
       NodeType type = leaf_node_p->GetType();
@@ -2370,10 +2381,9 @@ class BwTree {
               // If we find a key in the leaf page which is >= the latest
               // separator key of a split node (if there is one) then ignore
               // these key since they have been now stored in another leaf
-              if(logical_node_p->ubound_p != nullptr && \
-                 KeyCmpGreaterEqual(data_item.key, *logical_node_p->ubound_p)) {
-                bwt_printf("Obsolete key has already been placed"
-                           " into split sibling\n");
+              if(ubound_p != nullptr && \
+                 KeyCmpGreaterEqual(data_item.key, *ubound_p)) {
+                bwt_printf("Obsolete key has been detected\n");
 
                 continue;
               }
@@ -2401,12 +2411,15 @@ class BwTree {
             logical_node_p->next_node_id = leaf_base_p->next_node_id;
           }
 
-          // If we want to collect upperbound and also the ubound
-          // has not been set by delta nodes then just set it here
-          // as the leaf's ubound
-          if(collect_ubound == true && \
-             logical_node_p->ubound_p == nullptr) {
-            logical_node_p->ubound_p = &leaf_base_p->ubound;
+          // We set ubound_p here to avoid having to compare keys above
+          if(ubound_p == nullptr) {
+            ubound_p = &leaf_base_p->ubound;
+          }
+
+          // If we collect high key, then local high key is set to be
+          // logical node's high key
+          if(collect_ubound == true) {
+            logical_node_p->ubound_p = ubound_p;
           }
 
           return;
@@ -2417,9 +2430,9 @@ class BwTree {
 
           // Only collect split delta if its key is in
           // the range
-          if(logical_node_p->ubound_p != nullptr && \
+          if(ubound_p != nullptr && \
              KeyCmpGreaterEqual(insert_node_p->insert_key,
-                                *logical_node_p->ubound_p)) {
+                                *ubound_p)) {
             bwt_printf("Insert key not in range (>= high key)\n");
           } else {
             logical_node_p->pointer_list.push_back(insert_node_p);
@@ -2436,9 +2449,9 @@ class BwTree {
           // Only collect delete delta if it is in the range
           // i.e. < newest high key, since otherwise it will
           // be in splited nodes
-          if(logical_node_p->ubound_p != nullptr && \
+          if(ubound_p != nullptr && \
              KeyCmpGreaterEqual(delete_node_p->delete_key,
-                                *logical_node_p->ubound_p)) {
+                                *ubound_p)) {
             bwt_printf("Delete key not in range (>= high key)\n");
           } else {
             logical_node_p->pointer_list.push_back(delete_node_p);
@@ -2469,15 +2482,14 @@ class BwTree {
           // If we have not seen a split node, then this is the first one
           // and we need to remember the upperbound for the logical page
           // Since this is the latest change to its upperbound
-          if(logical_node_p->ubound_p == nullptr && \
-             collect_ubound == true) {
-            logical_node_p->ubound_p = &split_node_p->split_key;
+          if(ubound_p == nullptr) {
+            ubound_p = &split_node_p->split_key;
           }
 
           // Must test collect_ubound since we only collect
           // next node id for the right most node
-          if(logical_node_p->next_node_id == INVALID_NODE_ID && \
-             collect_ubound == true) {
+          if(collect_ubound == true && \
+             logical_node_p->next_node_id == INVALID_NODE_ID) {
             // This logically updates the next node pointer for a
             // logical node
             logical_node_p->next_node_id = split_node_p->split_sibling;
@@ -2492,11 +2504,6 @@ class BwTree {
 
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(leaf_node_p);
-
-          if(logical_node_p->ubound_p == nullptr && \
-             collect_ubound == true) {
-            logical_node_p->ubound_p = &merge_node_p->merge_ubound;
-          }
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
