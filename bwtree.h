@@ -188,7 +188,14 @@ class BwTree {
     PosInf,
     NegInf,
   };
-
+  // TODO: Modify current code to make use of a uniformed LogicalNode structure
+/*
+  struct TreeSnapshot {
+    NodeId node_id;
+    BaseNode *node_p;
+    LogicalNode
+  };
+*/
   /*
    * struct KeyType - Wrapper class for RawKeyType which supports +/-Inf
    * for arbitrary key types
@@ -1604,11 +1611,19 @@ class BwTree {
    * its behaviour is not dependent on the actual content of the physical
    * pointer associated with the node ID, so we could choose to fix the
    * snapshot later
+   *
+   * NOTE: Since we are on inner nodes, it is mandatory to save the new
+   * NodeID if it has changed due to a node split. Therefore, the tree snapshot
+   * argument is not allowed to be true even for a read-only operation (because
+   * even for read only operations there could be back tracking)
    */
   NodeID NavigateInnerNode(const KeyType &search_key,
                            const BaseNode *node_p,
                            TreeSnapshot *real_tree) const {
-    // We  track current artificial high key brought about by split node
+    // This is DIFFERENT from what happens on the leaf
+    assert(real_tree != nullptr);
+
+    // We track current artificial high key brought about by split node
     const KeyType *ubound_p = nullptr;
 
     while(1) {
@@ -1672,8 +1687,59 @@ class BwTree {
 
           break;
         } // InnerDeleteType
+        case NodeType::InnerSplitType: {
+          const InnerSplitNode *split_node_p = \
+            static_cast<const InnerSplitNode *>(node_p);
+
+          const KeyType &split_key = split_node_p->split_key;
+          // If current key is on the new node side,
+          // we need to update tree snapshot to reflect the fact that we have
+          // traversed to a new NodeID
+          if(KeyCmpGreaterEqual(search_key, split_key)) {
+            NodeID branch_id = split_node_p->split_sibling;
+            // SERIALIZATION POINT!
+            const BaseNode *branch_node_p = GetNode(branch_id);
+
+            real_tree->first = branch_id;
+            real_tree->second = branch_node_p;
+
+            node_p = branch_node_p;
+          } else {
+            // If we do not take the branch, then the high key has changed
+            // since the splited half takes some keys from the logical node
+            // downside
+            ubound_p = &split_key;
+
+            node_p = split_node_p->child_node_p;
+          }
+
+          break;
+        } // case InnerSplitType
+        case NodeType::InnerMergeType: {
+          const InnerMergeNode *merge_node_p = \
+            static_cast<const InnerMergeNode *>(node_p);
+
+          const KeyType &merge_key = merge_node_p->merge_key;
+
+          if(KeyCmpGreaterEqual(search_key, merge_key)) {
+            node_p = merge_node_p->right_merge_p;
+          } else {
+            node_p = merge_node_p->child_node_p;
+          }
+
+          break;
+        } // InnerMergeType
+        default: {
+          bwt_printf("ERROR: Unknown node type = %d", type);
+
+          assert(false);
+        }
       } // switch type
     } // while 1
+
+    // Should not reach here
+    assert(false);
+    return INVALID_NODE_ID;
   }
 
   /*
