@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
-#include <limits>
 #include <vector>
 #include <atomic>
 #include <algorithm>
@@ -137,15 +136,14 @@ class BwTree {
 
   //using NodeID = uint64_t;
   // We use this type to represent the path we traverse down the tree
-  using TreeSnapshot = std::pair<NodeID, BaseNode *>;
+  using TreeSnapshot = std::pair<NodeID, const BaseNode *>;
   using PathHistory = std::vector<TreeSnapshot>;
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
   using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
-  using NodePointerList = std::vector<BaseNode *>;
   using ConstNodePointerList = std::vector<const BaseNode *>;
 
-  // This is used to hold single key and single value ordered mapping relation
-  using KeySingleValueMap = std::map<KeyType, ValueType, WrappedKeyComparator>;
+  // This is used to hold key and NodeID ordered mapping relation
+  using KeyNodeIDMap = std::map<KeyType, NodeID, WrappedKeyComparator>;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -246,6 +244,10 @@ class BwTree {
     }
   };
 
+  /*
+   * class WrappedKeyComparator - Compares wrapped key, using raw key
+   *                              comparator in template argument
+   */
   class WrappedKeyComparator {
    public:
     bool operator()(const KeyType &key1, const KeyType &key2) {
@@ -804,11 +806,13 @@ class BwTree {
      */
     InnerInsertNode(const KeyType &p_insert_key,
                     const KeyType &p_next_key,
+                    NodeID p_new_node_id,
                     int p_depth,
                     const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerInsertType, p_depth, p_child_node_p},
       insert_key{p_insert_key},
-      next_key{p_next_key}
+      next_key{p_next_key},
+      new_node_id{p_new_node_id}
     {}
   };
 
@@ -816,7 +820,8 @@ class BwTree {
    * class InnerDeleteNode - Delete node
    *
    * NOTE: There are three keys associated with this node, two of them
-   * defining
+   * defining the new range after deleting this node, the remaining one
+   * describing the key being deleted
    */
   class InnerDeleteNode : public DeltaNode {
    public:
@@ -825,7 +830,7 @@ class BwTree {
     KeyType next_key;
     KeyType prev_key;
 
-    NodeID merged_node_id;
+    NodeID prev_node_id;
 
     /*
      * Constructor
@@ -836,14 +841,14 @@ class BwTree {
     InnerDeleteNode(const KeyType &p_delete_key,
                     const KeyType &p_next_key,
                     const KeyType &p_prev_key,
-                    NodeID p_merged_node_id,
+                    NodeID p_prev_node_id,
                     int p_depth,
                     const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerDeleteType, p_depth, p_child_node_p},
       delete_key{p_delete_key},
       next_key{p_next_key},
       prev_key{p_prev_key},
-      merged_node_id{p_merged_node_id}
+      prev_node_id{p_prev_node_id}
     {}
   };
 
@@ -1096,7 +1101,7 @@ class BwTree {
    */
   class LogicalInnerNode {
    public:
-    KeySingleValueMap key_value_map;
+    KeyNodeIDMap key_value_map;
 
     const KeyType *lbound_p;
     const KeyType *ubound_p;
@@ -1647,7 +1652,7 @@ class BwTree {
         } // case InnerRemoveType
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
-            static_cast<InnerInsertNode *>(node_p);
+            static_cast<const InnerInsertNode *>(node_p);
 
           const KeyType &insert_low_key = insert_node_p->insert_key;
           const KeyType &insert_high_key = insert_node_p->next_key;
@@ -1674,7 +1679,7 @@ class BwTree {
           // of its left sibling before deletion
           const KeyType &delete_low_key = delete_node_p->prev_key;
           const KeyType &delete_high_key = delete_node_p->next_key;
-          NodeID target_id = delete_node_p->merged_node_id;
+          NodeID target_id = delete_node_p->prev_node_id;
 
           if(KeyCmpGreaterEqual(search_key, delete_low_key) && \
              KeyCmpLess(search_key, delete_high_key)) {

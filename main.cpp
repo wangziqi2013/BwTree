@@ -22,7 +22,7 @@ using InnerInsertNode = typename TreeType::InnerInsertNode;
 using InnerDeleteNode = typename TreeType::InnerDeleteNode;
 using InnerSplitNode = typename TreeType::InnerSplitNode;
 using InnerMergeNode = typename TreeType::InnerMergeNode;
-using InnerNode = typename TreeType::LeafNode;
+using InnerNode = typename TreeType::InnerNode;
 
 using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
@@ -198,6 +198,60 @@ void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
   return;
 }
 
+void TestNavigateInnerNode(TreeType *t) {
+  // node NodeID = 1000
+  InnerNode *inner_node_p_1 = \
+    t->DebugGetInnerNode(1, 10, INVALID_NODE_ID,
+                         {1, 2, 4, 5, 8, 9},
+                         {100, 102, 104, 105, 1088, 109});
+
+  InnerNode *inner_node_p_2 = \
+    t->DebugGetInnerNode(6, 10, INVALID_NODE_ID,
+                         {6, 7, 8, 9},
+                         {106, 107, 10888, 109});
+
+  InnerDeleteNode *delete_node_p = \
+    new InnerDeleteNode{8, 9, 7, 107, 0, inner_node_p_2};
+
+  InnerInsertNode *insert_node_p_1 = \
+    new InnerInsertNode{6, 8, 106, 0, inner_node_p_1};
+
+  InnerInsertNode *insert_node_p_2 = \
+    new InnerInsertNode{7, 8, 107, 0, insert_node_p_1};
+
+  InnerSplitNode *split_node_p = \
+    new InnerSplitNode{6, 1001, 0, insert_node_p_2};
+
+  InnerInsertNode *insert_node_p_3 = \
+    new InnerInsertNode{3, 4, 103, 0, split_node_p};
+
+  InnerMergeNode *merge_node_p = \
+    new InnerMergeNode{6, 10, delete_node_p, 0, insert_node_p_3};
+
+  t->InstallNewNode(1000, merge_node_p);
+  t->InstallNewNode(1001, delete_node_p);
+
+  LogicalInnerNode logical_node{TreeSnapshot{}};
+
+  t->CollectAllSepsOnInnerRecursive(merge_node_p, &logical_node, true, true, true);
+
+  for(auto item : logical_node.key_value_map) {
+    bwt_printf("key = %d, value = %lu\n", item.first.key, item.second);
+  }
+
+  bwt_printf("High key = %d, low key = %d, next_id = %lu\n",
+             logical_node.ubound_p->key,
+             logical_node.lbound_p->key,
+             logical_node.next_node_id);
+
+  TreeSnapshot ts{};
+  NodeID node_id = t->NavigateInnerNode(8, merge_node_p, &ts);
+
+  bwt_printf("Node id = %lu; ts.id = %lu;\n", node_id, ts.first);
+
+  return;
+}
+
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
@@ -217,7 +271,7 @@ int main() {
   LocateLeftSiblingTest(t1);
   CollectNewNodeSinceLastSnapshotTest(t1);
 
-  t1->CollectAllSepsOnInnerRecursive(nullptr, nullptr, false, false, false);
+  TestNavigateInnerNode(t1);
 
   return 0;
 }
