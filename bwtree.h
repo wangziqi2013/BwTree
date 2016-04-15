@@ -1761,6 +1761,10 @@ class BwTree {
                                  bool collect_sep) const {
     // Validate remove node, if any
     bool first_time = true;
+    // Used to restrict the upper bound in a local branch
+    // If we are collecting upper bound, then this will finally
+    // be assign to the logical node
+    const KeyType *ubound_p = nullptr;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -1769,6 +1773,11 @@ class BwTree {
         case NodeType::InnerType: {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
+
+          // A base node also defines the high key
+          if(ubound_p == nullptr) {
+            ubound_p = &inner_node_p->ubound;
+          }
 
           // If the caller cares about the actual content
           if(collect_sep) {
@@ -1780,8 +1789,10 @@ class BwTree {
 
               // If we observed an out of range key (brought about by split)
               // just ignore it (>= high key, if exists a high key)
-              if(logical_node_p->ubound_p != nullptr && \
-                 KeyCmpGreaterEqual(item.key, *logical_node_p->ubound_p)) {
+              if(ubound_p != nullptr && \
+                 KeyCmpGreaterEqual(item.key, *ubound_p)) {
+                bwt_printf("Detected a out of range key in inner base node\n");
+
                 continue;
               }
 
@@ -1800,12 +1811,11 @@ class BwTree {
             logical_node_p->lbound_p = &inner_node_p->lbound;
           }
 
-          // If we collect high key (i.e. on the right most beanch
-          // of a merge tree, and the high key has not been determined yet
-          // maybe by a split node delta)
-          if(collect_ubound == true && \
-             logical_node_p->ubound_p == nullptr) {
-            logical_node_p->ubound_p = &inner_node_p->ubound;
+          // If we clooect high key, then it is set to the local branch
+          if(collect_ubound == true) {
+            assert(logical_node_p->ubound_p == nullptr);
+
+            logical_node_p->ubound_p = ubound_p;
           }
 
           // If it is the rightmost node, and we have not seen
@@ -1839,13 +1849,17 @@ class BwTree {
           const KeyType &insert_key = insert_node_p->insert_key;
           assert(insert_node_p->new_node_id != INVALID_NODE_ID);
 
-          // Only insert the key if it is not in split sibling node
-          if(logical_node_p->ubound_p != nullptr && \
-             KeyCmpLess(insert_key, *logical_node_p->ubound_p)) {
-            // This will insert if key does not exist yet
-            logical_node_p->key_value_map.insert( \
-              typename decltype(logical_node_p->key_value_map)::value_type( \
-                insert_key, insert_node_p->new_node_id));
+          if(collect_sep == true) {
+            // If there is a ubound and the key is inside the bound, or
+            // there is no bound
+            if((ubound_p != nullptr && \
+                KeyCmpLess(insert_key, *ubound_p)) || \
+                ubound_p == nullptr) {
+              // This will insert if key does not exist yet
+              logical_node_p->key_value_map.insert( \
+                typename decltype(logical_node_p->key_value_map)::value_type( \
+                  insert_key, insert_node_p->new_node_id));
+            }
           }
 
           // Go to next node
@@ -1863,13 +1877,18 @@ class BwTree {
           // INVALID_NODE_ID as node ID
           const KeyType &delete_key = delete_node_p->delete_key;
 
-          // Only delete key if it is in range (not in a split node)
-          if(logical_node_p->ubound_p != nullptr && \
-             KeyCmpLess(delete_key, *logical_node_p->ubound_p)) {
-            logical_node_p->key_value_map.insert( \
-              typename decltype(logical_node_p->key_value_map)::value_type( \
-                delete_node_p->delete_key,
-                INVALID_NODE_ID));
+          if(collect_sep == true) {
+            // Only delete key if it is in range (not in a split node)
+            if((ubound_p != nullptr && \
+                KeyCmpLess(delete_key, *ubound_p)) || \
+                ubound_p == nullptr) {
+              bwt_printf("Key deleted!\n");
+
+              logical_node_p->key_value_map.insert( \
+                typename decltype(logical_node_p->key_value_map)::value_type( \
+                  delete_node_p->delete_key,
+                  INVALID_NODE_ID));
+            }
           }
 
           node_p = delete_node_p->child_node_p;
@@ -1880,11 +1899,11 @@ class BwTree {
           const InnerSplitNode *split_node_p = \
             static_cast<const InnerSplitNode *>(node_p);
 
-          // If we are collecting high key, and the high key has not
-          // been set yet, just set it
-          if(collect_ubound == true && \
-             logical_node_p->ubound_p == nullptr) {
-            logical_node_p->ubound_p = &split_node_p->split_key;
+          // If the high key has not been set yet, just set it
+          if(ubound_p == nullptr) {
+            bwt_printf("Updating high key with split node\n");
+
+            ubound_p = &split_node_p->split_key;
           }
 
           // If we are the right most branch, then also update next ID
@@ -1901,18 +1920,13 @@ class BwTree {
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(node_p);
 
-          // Merge node defines a new (larger) high key for logical node
-          if(collect_ubound == true && \
-             logical_node_p->ubound_p == nullptr) {
-            logical_node_p->ubound_p = &merge_node_p->merge_ubound;
-          }
-
           // Use different flags to collect on left and right branch
           CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
                                          logical_node_p,
                                          collect_lbound, // Take care!
                                          false,
                                          collect_sep);
+
           CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
                                          logical_node_p,
                                          false,
