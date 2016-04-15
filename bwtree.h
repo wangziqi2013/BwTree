@@ -737,11 +737,6 @@ class BwTree {
    public:
     KeyType merge_key;
 
-    // Since merge delta also changes the upper bound of a
-    // logical node, we need to record this as an update
-    // to "upperbound" field of a logical page, and
-    KeyType merge_ubound;
-
     // For merge nodes we use actual physical pointer
     // to indicate that the right half is already part
     // of the logical node
@@ -751,13 +746,11 @@ class BwTree {
      * Constructor
      */
     LeafMergeNode(const KeyType &p_merge_key,
-                  const KeyType &p_merge_ubound,
                   const BaseNode *p_right_merge_p,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
-      merge_ubound{p_merge_ubound},
       right_merge_p{p_right_merge_p}
     {}
   };
@@ -884,20 +877,17 @@ class BwTree {
    public:
     KeyType merge_key;
 
-    KeyType merge_ubound;
     const BaseNode *right_merge_p;
 
     /*
      * Constructor
      */
     InnerMergeNode(const KeyType &p_merge_key,
-                   const KeyType &p_merge_ubound,
                    const BaseNode *p_right_merge_p,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
-      merge_ubound{p_merge_ubound},
       right_merge_p{p_right_merge_p}
     {}
   };

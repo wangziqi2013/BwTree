@@ -93,7 +93,7 @@ void CollectDeltaPoniterTest1(TreeType *t) {
   LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.188, 3, split1};
 
   // NOTE: Merge needs also to keep an upperbound
-  LeafMergeNode *merge1 = new LeafMergeNode{6, 11, delete1, 2, insert1};
+  LeafMergeNode *merge1 = new LeafMergeNode{6, delete1, 2, insert1};
   LeafRemoveNode *remove1 = new LeafRemoveNode{4, delete1};
 
   t->InstallNewNode(100, merge1);
@@ -226,7 +226,7 @@ void TestNavigateInnerNode(TreeType *t) {
     new InnerInsertNode{3, 4, 103, 0, split_node_p};
 
   InnerMergeNode *merge_node_p = \
-    new InnerMergeNode{6, 10, delete_node_p, 0, insert_node_p_3};
+    new InnerMergeNode{6, delete_node_p, 0, insert_node_p_3};
 
   t->InstallNewNode(1000, merge_node_p);
   t->InstallNewNode(1001, delete_node_p);
