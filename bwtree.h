@@ -188,6 +188,31 @@ class BwTree {
   };
 
   /*
+   * class BaseLogicalNode - Base class of logical node
+   *
+   * Both inner logical node and leaf logical node have a high key,
+   * low key, and next node NodeID
+   *
+   * NOTE: This structure is used as part of the TreeSnapshot structure
+   */
+  class BaseLogicalNode {
+   public:
+    const KeyType *lbound_p;
+    const KeyType *ubound_p;
+
+    NodeID next_node_id;
+
+    /*
+     * Constructor - Initialize everything to initial invalid state
+     */
+    BaseLogicalNode() :
+      lbound_p{nullptr},
+      ubound_p{nullptr},
+      next_node_id{INVALID_NODE_ID}
+    {}
+  };
+
+  /*
    * struct TreeSnapshot - Describes the states in a tree when we see them
    *
    * node_id and node_p are pairs that represents the state when we traverse
@@ -204,11 +229,12 @@ class BwTree {
   struct TreeSnapshot {
     NodeId node_id;
     BaseNode *node_p;
-    //BaseLogicalNode *logical_node_p;
+    BaseLogicalNode *logical_node_p;
     bool has_data;
     bool is_leaf;
   };
   */
+
 
   /*
    * struct KeyType - Wrapper class for RawKeyType which supports +/-Inf
