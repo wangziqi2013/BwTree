@@ -136,11 +136,10 @@ class BwTree {
  public:
 #endif
 
-  //using NodeID = uint64_t;
-  using PathHistory = std::vector<TreeSnapshot>;
+  // This is used to hold values in a set
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
+  // This is used to hold mapping from key to a set of values
   using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
-  using ConstNodePointerList = std::vector<const BaseNode *>;
 
   // This is used to hold key and NodeID ordered mapping relation
   using KeyNodeIDMap = std::map<KeyType, NodeID, WrappedKeyComparator>;
@@ -983,7 +982,7 @@ class BwTree {
 
     // This is used to temporarily hold results, and should be empty
     // after all deltas has been applied
-    ConstNodePointerList pointer_list;
+    std::vector<const BaseNode *> pointer_list;
 
     /*
      * Constructor - Initialize logical ID and physical pointer
@@ -1426,11 +1425,11 @@ class BwTree {
    *     Return true and node_list_p is empty
    *
    */
-  bool CollectNewNodesSinceLastSnapshot(const BaseNode *old_node_p,
-                                        const BaseNode *new_node_p,
-                                        ConstNodePointerList *node_list_p)
-    const {
-    // We only call this function is CAS fails, so these two pointers
+  bool CollectNewNodesSinceLastSnapshot(
+    const BaseNode *old_node_p,
+    const BaseNode *new_node_p,
+    std::vector<const BaseNode *> *node_list_p) const {
+    // We only call this function if CAS fails, so these two pointers
     // must be different
     assert(new_node_p != old_node_p);
 
@@ -2075,7 +2074,7 @@ class BwTree {
                             NodeType *current_node_type_p,
                             BaseNode **current_head_node_pp,
                             NodeType *current_head_node_type_p,
-                            PathHistory *path_list_p) const {
+                            std::vector<NodeSnapshot> *path_list_p) const {
     *current_node_pp = GetNode(new_id);
     *current_node_type_p = (*current_node_pp)->GetType();
 
@@ -2098,7 +2097,7 @@ class BwTree {
    * are still working on the latest snapshot, by CAS NodeID with the pointer
    */
   void TraverseDownInnerNode(const KeyType &search_key,
-                             PathHistory *path_list_p,
+                             std::vector<NodeSnapshot> *path_list_p,
                              NodeID start_id = INVALID_NODE_ID) {
 
     // There is a slight difference: If start ID is a valid one
@@ -2659,7 +2658,8 @@ class BwTree {
   bool Insert(const RawKeyType &raw_key, ValueType &value) {
     bwt_printf("Insert called\n");
 
-    PathHistory ph{};
+    // Path history
+    std::vector<NodeSnapshot> ph{};
     KeyType search_key = GetWrappedKey(raw_key);
 
     TraverseDownInnerNode(search_key, &ph);
@@ -2667,7 +2667,7 @@ class BwTree {
 
     // Since it returns on seeing a leaf delta chain head
     // We use reference here to avoid copy
-    const TreeSnapshot &ts = ph.back();
+    const NodeSnapshot &ts = ph.back();
     NodeID leaf_head_id = ts.node_id;
     const BaseNode *leaf_head_p = ts.node_p;
 
