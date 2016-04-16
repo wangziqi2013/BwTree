@@ -125,7 +125,7 @@ class BwTree {
   class KeyType;
   class WrappedKeyComparator;
   class BaseLogicalNode;
-  class TreeSnapshot;
+  class NodeSnapshot;
 
  /*
   * private: Basic type definition
@@ -2086,8 +2086,9 @@ class BwTree {
     *current_head_node_pp = *current_node_pp;
     *current_head_node_type_p = *current_node_type_p;
 
+    // TODO: Save a snapshot object
     // Save history for the new ID and new node pointer
-    path_list_p->push_back(std::make_pair(new_id, *current_node_pp));
+    //path_list_p->push_back(std::make_pair(new_id, *current_node_pp));
 
     return;
   }
