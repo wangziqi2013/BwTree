@@ -4,11 +4,6 @@
 
 using namespace peloton::index;
 
-//template class BwTree<int, double>;
-//template class BwTree<long, double>;
-//template class BwTree<std::string, double>;
-//template class BwTree<std::string, std::string>;
-
 using TreeType = BwTree<int, double>;
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
@@ -26,17 +21,13 @@ using InnerNode = typename TreeType::InnerNode;
 
 using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
-//using NodeID = typename TreeType::NodeID;
 using ValueSet = typename TreeType::ValueSet;
 using KeyValueSet = typename TreeType::KeyValueSet;
 using KeyType = typename TreeType::KeyType;
 using LogicalLeafNode = typename TreeType::LogicalLeafNode;
-using TreeSnapshot = typename TreeType::TreeSnapshot;
+using NodeSnapshot = typename TreeType::NodeSnapshot;
 using LogicalInnerNode = typename TreeType::LogicalInnerNode;
 using BaseNode = typename TreeType::BaseNode;
-using ConstNodePointerList = typename TreeType::ConstNodePointerList;
-
-//NodeID INVALID_NODE_ID = TreeType::INVALID_NODE_ID;
 
 template <typename Fn, typename... Args>
 void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
