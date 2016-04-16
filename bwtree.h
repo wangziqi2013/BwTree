@@ -148,10 +148,6 @@ class BwTree {
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
-  // Debug constant: The maximum number of iterations we could do
-  // It prevents dead loop hopefully
-  constexpr static int ITER_MAX = 99999;
-
   /*
    * enum class NodeType - Bw-Tree node type
    */
