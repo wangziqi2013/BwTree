@@ -186,14 +186,30 @@ class BwTree {
     PosInf,
     NegInf,
   };
-  // TODO: Modify current code to make use of a uniformed LogicalNode structure
-/*
+
+  /*
+   * struct TreeSnapshot - Describes the states in a tree when we see them
+   *
+   * node_id and node_p are pairs that represents the state when we traverse
+   * the node and use GetNode() to resolve the node ID.
+   *
+   * logical_node_p points to a consolidated view of the node, which might or
+   * might not contain actual data (indicated by the boolean member), or even
+   * might not be valid (if the pointer is nullptr).
+   *
+   * Also we need to distinguish between leaf snapshot and inner node snapshots
+   * which is achieved by
+   */
+  /*
   struct TreeSnapshot {
     NodeId node_id;
     BaseNode *node_p;
-    LogicalNode
+    //BaseLogicalNode *logical_node_p;
+    bool has_data;
+    bool is_leaf;
   };
-*/
+  */
+
   /*
    * struct KeyType - Wrapper class for RawKeyType which supports +/-Inf
    * for arbitrary key types
