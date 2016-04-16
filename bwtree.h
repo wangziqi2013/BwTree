@@ -124,6 +124,7 @@ class BwTree {
   class BaseNode;
   class KeyType;
   class WrappedKeyComparator;
+  class BaseLogicalNode;
 
  /*
   * private: Basic type definition
@@ -147,8 +148,6 @@ class BwTree {
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
-
-
 
   // Debug constant: The maximum number of iterations we could do
   // It prevents dead loop hopefully
@@ -185,31 +184,6 @@ class BwTree {
     RawKey,
     PosInf,
     NegInf,
-  };
-
-  /*
-   * class BaseLogicalNode - Base class of logical node
-   *
-   * Both inner logical node and leaf logical node have a high key,
-   * low key, and next node NodeID
-   *
-   * NOTE: This structure is used as part of the TreeSnapshot structure
-   */
-  class BaseLogicalNode {
-   public:
-    const KeyType *lbound_p;
-    const KeyType *ubound_p;
-
-    NodeID next_node_id;
-
-    /*
-     * Constructor - Initialize everything to initial invalid state
-     */
-    BaseLogicalNode() :
-      lbound_p{nullptr},
-      ubound_p{nullptr},
-      next_node_id{INVALID_NODE_ID}
-    {}
   };
 
   /*
@@ -479,11 +453,12 @@ class BwTree {
     std::vector<ValueType> value_list;
 
     /*
-     * Constructor - Use a value vector to construct
+     * Constructor - Construction from a list of data values
      *
-     * This method is mainly called for debugging purpose
+     * This one is mainly used for debugging purposes
      */
-    DataItem(const KeyType &p_key, const std::vector<ValueType> &p_value_list) :
+    DataItem(const KeyType p_key,
+             const std::vector<ValueType> &p_value_list) :
       key{p_key},
       value_list{p_value_list}
     {}
@@ -494,7 +469,7 @@ class BwTree {
      * It bulk loads the value vector with an unordered set's begin()
      * and end() iterator
      */
-    DataItem(const KeyType &p_key, const ValueSet &p_value_set, bool) :
+    DataItem(const KeyType &p_key, const ValueSet &p_value_set) :
       key{p_key},
       value_list{p_value_set.begin(), p_value_set.end()}
     {}
@@ -949,6 +924,35 @@ class BwTree {
     {}
   };
 
+  ///////////////////////////////////////////////////////////////////
+  // Logical node definition
+  ///////////////////////////////////////////////////////////////////
+
+  /*
+   * class BaseLogicalNode - Base class of logical node
+   *
+   * Both inner logical node and leaf logical node have a high key,
+   * low key, and next node NodeID
+   *
+   * NOTE: This structure is used as part of the TreeSnapshot structure
+   */
+  class BaseLogicalNode {
+   public:
+    const KeyType *lbound_p;
+    const KeyType *ubound_p;
+
+    NodeID next_node_id;
+
+    /*
+     * Constructor - Initialize everything to initial invalid state
+     */
+    BaseLogicalNode() :
+      lbound_p{nullptr},
+      ubound_p{nullptr},
+      next_node_id{INVALID_NODE_ID}
+    {}
+  };
+
   /*
    * LogicalLeafNode() - A logical representation of a logical node
    *                     which is physically one or more chains of
@@ -958,15 +962,10 @@ class BwTree {
    * results for a whole page operation. The caller fills in ID and pointer
    * field, while callee would fill the other fields
    */
-  class LogicalLeafNode {
+  class LogicalLeafNode : public BaseLogicalNode {
    public:
     // These fields are filled by callee
     KeyValueSet key_value_set;
-    // These two needs to be null to indicate whether
-    // they are valid or not
-    const KeyType *ubound_p;
-    const KeyType *lbound_p;
-    NodeID next_node_id;
 
     // This is used to temporarily hold results, and should be empty
     // after all deltas has been applied
@@ -980,10 +979,8 @@ class BwTree {
      *               as the tree snapshot
      */
     LogicalLeafNode(TreeSnapshot p_snapshot) :
+      BaseLogicalNode{},
       key_value_set{},
-      ubound_p{nullptr},
-      lbound_p{nullptr},
-      next_node_id{INVALID_NODE_ID},
       pointer_list{},
       snapshot{p_snapshot}
     {}
@@ -1089,7 +1086,14 @@ class BwTree {
      * NOTE: This routine allocates memory for leaf page!!!!!!!!!!!!!
      */
     LeafNode *ToLeafNode() {
-      LeafNode *leaf_node_p = new LeafNode(*lbound_p, *ubound_p, next_node_id);
+      assert(BaseLogicalNode::lbound_p != nullptr);
+      assert(BaseLogicalNode::ubound_p != nullptr);
+      assert(BaseLogicalNode::next_node_id != INVALID_NODE_ID);
+
+      LeafNode *leaf_node_p = \
+        new LeafNode(*BaseLogicalNode::lbound_p,
+                     *BaseLogicalNode::ubound_p,
+                     BaseLogicalNode::next_node_id);
 
       // The key is already ordered, we just need to check for value
       // emptiness
@@ -1131,15 +1135,9 @@ class BwTree {
    * we perform left sibling locating, it is crucial for us to
    * be able to sequentially access all separators
    */
-  class LogicalInnerNode {
+  class LogicalInnerNode : public BaseLogicalNode {
    public:
     KeyNodeIDMap key_value_map;
-
-    const KeyType *lbound_p;
-    const KeyType *ubound_p;
-
-    // This will be collected on split node or base inner node
-    NodeID next_node_id;
 
     TreeSnapshot snapshot;
 
@@ -1147,10 +1145,8 @@ class BwTree {
      * Constructor - Accept an initial starting point and init others
      */
     LogicalInnerNode(TreeSnapshot p_snapshot) :
+      BaseLogicalNode{},
       key_value_map{},
-      lbound_p{nullptr},
-      ubound_p{nullptr},
-      next_node_id{INVALID_NODE_ID},
       snapshot{p_snapshot}
     {}
 
@@ -1161,8 +1157,15 @@ class BwTree {
      * should be freed by epoch manager.
      */
     InnerNode *ToInnerNode() {
+      assert(BaseLogicalNode::lbound_p != nullptr);
+      assert(BaseLogicalNode::ubound_p != nullptr);
+      assert(BaseLogicalNode::next_node_id != INVALID_NODE_ID);
+
+      // Memory allocated here should be freed by epoch
       InnerNode *inner_node_p = \
-        new InnerNode{*lbound_p, *ubound_p, next_node_id};
+        new InnerNode{*BaseLogicalNode::lbound_p,
+                      *BaseLogicalNode::ubound_p,
+                      BaseLogicalNode::next_node_id};
 
       // Iterate through the ordered map and push separator items
       for(auto &it : key_value_map) {
