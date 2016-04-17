@@ -1943,6 +1943,18 @@ class BwTree {
                                    true,
                                    true);
 
+    LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
+
+    // Remove all key with INVALID_NODE_ID placeholder
+    // since they are deleted nodes. This could not be
+    // done inside the recursive function since it is
+    // possible that a deleted key reappearing
+    for(auto &item : logical_node_p->key_value_map) {
+      if(item.second == INVALID_NODE_ID) {
+        logical_node_p->key_value_map.erase(item.first);
+      }
+    }
+
     snapshot_p->has_data = true;
 
     return;
@@ -2048,14 +2060,19 @@ class BwTree {
             logical_node_p->next_node_id = inner_node_p->next_node_id;
           }
 
+
+          // NOTE: SHOULD NOT DO IT HERE
+          // If there is a merge, then this will make some deleted keys
+          // reappear since its INVALID_NODE_ID has been removed
+
           // Remove all keys with INVALID_NODE_ID as target node id
           // since they should have been deleted, and we just put them
           // into the map to block any further key operation
-          for(auto &item : logical_node_p->key_value_map) {
-            if(item.second == INVALID_NODE_ID) {
-              logical_node_p->key_value_map.erase(item.first);
-            }
-          }
+          //for(auto &item : logical_node_p->key_value_map) {
+          //  if(item.second == INVALID_NODE_ID) {
+          //    logical_node_p->key_value_map.erase(item.first);
+          //  }
+          //}
 
           return;
         } // case InnerType
@@ -2106,9 +2123,9 @@ class BwTree {
             if((ubound_p != nullptr && \
                 KeyCmpLess(delete_key, *ubound_p)) || \
                 ubound_p == nullptr) {
-              bwt_printf("Key deleted!\n");
+              bwt_printf("Key is deleted by a delete delta\n");
 
-              logical_node_p->key_value_map.insert( \
+              auto ret = logical_node_p->key_value_map.insert( \
                 typename decltype(logical_node_p->key_value_map)::value_type( \
                   delete_node_p->delete_key,
                   INVALID_NODE_ID));
