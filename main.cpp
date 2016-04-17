@@ -19,6 +19,8 @@ using InnerSplitNode = typename TreeType::InnerSplitNode;
 using InnerMergeNode = typename TreeType::InnerMergeNode;
 using InnerNode = typename TreeType::InnerNode;
 
+using DeltaNode = typename TreeType::DeltaNode;
+
 using NodeType = typename TreeType::NodeType;
 using DataItem = typename TreeType::DataItem;
 using ValueSet = typename TreeType::ValueSet;
@@ -272,7 +274,71 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
   bwt_printf("Next Node Id = %lu\n",
              snapshot_p->GetLogicalLeafNode()->next_node_id);
 
+  t->DebugUninstallNode(1000);
+  t->DebugUninstallNode(1001);
+
   return;
+}
+
+void TestNavigateLeafNode(TreeType *t) {
+  BaseNode *node_p = PrepareSplitMergeLeaf(t);
+
+  bwt_printf("========== Test NavigateLeafNode ==========\n");
+
+  // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
+  for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+    snapshot_p->node_id = 1000;
+    snapshot_p->node_p = node_p;
+
+    t->NavigateLeafNode(i, snapshot_p);
+
+    bwt_printf(">> Current testing: key = %d\n", i);
+    for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
+      bwt_printf(">> Key = %d\n", item.first.key);
+      for(auto value : item.second) {
+        bwt_printf(">>      Value = %lf \n", value);
+      }
+    }
+
+    bwt_printf("is sibling node = %d; NodeID = %lu\n",
+               snapshot_p->is_split_sibling,
+               snapshot_p->node_id);
+
+    delete snapshot_p;
+  }
+
+  /////////////////////////////////////////////
+
+  bwt_printf("========== Test NavigateLeafNode ==========\n");
+  bwt_printf("              With split delta             \n");
+
+  for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+    snapshot_p->node_id = 1000;
+    // Points to split node
+    snapshot_p->node_p = \
+      ((DeltaNode *)(((DeltaNode *)node_p)->child_node_p))->child_node_p;
+
+    t->NavigateLeafNode(i, snapshot_p);
+
+    bwt_printf(">> Current testing: key = %d\n", i);
+    for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
+      bwt_printf(">> Key = %d\n", item.first.key);
+      for(auto value : item.second) {
+        bwt_printf(">>      Value = %lf \n", value);
+      }
+    }
+
+    bwt_printf("is sibling node = %d; NodeID = %lu\n",
+               snapshot_p->is_split_sibling,
+               snapshot_p->node_id);
+
+    delete snapshot_p;
+  }
+
+  t->DebugUninstallNode(1000);
+  t->DebugUninstallNode(1001);
 }
 
 int main() {
@@ -295,6 +361,7 @@ int main() {
 
   //TestNavigateInnerNode(t1);
   TestCollectAllValuesOnLeaf(t1);
+  TestNavigateLeafNode(t1);
 
   return 0;
 }

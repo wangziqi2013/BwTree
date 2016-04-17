@@ -1219,7 +1219,8 @@ class BwTree {
   class NodeSnapshot {
    public:
     NodeID node_id;
-    BaseNode *node_p;
+    const BaseNode *node_p;
+
     BaseLogicalNode *logical_node_p;
 
     // Whether there is data or only metadata
@@ -1259,6 +1260,15 @@ class BwTree {
       assert(logical_node_p != nullptr);
 
       return;
+    }
+
+    /*
+     * Destructor - Automatically destory the logical node object
+     */
+    ~NodeSnapshot() {
+      assert(logical_node_p);
+
+      delete logical_node_p;
     }
 
     /*
@@ -2334,7 +2344,7 @@ class BwTree {
                  KeyCmpLess(search_key, *ubound_p));
 
           // First bulk load data item for the search key, if exists
-          for(DataItem &item : leaf_node_p->data_list) {
+          for(const DataItem &item : leaf_node_p->data_list) {
             if(KeyCmpEqual(item.key, search_key)) {
               logical_node_p->BulkLoadValue(item);
 
@@ -2902,6 +2912,16 @@ class BwTree {
     }
 
     return temp_node_p;
+  }
+
+  /*
+   * DebugUninstallNode() - Uninstall a node forcibally
+   *
+   * This could not be used inside normal operation since this operation
+   * is not thread safe (not using CAS)
+   */
+  void DebugUninstallNode(NodeID node_id) {
+    mapping_table[node_id] = 0LU;
   }
 
 };
