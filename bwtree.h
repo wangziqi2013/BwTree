@@ -1938,7 +1938,7 @@ class BwTree {
    */
   void CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
-                                   snapshot_p->logical_node_p,
+                                   snapshot_p->GetLogicalInnerNode(),
                                    true,
                                    true,
                                    true);
@@ -2735,7 +2735,7 @@ class BwTree {
     // These two flags will be set to false for every node
     // that is neither a left not right most node
     CollectAllValuesOnLeafRecursive(snapshot_p->node_p,
-                                    (LogicalLeafNode *)snapshot_p->logical_node_p,
+                                    snapshot_p->GetLogicalLeafNode(),
                                     true,
                                     true,
                                     true);  // collect data
