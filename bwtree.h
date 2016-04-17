@@ -1287,7 +1287,7 @@ class BwTree {
      *
      * We use this as a wrapper to save a type casting
      */
-    LogicalInnerNode GetLogicalInnerNode() {
+    LogicalInnerNode *GetLogicalInnerNode() {
       assert(is_leaf == false);
 
       return static_cast<LogicalInnerNode *>(logical_node_p);
