@@ -955,7 +955,7 @@ class BwTree {
      * GetContainter() - Reuturn the container that holds key - multi value
      *                   mapping relation
      */
-    KeyValueSet &GetContainer() {
+    inline KeyValueSet &GetContainer() {
       return key_value_set;
     }
 
@@ -988,10 +988,18 @@ class BwTree {
     /*
      * RemoveEmptyValueSet() - Remove empty ValueSets and associated keys
      *
-     * This needs to be called after we have collected all values
+     * This needs to be called after we have collected all values, but we
+     * can choose to call this after every log replay at the cost of losing
+     * performance
      */
     void RemoveEmptyValueSet() {
+      for(auto &item : GetContainer()) {
+        if(item.second.size() == 0) {
+          GetContainer().erase(item.first);
+        }
+      }
 
+      return;
     }
 
     /*
@@ -1086,6 +1094,8 @@ class BwTree {
         replay_count--;
       } // for node_p in node_list
 
+      RemoveEmptyValueSet();
+
       return;
     }
 
@@ -1163,7 +1173,7 @@ class BwTree {
     /*
      * GetContainter() - Return the key - NodeID mapping relation
      */
-    KeyNodeIDMap &GetContainer() {
+    inline KeyNodeIDMap &GetContainer() {
       return key_value_map;
     }
 
