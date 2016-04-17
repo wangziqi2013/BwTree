@@ -1089,6 +1089,9 @@ class BwTree {
 
         // When this reaches 0 we break
         replay_count--;
+
+        // Get rid of the last delta node
+        pointer_list.pop_back();
       } // for node_p in node_list
 
       RemoveEmptyValueSet();
@@ -2490,14 +2493,7 @@ class BwTree {
    * it is possible that there are obsolete keys left in the base leaf
    * page.
    *
-   * NOTE 3: This function only collects delta node pointers, and
-   * arrange key-values pairs ONLY in base page. What should be done in
-   * the wrapper is to replay all deltas onto key_value_set_p
-   * For merge delta nodes, it would serialize delta updates to its
-   * two children but that does not matter, since delta updates in
-   * the two branches do not have any key in common (if we do it correctly)
-   *
-   * NOTE 4: Despite the seemingly obsecure naming, this function actually
+   * NOTE 3: Despite the seemingly obsecure naming, this function actually
    * has an option that serves as an optimization when we only want metadata
    * (e.g. ubound, lbound, next ID) but not actual value. This saves some
    * computing resource. We need metadata only e.g. when we are going to verify
@@ -2577,9 +2573,12 @@ class BwTree {
             logical_node_p->ubound_p = ubound_p;
           }
 
-          // After setting up all bounds, replay the log with bounds
-          // checking
-          logical_node_p->ReplayLog(log_count);
+          if(collect_value == false) {
+            assert(log_count == 0);
+          } else {
+            // After setting up all bounds, replay the log
+            logical_node_p->ReplayLog(log_count);
+          }
 
           return;
         } // case LeafType
@@ -2587,16 +2586,19 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          // Only collect split delta if its key is in
-          // the range
-          if(ubound_p != nullptr && \
-             KeyCmpGreaterEqual(insert_node_p->insert_key,
-                                *ubound_p)) {
-            bwt_printf("Insert key not in range (>= high key)\n");
-          } else {
-            logical_node_p->pointer_list.push_back(node_p);
+          // Only collect delta pointer if values are collected
+          if(collect_value == true) {
+            // Only collect split delta if its key is in
+            // the range
+            if(ubound_p != nullptr && \
+               KeyCmpGreaterEqual(insert_node_p->insert_key,
+                                  *ubound_p)) {
+              bwt_printf("Insert key not in range (>= high key)\n");
+            } else {
+              logical_node_p->pointer_list.push_back(node_p);
 
-            log_count++;
+              log_count++;
+            }
           }
 
           node_p = insert_node_p->child_node_p;
@@ -2607,17 +2609,19 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          // Only collect delete delta if it is in the range
-          // i.e. < newest high key, since otherwise it will
-          // be in splited nodes
-          if(ubound_p != nullptr && \
-             KeyCmpGreaterEqual(delete_node_p->delete_key,
-                                *ubound_p)) {
-            bwt_printf("Delete key not in range (>= high key)\n");
-          } else {
-            logical_node_p->pointer_list.push_back(node_p);
+          if(collect_value == true) {
+            // Only collect delete delta if it is in the range
+            // i.e. < newest high key, since otherwise it will
+            // be in splited nodes
+            if(ubound_p != nullptr && \
+               KeyCmpGreaterEqual(delete_node_p->delete_key,
+                                  *ubound_p)) {
+              bwt_printf("Delete key not in range (>= high key)\n");
+            } else {
+              logical_node_p->pointer_list.push_back(node_p);
 
-            log_count++;
+              log_count++;
+            }
           }
 
           node_p = delete_node_p->child_node_p;
@@ -2681,8 +2685,12 @@ class BwTree {
                                           collect_ubound,
                                           collect_value);
 
-          // Replay the remaining log records on top of merge delta
-          logical_node_p->ReplayLog(log_count);
+          if(collect_value == false) {
+            assert(log_count == 0);
+          } else {
+            // Replay the remaining log records on top of merge delta
+            logical_node_p->ReplayLog(log_count);
+          }
 
           return;
         } // case LeafMergeType

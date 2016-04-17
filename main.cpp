@@ -64,25 +64,26 @@ BaseNode *PrepareSplitMergeLeaf(TreeType *t) {
                          {2.22},
                          {4.44},
                          {6.66}});
+
   LeafInsertNode *insert_node_1_p = \
-    new LeafInsertNode{5, 5.55, 0, leaf_node_1_p};
+    new LeafInsertNode{5, 5.555, 0, leaf_node_1_p};
 
   LeafInsertNode *insert_node_2_p = \
-    new LeafInsertNode{3, 3.33, 0, insert_node_1_p};
+    new LeafInsertNode{3, 3.333, 0, insert_node_1_p};
 
   LeafSplitNode *split_node_1_p = \
     new LeafSplitNode{5, 1001, 0, insert_node_2_p};
 
   LeafNode *leaf_node_2_p = \
     t->DebugGetLeafNode(5, 10, 1002, {5, 6},
-                        {{5.55},
+                        {{5.555},
                          {6.66}});
 
   LeafInsertNode *insert_node_3_p = \
-    new LeafInsertNode{9, 9.99, 0, leaf_node_2_p};
+    new LeafInsertNode{9, 9.999, 0, leaf_node_2_p};
 
   LeafDeleteNode *delete_node_1_p = \
-    new LeafDeleteNode{5, 5.55, 0, insert_node_3_p};
+    new LeafDeleteNode{5, 5.555, 0, insert_node_3_p};
 
   LeafMergeNode *merge_node_1_p = \
     new LeafMergeNode{5, delete_node_1_p, 0, split_node_1_p};
@@ -234,6 +235,28 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
   t->CollectAllValuesOnLeaf(snapshot_p);
 
   bwt_printf("========== Test CollectAllValuesOnLeaf ==========\n");
+
+  for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
+    bwt_printf("Key = %d\n", item.first.key);
+    for(auto value : item.second) {
+      bwt_printf("      Value = %lf \n", value);
+    }
+  }
+
+  bwt_printf("Low key = %d; High key = %d\n",
+             snapshot_p->GetLogicalLeafNode()->lbound_p->key,
+             snapshot_p->GetLogicalLeafNode()->ubound_p->key);
+
+  bwt_printf("Next Node Id = %lu\n",
+             snapshot_p->GetLogicalLeafNode()->next_node_id);
+
+  bwt_printf("========== Test CollectMetaDataOnLeaf ==========\n");
+
+  snapshot_p = new NodeSnapshot{true};
+  snapshot_p->node_id = 1000;
+  snapshot_p->node_p = node_p;
+
+  t->CollectMetadataOnLeaf(snapshot_p);
 
   for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
     bwt_printf("Key = %d\n", item.first.key);
