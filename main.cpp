@@ -99,6 +99,41 @@ BaseNode *PrepareSplitMergeLeaf(TreeType *t) {
   return delete_node_2_p;
 }
 
+BaseNode *PrepareSplitMergeInner(TreeType *t) {
+  InnerNode *inner_node_1_p = \
+    t->DebugGetInnerNode(1, 10, 1002, {1, 2, 4, 6},
+                         {101, 102, 104, 106});
+  InnerInsertNode *insert_node_1_p = \
+    new InnerInsertNode{5, 6, 205, 0, inner_node_1_p};
+
+  InnerInsertNode *insert_node_2_p = \
+    new InnerInsertNode{3, 4, 203, 0, insert_node_1_p};
+
+  InnerNode *inner_node_2_p = \
+    t->DebugGetInnerNode(5, 10, 1002, {5, 6},
+                         {205, 106});
+
+  InnerInsertNode *insert_node_3_p = \
+    new InnerInsertNode{9, 10, 209, 0, inner_node_2_p};
+
+  InnerDeleteNode *delete_node_1_p = \
+    new InnerDeleteNode{6, 5, 9, 205, 0, insert_node_3_p};
+
+  InnerSplitNode *split_node_1_p = \
+    new InnerSplitNode{5, 1001, 0, insert_node_2_p};
+
+  InnerMergeNode *merge_node_1_p = \
+      new InnerMergeNode{5, delete_node_1_p, 0, split_node_1_p};
+
+  InnerDeleteNode *delete_node_2_p = \
+    new InnerDeleteNode{5, 4, 9, 104, 0, merge_node_1_p};
+
+  t->InstallNewNode(1000, delete_node_2_p);
+  t->InstallNewNode(1001, delete_node_1_p);
+
+  return delete_node_2_p;
+}
+
 /*
 void LocateLeftSiblingTest(TreeType *t) {
   LogicalInnerNode lin{{0, nullptr}};
@@ -167,62 +202,6 @@ void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
   for(auto p : node_list) {
     bwt_printf("ptr = %p\n", p);
   }
-
-  return;
-}
-*/
-
-/*
-void TestNavigateInnerNode(TreeType *t) {
-  // node NodeID = 1000
-  InnerNode *inner_node_p_1 = \
-    t->DebugGetInnerNode(1, 10, INVALID_NODE_ID,
-                         {1, 2, 4, 5, 8, 9},
-                         {100, 102, 104, 105, 1088, 109});
-
-  InnerNode *inner_node_p_2 = \
-    t->DebugGetInnerNode(6, 10, INVALID_NODE_ID,
-                         {6, 7, 8, 9},
-                         {106, 107, 10888, 109});
-
-  InnerDeleteNode *delete_node_p = \
-    new InnerDeleteNode{8, 9, 7, 107, 0, inner_node_p_2};
-
-  InnerInsertNode *insert_node_p_1 = \
-    new InnerInsertNode{6, 8, 106, 0, inner_node_p_1};
-
-  InnerInsertNode *insert_node_p_2 = \
-    new InnerInsertNode{7, 8, 107, 0, insert_node_p_1};
-
-  InnerSplitNode *split_node_p = \
-    new InnerSplitNode{6, 1001, 0, insert_node_p_2};
-
-  InnerInsertNode *insert_node_p_3 = \
-    new InnerInsertNode{3, 4, 103, 0, split_node_p};
-
-  InnerMergeNode *merge_node_p = \
-    new InnerMergeNode{6, delete_node_p, 0, insert_node_p_3};
-
-  t->InstallNewNode(1000, merge_node_p);
-  t->InstallNewNode(1001, delete_node_p);
-
-  LogicalInnerNode logical_node{TreeSnapshot{}};
-
-  t->CollectAllSepsOnInnerRecursive(merge_node_p, &logical_node, true, true, true);
-
-  for(auto item : logical_node.key_value_map) {
-    bwt_printf("key = %d, value = %lu\n", item.first.key, item.second);
-  }
-
-  bwt_printf("High key = %d, low key = %d, next_id = %lu\n",
-             logical_node.ubound_p->key,
-             logical_node.lbound_p->key,
-             logical_node.next_node_id);
-
-  TreeSnapshot ts{};
-  NodeID node_id = t->NavigateInnerNode(6, merge_node_p, &ts);
-
-  bwt_printf("Node id = %lu; ts.id = %lu;\n", node_id, ts.first);
 
   return;
 }
@@ -339,6 +318,37 @@ void TestNavigateLeafNode(TreeType *t) {
 
   t->DebugUninstallNode(1000);
   t->DebugUninstallNode(1001);
+
+  return;
+}
+
+void TestCollectAllSepsOnInner(TreeType *t) {
+  BaseNode *node_p = PrepareSplitMergeInner(t);
+
+  NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+  snapshot_p->node_id = 1000;
+  snapshot_p->node_p = node_p;
+
+  t->CollectAllSepsOnInner(snapshot_p);
+
+  bwt_printf("========== Test CollectAllSepsOnInner ==========\n");
+
+  for(auto &item : snapshot_p->GetLogicalInnerNode()->GetContainer()) {
+    bwt_printf("Key = %d\n", item.first.key);
+    bwt_printf("      Value = %lu \n", item.second);
+  }
+
+  bwt_printf("Low key = %d; High key = %d\n",
+             snapshot_p->GetLogicalInnerNode()->lbound_p->key,
+             snapshot_p->GetLogicalInnerNode()->ubound_p->key);
+
+  bwt_printf("Next Node Id = %lu\n",
+             snapshot_p->GetLogicalInnerNode()->next_node_id);
+
+  t->DebugUninstallNode(1000);
+  t->DebugUninstallNode(1001);
+
+  return;
 }
 
 int main() {
@@ -362,6 +372,7 @@ int main() {
   //TestNavigateInnerNode(t1);
   TestCollectAllValuesOnLeaf(t1);
   TestNavigateLeafNode(t1);
+  TestCollectAllSepsOnInner(t1);
 
   return 0;
 }
