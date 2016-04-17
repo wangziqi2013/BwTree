@@ -117,7 +117,7 @@ BaseNode *PrepareSplitMergeInner(TreeType *t) {
     new InnerInsertNode{9, 10, 209, 0, inner_node_2_p};
 
   InnerDeleteNode *delete_node_1_p = \
-    new InnerDeleteNode{6, 5, 9, 205, 0, insert_node_3_p};
+    new InnerDeleteNode{6, 9, 5, 205, 0, insert_node_3_p};
 
   InnerSplitNode *split_node_1_p = \
     new InnerSplitNode{5, 1001, 0, insert_node_2_p};
@@ -126,7 +126,7 @@ BaseNode *PrepareSplitMergeInner(TreeType *t) {
       new InnerMergeNode{5, delete_node_1_p, 0, split_node_1_p};
 
   InnerDeleteNode *delete_node_2_p = \
-    new InnerDeleteNode{5, 4, 9, 104, 0, merge_node_1_p};
+    new InnerDeleteNode{5, 9, 4, 104, 0, merge_node_1_p};
 
   t->InstallNewNode(1000, delete_node_2_p);
   t->InstallNewNode(1001, delete_node_1_p);
@@ -375,6 +375,33 @@ void TestCollectAllSepsOnInner(TreeType *t) {
   return;
 }
 
+void TestNavigateInnerNode(TreeType *t) {
+  BaseNode *node_p = PrepareSplitMergeInner(t);
+
+  bwt_printf("========== Test NavigateInnerNode ==========\n");
+
+  // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
+  for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+    snapshot_p->node_id = 1000;
+    snapshot_p->node_p = node_p;
+
+    NodeID node_id = t->NavigateInnerNode(i, snapshot_p);
+
+    bwt_printf(">> Current testing: key = %d\n", i);
+    if(node_id == INVALID_NODE_ID) {
+      bwt_printf(">>      Value = INVALID\n");
+    } else {
+      bwt_printf(">>      Value = %lu \n", node_id);
+      bwt_printf(">> is sibling node = %d; NodeID = %lu\n",
+               snapshot_p->is_split_sibling,
+               snapshot_p->node_id);
+    }
+
+    delete snapshot_p;
+  }
+}
+
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
@@ -397,6 +424,7 @@ int main() {
   TestCollectAllValuesOnLeaf(t1);
   TestNavigateLeafNode(t1);
   TestCollectAllSepsOnInner(t1);
+  TestNavigateInnerNode(t1);
 
   return 0;
 }
