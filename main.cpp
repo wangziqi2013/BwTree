@@ -355,8 +355,6 @@ void TestCollectAllSepsOnInner(TreeType *t) {
 
   t->CollectMetadataOnInner(snapshot_p);
 
-  bwt_printf("========== Test CollectAllSepsOnInner ==========\n");
-
   for(auto &item : snapshot_p->GetLogicalInnerNode()->GetContainer()) {
     bwt_printf("Key = %d\n", item.first.key);
     bwt_printf("      Value = %lu \n", item.second);
