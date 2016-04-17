@@ -1007,11 +1007,8 @@ class BwTree {
      *               in the reverse order that they are pushed
      *               and apply them to the key value set
      *
-     * NOTE: This method does not check for empty keys, i.e. even if
-     * the value set for a given key is empty, we still let it be
-     * So don't rely on the key map size to determine space needed
-     * to store the list; also when packing this into a leaf node
-     * we need to check for emptiness and remove
+     * NOTE: This method always remove empty value set and its associated
+     * key. So we could safely use it to determine the size of the node
      *
      * NOTE 2: This function takes an argument as the number of
      * pointers to replay. It may not equal total number of pointers
@@ -2306,6 +2303,10 @@ class BwTree {
     // since it could only be the first node on a delta chain
     bool first_time = true;
 
+    // There is no recursion, but we still need to count the
+    // number of delta records to replay
+    size_t log_count = 0;
+
     LogicalLeafNode *logical_node_p = \
       static_cast<LogicalLeafNode *>(snapshot_p->logical_node_p);
 
@@ -2339,7 +2340,9 @@ class BwTree {
           }
 
           // Then replay log
-          logical_node_p->ReplayLog();
+          // NOTE: This does not have to be recursive since we only
+          // follow one path down to the bottom
+          logical_node_p->ReplayLog(log_count);
 
           return;
         }
@@ -2352,6 +2355,7 @@ class BwTree {
             bwt_printf("Push insert delta\n");
 
             logical_node_p->pointer_list.push_back(node_p);
+            log_count++;
           }
 
           node_p = insert_node_p->child_node_p;
@@ -2366,6 +2370,7 @@ class BwTree {
             bwt_printf("Push delete delta\n");
 
             logical_node_p->pointer_list.push_back(node_p);
+            log_count++;
           }
 
           node_p = delete_node_p->child_node_p;
