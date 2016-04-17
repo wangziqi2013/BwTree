@@ -400,6 +400,31 @@ void TestNavigateInnerNode(TreeType *t) {
 
     delete snapshot_p;
   }
+
+  bwt_printf("========== Test NavigateInnerNode ==========\n");
+  bwt_printf("               With Split Node              \n");
+
+  // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
+  for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+    snapshot_p->node_id = 1000;
+    snapshot_p->node_p = \
+      ((DeltaNode *)(((DeltaNode *)node_p)->child_node_p))->child_node_p;
+
+    NodeID node_id = t->NavigateInnerNode(i, snapshot_p);
+
+    bwt_printf(">> Current testing: key = %d\n", i);
+    if(node_id == INVALID_NODE_ID) {
+      bwt_printf(">>      Value = INVALID\n");
+    } else {
+      bwt_printf(">>      Value = %lu \n", node_id);
+      bwt_printf(">> is sibling node = %d; NodeID = %lu\n",
+               snapshot_p->is_split_sibling,
+               snapshot_p->node_id);
+    }
+
+    delete snapshot_p;
+  }
 }
 
 int main() {
