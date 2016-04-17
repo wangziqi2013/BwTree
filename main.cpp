@@ -345,6 +345,30 @@ void TestCollectAllSepsOnInner(TreeType *t) {
   bwt_printf("Next Node Id = %lu\n",
              snapshot_p->GetLogicalInnerNode()->next_node_id);
 
+  delete snapshot_p;
+
+  bwt_printf("========== Test CollectMetadataOnInner ==========\n");
+
+  snapshot_p = new NodeSnapshot{false};
+  snapshot_p->node_id = 1000;
+  snapshot_p->node_p = node_p;
+
+  t->CollectMetadataOnInner(snapshot_p);
+
+  bwt_printf("========== Test CollectAllSepsOnInner ==========\n");
+
+  for(auto &item : snapshot_p->GetLogicalInnerNode()->GetContainer()) {
+    bwt_printf("Key = %d\n", item.first.key);
+    bwt_printf("      Value = %lu \n", item.second);
+  }
+
+  bwt_printf("Low key = %d; High key = %d\n",
+             snapshot_p->GetLogicalInnerNode()->lbound_p->key,
+             snapshot_p->GetLogicalInnerNode()->ubound_p->key);
+
+  bwt_printf("Next Node Id = %lu\n",
+             snapshot_p->GetLogicalInnerNode()->next_node_id);
+
   t->DebugUninstallNode(1000);
   t->DebugUninstallNode(1001);
 
