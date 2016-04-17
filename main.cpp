@@ -54,72 +54,49 @@ void GetNextNodeIDTest(BwTree<int, double> *tree_p) {
   return;
 }
 
-void CollectDeltaPoniterTest1(TreeType *t) {
-  LeafNode *leaf1 = t->DebugGetLeafNode(1, 6, 101,
-                                        {1, 2, 4},
-                                        {{1.11},
-                                         {2.22, 2.222},
-                                         {4.44, 4.4444}}
-                                       );
+/////////////////////////////////////////////////////////////////////
+// Prepare test structures
+/////////////////////////////////////////////////////////////////////
+BaseNode *PrepareSplitMergeLeaf(TreeType *t) {
+  LeafNode *leaf_node_1_p = \
+    t->DebugGetLeafNode(1, 10, INVALID_NODE_ID, {1, 2, 4, 6},
+                        {{1.11},
+                         {2.22},
+                         {4.44},
+                         {6.66}});
+  LeafInsertNode *insert_node_1_p = \
+    new LeafInsertNode{5, 5.55, 0, leaf_node_1_p};
 
-  LeafInsertNode *insert1 = new LeafInsertNode{3, 3.33, 1, leaf1};
+  LeafInsertNode *insert_node_2_p = \
+    new LeafInsertNode{3, 3.33, 0, insert_node_1_p};
 
-  LeafNode *leaf2 = t->DebugGetLeafNode(6, 11, 102,
-                                        {6, 7, 8, 15},
-                                        {{6.66},
-                                         {7.77},
-                                         {8.188},
-                                         {15.15}}
-                                        );
+  LeafSplitNode *split_node_1_p = \
+    new LeafSplitNode{5, 1001, 0, insert_node_2_p};
 
-  LeafInsertNode *insert2 = new LeafInsertNode{8, 8.288, 1, leaf2};
+  LeafNode *leaf_node_2_p = \
+    t->DebugGetLeafNode(5, 10, INVALID_NODE_ID, {5, 6},
+                        {{5.55},
+                         {6.66}});
 
-  LeafNode *leaf3 = t->DebugGetLeafNode(11, 16, INVALID_NODE_ID,
-                                        {12, 14},
-                                        {{12.12, 12.1212},
-                                         {14.14, 14.1414}}
-                                       );
-  LeafInsertNode *insert3 = new LeafInsertNode{11, 11.11, 1, leaf3};
-  LeafSplitNode *split1 = new LeafSplitNode{10, 102, 2, insert2};
-  LeafDeleteNode *delete1 = new LeafDeleteNode{8, 8.188, 3, split1};
+  LeafInsertNode *insert_node_3_p = \
+    new LeafInsertNode{9, 9.99, 0, leaf_node_2_p};
 
-  // NOTE: Merge needs also to keep an upperbound
-  LeafMergeNode *merge1 = new LeafMergeNode{6, delete1, 2, insert1};
-  LeafRemoveNode *remove1 = new LeafRemoveNode{4, delete1};
+  LeafDeleteNode *delete_node_1_p = \
+    new LeafDeleteNode{5, 5.55, 0, insert_node_3_p};
 
-  t->InstallNewNode(100, merge1);
-  t->InstallNewNode(101, remove1);
-  t->InstallNewNode(102, insert3);
+  LeafMergeNode *merge_node_1_p = \
+    new LeafMergeNode{5, delete_node_1_p, 0, split_node_1_p};
 
-  ValueSet value_set{};
-  t->ReplayLogOnLeafByKey(14, merge1, &value_set);
+  LeafDeleteNode *delete_node_2_p = \
+    new LeafDeleteNode{6, 6.66, 0, merge_node_1_p};
 
-  for(auto it: value_set) {
-    bwt_printf("Values = %lf\n", it);
-  }
+  t->InstallNewNode(1000, delete_node_2_p);
+  t->InstallNewNode(1001, delete_node_1_p);
 
-  LogicalLeafNode logical_leaf{{100, merge1}};
-  LogicalLeafNode logical_leaf_2{{100, merge1}};
-
-  t->CollectAllValuesOnLeaf(&logical_leaf);
-
-  for(auto &it : logical_leaf.key_value_set) {
-    bwt_printf("key = %d\n", it.first.key);
-
-    for(double it2 : logical_leaf.key_value_set[it.first]) {
-      bwt_printf("    Value = %lf\n", it2);
-    }
-  }
-
-  bwt_printf("Upperbound = %d, lowerbound = %d\n,",
-             logical_leaf.ubound_p->key,
-             logical_leaf.lbound_p->key);
-
-  t->CollectMetadataOnLeaf(&logical_leaf_2);
-
-  return;
+  return delete_node_2_p;
 }
 
+/*
 void LocateLeftSiblingTest(TreeType *t) {
   LogicalInnerNode lin{{0, nullptr}};
 
@@ -129,13 +106,13 @@ void LocateLeftSiblingTest(TreeType *t) {
   lin.ubound_p = &ubound;
   lin.lbound_p = &lbound;
 
-  /*
-  lin.key_value_map[KeyType{1}] = 1;
-  lin.key_value_map[KeyType{10}] = 2;
-  lin.key_value_map[KeyType{20}] = 3;
-  lin.key_value_map[KeyType{30}] = 4;
-  lin.key_value_map[KeyType{40}] = 5;
-  */
+
+  //lin.key_value_map[KeyType{1}] = 1;
+  //lin.key_value_map[KeyType{10}] = 2;
+  //lin.key_value_map[KeyType{20}] = 3;
+  //lin.key_value_map[KeyType{30}] = 4;
+  //lin.key_value_map[KeyType{40}] = 5;
+
 
   lin.key_value_map[KeyType{1}] = 1;
   lin.key_value_map[KeyType{10}] = 2;
@@ -151,7 +128,9 @@ void LocateLeftSiblingTest(TreeType *t) {
 
   return;
 }
+*/
 
+/*
 void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
   LeafNode *leaf_1_p = new LeafNode{0, 0, INVALID_NODE_ID};
   LeafRemoveNode *remove_1_p = new LeafRemoveNode{1, leaf_1_p};
@@ -188,7 +167,9 @@ void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
 
   return;
 }
+*/
 
+/*
 void TestNavigateInnerNode(TreeType *t) {
   // node NodeID = 1000
   InnerNode *inner_node_p_1 = \
@@ -242,27 +223,35 @@ void TestNavigateInnerNode(TreeType *t) {
 
   return;
 }
+*/
+
+void TestCollectValuesOnLeafNode(TreeType *t) {
+  BaseNode *node_p = PrepareSplitMergeLeaf(t);
+
+
+
+  return;
+}
 
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
 
-  BwTree<int, double>::KeyType k1 = t1->GetWrappedKey(3);
-  BwTree<int, double>::KeyType k2 = t1->GetWrappedKey(2);
-  BwTree<int, double>::KeyType k3 = t1->GetNegInfKey();
+  //BwTree<int, double>::KeyType k1 = t1->GetWrappedKey(3);
+  //BwTree<int, double>::KeyType k2 = t1->GetWrappedKey(2);
+  //BwTree<int, double>::KeyType k3 = t1->GetNegInfKey();
 
-  bwt_printf("KeyComp: %d\n", t1->KeyCmpLess(k2, k3));
-  bwt_printf("sizeof(class BwTree) = %lu\n", sizeof(BwTree<long double, long double>));
+  //bwt_printf("KeyComp: %d\n", t1->KeyCmpLess(k2, k3));
+  //bwt_printf("sizeof(class BwTree) = %lu\n", sizeof(BwTree<long double, long double>));
 
   //GetNextNodeIDTest(t1);
-  BwTree<int, double>::PathHistory ph{};
-  t1->TraverseDownInnerNode(k1, &ph);
+  //BwTree<int, double>::PathHistory ph{};
+  //t1->TraverseDownInnerNode(k1, &ph);
 
-  CollectDeltaPoniterTest1(t1);
-  LocateLeftSiblingTest(t1);
-  CollectNewNodeSinceLastSnapshotTest(t1);
+  //LocateLeftSiblingTest(t1);
+  //CollectNewNodeSinceLastSnapshotTest(t1);
 
-  TestNavigateInnerNode(t1);
+  //TestNavigateInnerNode(t1);
 
   return 0;
 }
