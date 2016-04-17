@@ -74,7 +74,7 @@ BaseNode *PrepareSplitMergeLeaf(TreeType *t) {
     new LeafSplitNode{5, 1001, 0, insert_node_2_p};
 
   LeafNode *leaf_node_2_p = \
-    t->DebugGetLeafNode(5, 10, INVALID_NODE_ID, {5, 6},
+    t->DebugGetLeafNode(5, 10, 1002, {5, 6},
                         {{5.55},
                          {6.66}});
 
@@ -225,10 +225,29 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-void TestCollectValuesOnLeafNode(TreeType *t) {
+void TestCollectAllValuesOnLeaf(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeLeaf(t);
+  NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+  snapshot_p->node_id = 1000;
+  snapshot_p->node_p = node_p;
 
+  t->CollectAllValuesOnLeaf(snapshot_p);
 
+  bwt_printf("========== Test CollectAllValuesOnLeaf ==========\n");
+
+  for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
+    bwt_printf("Key = %d\n", item.first.key);
+    for(auto value : item.second) {
+      bwt_printf("      Value = %lf \n", value);
+    }
+  }
+
+  bwt_printf("Low key = %d; High key = %d\n",
+             snapshot_p->GetLogicalLeafNode()->lbound_p->key,
+             snapshot_p->GetLogicalLeafNode()->ubound_p->key);
+
+  bwt_printf("Next Node Id = %lu\n",
+             snapshot_p->GetLogicalLeafNode()->next_node_id);
 
   return;
 }
@@ -252,6 +271,7 @@ int main() {
   //CollectNewNodeSinceLastSnapshotTest(t1);
 
   //TestNavigateInnerNode(t1);
+  TestCollectAllValuesOnLeaf(t1);
 
   return 0;
 }

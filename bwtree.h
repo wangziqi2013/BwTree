@@ -181,48 +181,6 @@ class BwTree {
   };
 
   /*
-   * struct NodeSnapshot - Describes the states in a tree when we see them
-   *
-   * node_id and node_p are pairs that represents the state when we traverse
-   * the node and use GetNode() to resolve the node ID.
-   *
-   * logical_node_p points to a consolidated view of the node, which might or
-   * might not contain actual data (indicated by the boolean member), or even
-   * might not be valid (if the pointer is nullptr).
-   *
-   * Also we need to distinguish between leaf snapshot and inner node snapshots
-   * which is achieved by
-   */
-
-  class NodeSnapshot {
-    NodeID node_id;
-    BaseNode *node_p;
-    BaseLogicalNode *logical_node_p;
-
-    // Whether there is data or only metadata
-    bool has_data;
-    // Whether logical node pointer points to a logical leaf node
-    // or logical inner node
-    bool is_leaf;
-
-    // Whether we have traversed through a sibling pointer
-    // from a split delta node because of a half split state
-    bool is_split_sibling;
-
-    /*
-     * Constructor - Initialize every member to invalid state
-     */
-    NodeSnapshot() :
-      node_id{INVALID_NODE_ID},
-      node_p{nullptr},
-      logical_node_p{nullptr},
-      has_data{false},
-      is_leaf{false},
-      is_split_sibling{false}
-    {}
-  };
-
-  /*
    * struct KeyType - Wrapper class for RawKeyType which supports +/-Inf
    * for arbitrary key types
    *
@@ -963,7 +921,6 @@ class BwTree {
       ubound_p{nullptr},
       next_node_id{INVALID_NODE_ID}
     {}
-
   };
 
   /*
@@ -995,6 +952,14 @@ class BwTree {
     {}
 
     /*
+     * GetContainter() - Reuturn the container that holds key - multi value
+     *                   mapping relation
+     */
+    KeyValueSet &GetContainer() {
+      return key_value_set;
+    }
+
+    /*
      * BulkLoadValue() - Load a vector of ValueType into the given key
      *
      * Parameter is given by a DataItem reference which points to the
@@ -1002,15 +967,31 @@ class BwTree {
      */
     void BulkLoadValue(const DataItem &item) {
       auto ret = key_value_set.emplace(std::make_pair(item.key, ValueSet{}));
+
       // Make sure it does not already exist in key value set
+      // This always holds since we could not have overlaping
+      // key range inside two base nodes
       assert(ret.second == true);
-      // This points to the newly constructed ValueSet
-      auto it = ret.first;
+
+      // This points to the newly constructed mapping value_type
+      typename KeyValueSet::iterator &map_item_it = ret.first;
+      ValueSet &target = map_item_it->second;
 
       // Take advantange of the bulk load method in unordered_map
-      it->second.insert(item.value_list.begin(), item.value_list.end());
+      target.insert(item.value_list.begin(), item.value_list.end());
+
+      //bwt_printf("Key = %d\n", item.key.key);
 
       return;
+    }
+
+    /*
+     * RemoveEmptyValueSet() - Remove empty ValueSets and associated keys
+     *
+     * This needs to be called after we have collected all values
+     */
+    void RemoveEmptyValueSet() {
+
     }
 
     /*
@@ -1023,13 +1004,26 @@ class BwTree {
      * So don't rely on the key map size to determine space needed
      * to store the list; also when packing this into a leaf node
      * we need to check for emptiness and remove
+     *
+     * NOTE 2: This function takes an argument as the number of
+     * pointers to replay. It may not equal total number of pointers
+     * in the logical node, since if we have seen a merge delta, then
+     * we only want to replay the log on two branches first and then
+     * replay those on top of merge delta
      */
-    void ReplayLog() {
+    void ReplayLog(size_t replay_count) {
       // For each insert/delete delta, replay the change on top
       // of base page values
       for(auto node_p_it = pointer_list.rbegin();
           node_p_it != pointer_list.rend();
           node_p_it++) {
+
+        // If we have finished all logs just exit
+        if(replay_count == 0LU) {
+          //bwt_printf("Exit log replay because log count reaches 0\n");
+          break;
+        }
+
         const BaseNode *node_p = *node_p_it;
         NodeType type = node_p->GetType();
 
@@ -1066,10 +1060,17 @@ class BwTree {
             auto it = key_value_set.find(delete_node_p->delete_key);
             if(it == key_value_set.end()) {
               bwt_printf("ERROR: Delete a value that does not exist\n");
+              bwt_printf("Key = %d; Value = %lf\n",
+                         delete_node_p->delete_key.key,
+                         delete_node_p->value);
 
               assert(false);
             }
 
+            // NOTE: This might erase a value that is not in the
+            // value set. But we do not detect it here (i.e. the
+            // detection of deleting a non-exiting value is detected
+            // when insertion happens)
             it->second.erase(delete_node_p->value);
 
             break;
@@ -1080,6 +1081,9 @@ class BwTree {
             assert(false);
           } // default
         } // case type
+
+        // When this reaches 0 we break
+        replay_count--;
       } // for node_p in node_list
 
       return;
@@ -1157,6 +1161,13 @@ class BwTree {
     {}
 
     /*
+     * GetContainter() - Return the key - NodeID mapping relation
+     */
+    KeyNodeIDMap &GetContainer() {
+      return key_value_map;
+    }
+
+    /*
      * ToInnerNode() - Convert to inner node object
      *
      * This function allocates a chunk of memory from the heap, which
@@ -1182,10 +1193,92 @@ class BwTree {
     }
   };
 
+  /*
+   * struct NodeSnapshot - Describes the states in a tree when we see them
+   *
+   * node_id and node_p are pairs that represents the state when we traverse
+   * the node and use GetNode() to resolve the node ID.
+   *
+   * logical_node_p points to a consolidated view of the node, which might or
+   * might not contain actual data (indicated by the boolean member), or even
+   * might not be valid (if the pointer is nullptr).
+   *
+   * Also we need to distinguish between leaf snapshot and inner node snapshots
+   * which is achieved by a flag is_leaf
+   */
+  class NodeSnapshot {
+   public:
+    NodeID node_id;
+    BaseNode *node_p;
+    BaseLogicalNode *logical_node_p;
 
- /*
-  * Interface Method Implementation
-  */
+    // Whether there is data or only metadata
+    bool has_data;
+    // Whether logical node pointer points to a logical leaf node
+    // or logical inner node
+    bool is_leaf;
+
+    // Whether we have traversed through a sibling pointer
+    // from a split delta node because of a half split state
+    bool is_split_sibling;
+
+    /*
+     * Constructor - Initialize every member to invalid state
+     *
+     * Identity of leaf or inner needs to be provided as constructor
+     * argument.
+     *
+     * NOTE: We allocate logical node inside this structure
+     * during construction, so when replacing logical nodes please
+     * remember to destroy the previous one
+     */
+    NodeSnapshot(bool p_is_leaf) :
+      node_id{INVALID_NODE_ID},
+      node_p{nullptr},
+      logical_node_p{nullptr},
+      has_data{false},
+      is_leaf{p_is_leaf},
+      is_split_sibling{false} {
+      // Allocate a logical node
+      if(is_leaf == true) {
+        logical_node_p = new LogicalLeafNode{};
+      } else {
+        logical_node_p = new LogicalInnerNode{};
+      }
+
+      assert(logical_node_p != nullptr);
+
+      return;
+    }
+
+    /*
+     * GetLogicalLeafNode() - Return the logical leaf node
+     *
+     * We use this as a wrapper to save a type casting
+     */
+    LogicalLeafNode *GetLogicalLeafNode() {
+      assert(is_leaf == true);
+
+      return static_cast<LogicalLeafNode *>(logical_node_p);
+    }
+
+    /*
+     * GetLogicalInnerNode() - Reutrn the logical inner node
+     *
+     * We use this as a wrapper to save a type casting
+     */
+    LogicalInnerNode GetLogicalInnerNode() {
+      assert(is_leaf == false);
+
+      return static_cast<LogicalInnerNode *>(logical_node_p);
+    }
+  };
+
+
+  ////////////////////////////////////////////////////////////////////
+  // Interface Method Implementation
+  ////////////////////////////////////////////////////////////////////
+
  public:
   /*
    * Constructor - Set up initial environment for BwTree
@@ -2408,6 +2501,10 @@ class BwTree {
     // this value will be set into logical node as its high key
     const KeyType *ubound_p = nullptr;
 
+    // The number of delta records we have collected in this recursive context
+    // NOTE: If we have seen a merge delta
+    size_t log_count = 0;
+
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -2426,7 +2523,7 @@ class BwTree {
               // these key since they have been now stored in another leaf
               if(ubound_p != nullptr && \
                  KeyCmpGreaterEqual(data_item.key, *ubound_p)) {
-                bwt_printf("Obsolete key has been detected\n");
+                bwt_printf("Obsolete key on Leaf Base Node\n");
 
                 continue;
               }
@@ -2467,7 +2564,7 @@ class BwTree {
 
           // After setting up all bounds, replay the log with bounds
           // checking
-          logical_node_p->ReplayLog();
+          logical_node_p->ReplayLog(log_count);
 
           return;
         } // case LeafType
@@ -2483,6 +2580,8 @@ class BwTree {
             bwt_printf("Insert key not in range (>= high key)\n");
           } else {
             logical_node_p->pointer_list.push_back(node_p);
+
+            log_count++;
           }
 
           node_p = insert_node_p->child_node_p;
@@ -2502,6 +2601,8 @@ class BwTree {
             bwt_printf("Delete key not in range (>= high key)\n");
           } else {
             logical_node_p->pointer_list.push_back(node_p);
+
+            log_count++;
           }
 
           node_p = delete_node_p->child_node_p;
@@ -2564,6 +2665,9 @@ class BwTree {
                                           false, // Always not collect lbound
                                           collect_ubound,
                                           collect_value);
+
+          // Replay the remaining log records on top of merge delta
+          logical_node_p->ReplayLog(log_count);
 
           return;
         } // case LeafMergeType
