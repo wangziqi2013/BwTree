@@ -138,6 +138,7 @@ class BwTree {
 
   // This is used to hold values in a set
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
+
   // This is used to hold mapping from key to a set of values
   using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
 
@@ -1776,7 +1777,8 @@ class BwTree {
    * is set to true, and also the corresponding NodeId and BaseNode *
    * will be updated to reflect the newest sibling ID and pointer.
    * After returnrning of this function please remember to check the flag
-   * and update path history.
+   * and update path history. (Such jump may happen multiple times, so
+   * do not make any assumpion about how jump is performed)
    */
   NodeID NavigateInnerNode(const KeyType &search_key,
                            NodeSnapshot *snapshot_p) const {
@@ -1810,8 +1812,9 @@ class BwTree {
           return target_id;
         } // case InnerType
         case NodeType::InnerRemoveType: {
-          assert(first_time == true);
+          bwt_printf("ERROR: InnerRemoveNode not allowed\n");
 
+          assert(first_time == true);
           // TODO: Fix this to let it deal with remove node
           assert(false);
         } // case InnerRemoveType
@@ -2077,7 +2080,7 @@ class BwTree {
           return;
         } // case InnerType
         case NodeType::InnerRemoveType: {
-          bwt_printf("ERROR: Observed an inner remove node\n");
+          bwt_printf("ERROR: InnerRemoveNode not allowed\n");
 
           assert(first_time == true);
           assert(false);
@@ -2789,6 +2792,25 @@ class BwTree {
     snapshot_p->has_data = false;
 
     return;
+  }
+
+  /*
+   * JumpToLeafLeftSibling() - Jump to the left sibling given a leaf node
+   *
+   * This function takes a base node only since once remove node is posted
+   * the delta chain will never change. Also we cannot take NodeID since
+   * it is possible (though unlikely) that when we see a NodeID -> pointer
+   * it is valid, but later on Index Term Delete delta is posted and this
+   * node is removed, changing NodeID -> pointer mapping
+   */
+  bool JumpToLeafLeftSibling(BaseNode *node_p,
+                             std::vector<NodeSnapshot> *path_list_p) {
+    // First do a simple type check
+    NodeType type = node_p->GetType();
+    assert(type == NodeType::LeafRemoveType);
+
+    // How many levels we are above the current level
+    size_t backtrack_level = 0;
   }
 
   /*
