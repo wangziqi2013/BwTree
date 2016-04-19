@@ -570,6 +570,19 @@ class BwTree {
         return true;
       }
     }
+
+    /*
+     * IsOnLeafDeltaChain() - Return whether the node is part of
+     *                        leaf delta chain
+     */
+    virtual bool IsOnLeafDeltaChain() const final {
+      return (type == NodeType::LeafType || \
+              type == NodeType::LeafInsertType || \
+              type == NodeType::LeafDeleteType || \
+              type == NodeType::LeafSplitType || \
+              type == NodeType::LeafMergeType || \
+              type == NodeType::LeafRemoveType);
+    }
   };
 
   /*
@@ -2864,6 +2877,15 @@ class BwTree {
    * NodeSnapshot object for the current node being inspected, since
    * we want to pass the information of whether the current node is
    * the left most child.
+   *
+   * This function uses the fact that the mapping relationship between NodeID
+   * and low key does not change during the lifetime of the NodeID. This way,
+   * after we have fixed a snapshot of the current node, even though the node
+   * could keep changing, using the information given in the snapshot
+   * we could know at least a starting point for us to traverse right until
+   * we see a node whose high key equals the low key we are searching for,
+   * or whose range covers the low key (in the latter case, we know the
+   * merge delta has already been posted)
    */
   bool JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
     // Make sure the path list is not empty, and that it has a parent node
@@ -2872,24 +2894,110 @@ class BwTree {
     assert(path_list_p->size() != 0 && \
            path_list_p->size() != 1);
 
-    // First do a simple type check
-    //NodeType type = node_p->GetType();
-    //assert(type == NodeType::LeafRemoveType || \
-    //       type == NodeType::InnerRemoveType);
-
-    NodeSnapshot *ns_p = &path_list_p.back();
+    NodeSnapshot *snapshot_p = &path_list_p.back();
     path_list_p->pop_back();
-    assert(ns_p->is_leftmost_child == false);
+    assert(snapshot_p->is_leftmost_child == false);
 
-    const KeyType *lbound_p = ns_p->lbound_p;
+    // First do a simple type check
+    NodeType type = snapshot_p->node_p->GetType();
+    assert(type == NodeType::LeafRemoveType || \
+           type == NodeType::InnerRemoveType);
 
-    ns_p = &path_list_p.back();
+    // This is the low key of current removed node. Also
+    // the low key of the separator-ID pair
+    const KeyType *lbound_p = snapshot_p->lbound_p;
 
-    if(ns_p->has_data == false) {
-      //CollectAllSeps
+    snapshot_p = &path_list_p.back();
+
+    if(snapshot_p->has_data == false) {
+      CollectAllSepsOnInner(snapshot_p);
     }
 
+    // After this point there must be data associated with the
+    // node snapshot
+    assert(snapshot_p->has_data == true);
 
+    const KeyNodeIDMap &key_value_map = \
+      snapshot_p->GetLogicalInnerNode()->key_value_map;
+    typename KeyNodeIDMap::iterator it{};
+
+    for(it = key_value_map.rbegin();
+        it != key_value_map.rend();
+        it++) {
+      // We break at the first key from right to left that is
+      // strictly less than the low key we are from
+      if(KeyCmpLess(it->first, *lbound_p) == true) {
+        break;
+      }
+    } // for right to left iteration of SepItem
+
+    // This is our starting point
+    NodeID left_sibling_id = it->second;
+    const KeyType *entry_key_p = &it->first;
+
+    while(1) {
+      // This might incur recursive update
+      // We need to pass in the low key of left sibling node
+      LoadNodeID(left_sibling_id, entry_key_p, path_list_p);
+
+      // Read the potentially redirected snapshot
+      snapshot_p = &path_list_p.back();
+
+      CollectMetadataOnInner(snapshot_p);
+      assert(snapshot_p->has_data == false);
+
+      KeyType *ubound_p = snapshot_p->GetLogicalInnerNode()->ubound_p;
+
+      // If the high key of the left sibling equals the low key
+      // then we know it is the real left sibling
+      // Or the node has already been consolidated, then the range
+      // of the node would cover current low key
+      if(KeyCmpEqual(*ubound_p, *lbound_p) || \
+         KeyCmpGreater(*ubound_p, *lbound_p)) {
+        break;
+      }
+
+      left_sibling_id = snapshot_p->GetLogicalInnerNode()->next_node_id;
+      // We know it will never be invalid node id since ubound_p <= lbound_p
+      // which implies the high key is not +Inf, so there are other nodes to
+      // its right side
+      assert(left_sibling_id != INVALID_NODE_ID);
+
+      // For the next iteration, we traverse to the node to its right
+      // using the next node ID and its high key as next node's low key
+      entry_key_p = ubound_p;
+    } // while(1)
+
+    return;
+  }
+
+  void LoadNodeID(NodeID node_id,
+                  const KeyType *lbound_p,
+                  std::vector<NodeSnapshot> *path_list_p) {
+    BaseNode *node_p = GetNode(node_id);
+
+    // This will create an instance with corresponding logical node
+    // structure
+    bool is_leaf = node_p->IsOnLeafDeltaChain();
+    NodeSnapshot snapshot = NodeSnapshot(is_leaf);
+
+    snapshot.node_id = node_id;
+    snapshot.node_p = node_p;
+    // This is useful for finding left sibling
+    snapshot.lbound_p = lbound_p;
+
+    // Put this into the list in case that a remove node causes
+    // backtracking
+    path_list_p->push_back(snapshot);
+
+    NodeType type = node_p->GetType();
+
+    switch(type) {
+      case NodeType::LeafRemoveType:
+      case NodeType::InnerRemoveType: {
+        JumpToLeftSibling();
+      }
+    }
   }
 
   /*
