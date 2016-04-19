@@ -2931,6 +2931,10 @@ class BwTree {
       }
     } // for right to left iteration of SepItem
 
+    // This could not be true since the left most SepItem
+    // will always be valid
+    assert(it != key_value_map.rend());
+
     // This is our starting point
     NodeID left_sibling_id = it->second;
     const KeyType *entry_key_p = &it->first;
