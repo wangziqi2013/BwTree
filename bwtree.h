@@ -1225,6 +1225,7 @@ class BwTree {
     BaseLogicalNode *logical_node_p;
 
     // Whether there is data or only metadata
+    // NOTE: Single key data is not classified as has data
     bool has_data;
     // Whether logical node pointer points to a logical leaf node
     // or logical inner node
@@ -1233,6 +1234,17 @@ class BwTree {
     // Whether we have traversed through a sibling pointer
     // from a split delta node because of a half split state
     bool is_split_sibling;
+
+    // This is true if the node is the left most node in its parent
+    // We could not remove the leftmost node in a parent
+    // NOTE: This is false for root node
+    bool is_leftmost_child;
+
+    // Set to true only if the snapshot is created for a root node
+    // such that we know there is no more parent node.
+    // A node with this flag set to true must be the first node
+    // in the stack
+    bool is_root;
 
     /*
      * Constructor - Initialize every member to invalid state
@@ -1250,7 +1262,9 @@ class BwTree {
       logical_node_p{nullptr},
       has_data{false},
       is_leaf{p_is_leaf},
-      is_split_sibling{false} {
+      is_split_sibling{false},
+      is_leftmost_child{false},
+      is_root{false} {
       // Allocate a logical node
       if(is_leaf == true) {
         logical_node_p = new LogicalLeafNode{};
@@ -1277,7 +1291,7 @@ class BwTree {
      *
      * We use this as a wrapper to save a type casting
      */
-    LogicalLeafNode *GetLogicalLeafNode() {
+    inline LogicalLeafNode *GetLogicalLeafNode() {
       assert(is_leaf == true);
 
       return static_cast<LogicalLeafNode *>(logical_node_p);
@@ -1288,10 +1302,35 @@ class BwTree {
      *
      * We use this as a wrapper to save a type casting
      */
-    LogicalInnerNode *GetLogicalInnerNode() {
+    inline LogicalInnerNode *GetLogicalInnerNode() {
       assert(is_leaf == false);
 
       return static_cast<LogicalInnerNode *>(logical_node_p);
+    }
+
+    /*
+     * SetLeftMostChildFlag() - Set a snapshot to be the left most child
+     *
+     * This function could only be called once in order to ensure good
+     * programming practice
+     */
+    inline void SetLeftMostChildFlag() {
+      assert(is_leftmost_child == false);
+
+      is_leftmost_child = true;
+
+      return;
+    }
+
+    /*
+     * SetRootFlag() - Set is_root flag for a NodeSnapshot instance
+     */
+    inline void SetRootFlag() {
+      assert(is_root == false);
+
+      is_root = true;
+
+      return;
     }
   };
 
@@ -2811,6 +2850,8 @@ class BwTree {
 
     // How many levels we are above the current level
     size_t backtrack_level = 0;
+
+
   }
 
   /*
