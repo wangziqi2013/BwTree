@@ -1246,6 +1246,10 @@ class BwTree {
     // in the stack
     bool is_root;
 
+    // The low key we uses when entering this node
+    // This is used for finding the left sibling
+    const KeyType *lbound_p;
+
     /*
      * Constructor - Initialize every member to invalid state
      *
@@ -1264,7 +1268,8 @@ class BwTree {
       is_leaf{p_is_leaf},
       is_split_sibling{false},
       is_leftmost_child{false},
-      is_root{false} {
+      is_root{false},
+      lbound_p{nullptr} {
       // Allocate a logical node
       if(is_leaf == true) {
         logical_node_p = new LogicalLeafNode{};
@@ -1276,6 +1281,11 @@ class BwTree {
 
       return;
     }
+
+    // Explicitly forbid copy construct since this is likely to
+    // cause memory leak
+    NodeSnapshot(const NodeSnapshot &p_ns) = delete;
+    NodeSnapshot &operator==(const NodeSnapshot &p_ns) = delete;
 
     /*
      * Destructor - Automatically destory the logical node object
@@ -1311,8 +1321,9 @@ class BwTree {
     /*
      * SetLeftMostChildFlag() - Set a snapshot to be the left most child
      *
-     * This function could only be called once in order to ensure good
-     * programming practice
+     * This function could only be called once to enforce the invariant that
+     * once we see a node as left most node, it is impossible for us to
+     * mark it as non-leftmost
      */
     inline void SetLeftMostChildFlag() {
       assert(is_leftmost_child == false);
@@ -1329,6 +1340,19 @@ class BwTree {
       assert(is_root == false);
 
       is_root = true;
+
+      return;
+    }
+
+    /*
+     * SetLowKey() - Set the low key of a NodeSnapshot to indicate
+     *               the low key we use when entering current node
+     *
+     * This could be called for multiple times since we allow changing
+     * low key during repositioning
+     */
+    inline void SetLowKey(const KeyType *p_lbound_p) {
+      lbound_p = p_lbound_p;
 
       return;
     }
@@ -2834,22 +2858,36 @@ class BwTree {
   }
 
   /*
-   * JumpToLeafLeftSibling() - Jump to the left sibling given a leaf node
+   * JumpToLeftSibling() - Jump to the left sibling given a node
    *
-   * This function takes a base node only since once remove node is posted
-   * the delta chain will never change. Also we cannot take NodeID since
-   * it is possible (though unlikely) that when we see a NodeID -> pointer
-   * it is valid, but later on Index Term Delete delta is posted and this
-   * node is removed, changing NodeID -> pointer mapping
+   * When this function is called, we assume path_list_p includes the
+   * NodeSnapshot object for the current node being inspected, since
+   * we want to pass the information of whether the current node is
+   * the left most child.
    */
-  bool JumpToLeafLeftSibling(BaseNode *node_p,
-                             std::vector<NodeSnapshot> *path_list_p) {
-    // First do a simple type check
-    NodeType type = node_p->GetType();
-    assert(type == NodeType::LeafRemoveType);
+  bool JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
+    // Make sure the path list is not empty, and that it has a parent node
+    // Even if the original root node splits, the node we are on must be the
+    // left most node of the new root
+    assert(path_list_p->size() != 0 && \
+           path_list_p->size() != 1);
 
-    // How many levels we are above the current level
-    size_t backtrack_level = 0;
+    // First do a simple type check
+    //NodeType type = node_p->GetType();
+    //assert(type == NodeType::LeafRemoveType || \
+    //       type == NodeType::InnerRemoveType);
+
+    NodeSnapshot *ns_p = &path_list_p.back();
+    path_list_p->pop_back();
+    assert(ns_p->is_leftmost_child == false);
+
+    const KeyType *lbound_p = ns_p->lbound_p;
+
+    ns_p = &path_list_p.back();
+
+    if(ns_p->has_data == false) {
+      //CollectAllSeps
+    }
 
 
   }
