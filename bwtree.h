@@ -2887,15 +2887,19 @@ class BwTree {
    * or whose range covers the low key (in the latter case, we know the
    * merge delta has already been posted)
    */
-  bool JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
+  void JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
+    bwt_printf("Jumping to the left sibling\n");
+
     // Make sure the path list is not empty, and that it has a parent node
     // Even if the original root node splits, the node we are on must be the
     // left most node of the new root
     assert(path_list_p->size() != 0 && \
            path_list_p->size() != 1);
 
+    // NOTE: This might reference invalid memory
+    // We must keep the back() held in the vector until
+    // we have finished processing it
     NodeSnapshot *snapshot_p = &path_list_p.back();
-    path_list_p->pop_back();
     assert(snapshot_p->is_leftmost_child == false);
 
     // First do a simple type check
@@ -2907,6 +2911,8 @@ class BwTree {
     // the low key of the separator-ID pair
     const KeyType *lbound_p = snapshot_p->lbound_p;
 
+    // Here destructor is called
+    path_list_p->pop_back();
     snapshot_p = &path_list_p.back();
 
     if(snapshot_p->has_data == false) {
@@ -2978,6 +2984,8 @@ class BwTree {
   void LoadNodeID(NodeID node_id,
                   const KeyType *lbound_p,
                   std::vector<NodeSnapshot> *path_list_p) {
+    bwt_printf("Jumping to node ID = %lu\n", node_id);
+
     BaseNode *node_p = GetNode(node_id);
 
     // This will create an instance with corresponding logical node
@@ -2999,9 +3007,78 @@ class BwTree {
     switch(type) {
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        BaseNode *merge_right_branch = delta_node_p->child_node_p;
+
         JumpToLeftSibling();
-      }
+
+        NodeSnapshot *left_snapshot_p = &path_list_p.back();
+        BaseNode *left_sibling_p = left_snapshot_p->node_p;
+
+        bool ret = false;
+
+        // If we are currently on leaf, just post leaf merge delta
+        if(is_leaf == true) {
+          ret = \
+            PostMergeNode<LeafMergeNode>(left_snapshot_p,
+                                         lbound_p,
+                                         merge_right_branch);
+        } else {
+          ret = \
+            PostMergeNode<InnerMergeNode>(left_snapshot_p,
+                                          lbound_p,
+                                          merge_right_branch);
+        }
+
+        // If CAS succeeds just exit switch statement
+        if(ret == true) {
+          break;
+        }
+      } // case Inner/LeafRemoveType
+    } // switch
+
+    return;
+  }
+
+  /*
+   * PostMergeNode() - Post a leaf merge node on top of a delta chain
+   */
+  template <typename MergeNodeType>
+  bool PostMergeNode(NodeSnapshot *snapshot_p,
+                     const KeyType *merge_key_p,
+                     const BaseNode *merge_branch_p) {
+    // This is the child node of merge delta
+    const BaseNode *node_p = snapshot_p->node_p;
+    NodeID node_id = snapshot_p->node_id;
+
+    // If this is the first delta node, then we just set depth to 1
+    // Otherwise we need to use from the one from previous node
+    int depth = 1;
+
+    if(node_p->IsDeltaNode() == true) {
+      const DeltaNode *delta_node_p = \
+        static_cast<const DeltaNode *>(node_p);
+
+      depth = delta_node_p->depth + 1;
     }
+
+    // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
+    LeafMergeNode *merge_node_p = new MergeNodeType{*merge_key_p,
+                                                    merge_branch_p,
+                                                    depth,
+                                                    node_p};
+
+    // Compare and Swap!
+    bool ret = InstallNodeToReplace(node_p, merge_node_p, node_p);
+
+    // If CAS fails we delete the node and return false
+    if(ret == false) {
+      delete merge_node_p;
+    }
+
+    return ret;
   }
 
   /*
