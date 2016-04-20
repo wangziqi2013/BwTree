@@ -1240,9 +1240,11 @@ class BwTree {
     // Whether there is data or only metadata
     // NOTE: Single key data is not classified as has data
     bool has_data;
+
     // Whether logical node pointer points to a logical leaf node
     // or logical inner node
-    bool is_leaf;
+    // NOTE: This will not change once it is fixed
+    const bool is_leaf;
 
     // Whether we have traversed through a sibling pointer
     // from a split delta node because of a half split state
@@ -1298,15 +1300,38 @@ class BwTree {
     // Explicitly forbid copy construct since this is likely to
     // cause memory leak
     NodeSnapshot(const NodeSnapshot &p_ns) = delete;
-    NodeSnapshot &operator==(const NodeSnapshot &p_ns) = delete;
+    NodeSnapshot &operator=(const NodeSnapshot &p_ns) = delete;
 
     /*
-     * Destructor - Automatically destory the logical node object
+     * Move Constructor - Safely nullify right hand side logical pointer
+     */
+    NodeSnapshot(const NodeSnapshot &&p_ns) :
+      node_id{p_ns.node_id},
+      node_p{p_ns.node_p},
+      logical_node_p{p_ns.logical_node_p},
+      has_data{p_ns.has_data},
+      is_leaf{p_ns.is_leaf},
+      is_split_sibling{p_ns.is_split_sibling},
+      is_leftmost_child{p_ns.is_leftmost_child},
+      is_root{p_ns.is_root},
+      lbound_p{p_ns.lbound_p} {
+      // Avoid the node being destroyed on destruction
+      p_ns.logical_node_p = nullptr;
+
+      return;
+    }
+
+    /*
+     * Destructor - Automatically destroy the logical node object
+     *
+     * NOTE: It is possible for LogicalNode to have an empty logical node
+     * pointer (being moved out), so we check for pointer emptiness before
+     * deleting
      */
     ~NodeSnapshot() {
-      assert(logical_node_p);
-
-      delete logical_node_p;
+      if(logical_node_p) {
+        delete logical_node_p;
+      }
     }
 
     /*
@@ -1316,6 +1341,9 @@ class BwTree {
      */
     inline LogicalLeafNode *GetLogicalLeafNode() {
       assert(is_leaf == true);
+      // Make sure we are reading valid pointer (i.e. die at
+      // the place where misuse happens)
+      assert(logical_node_p != nullptr);
 
       return static_cast<LogicalLeafNode *>(logical_node_p);
     }
@@ -1327,8 +1355,36 @@ class BwTree {
      */
     inline LogicalInnerNode *GetLogicalInnerNode() {
       assert(is_leaf == false);
+      assert(logical_node_p != nullptr);
 
       return static_cast<LogicalInnerNode *>(logical_node_p);
+    }
+
+    /*
+     * GetHighKey() - Return the high key of a snapshot
+     *
+     * This deals with different node types
+     */
+    inline KeyType *GetHighKey() {
+      if(is_leaf == true) {
+        return GetLogicalLeafNode()->ubound_p;
+      } else {
+        return GetLogicalInnerNode()->ubound_p;
+      }
+    }
+
+    /*
+     * GetRightSiblingNodeID() - Return the node ID of right sibling
+     *                           node (could be INVALID_NODE_ID)
+     *
+     * This function deals with different types of nodes
+     */
+    inline NodeID GetRightSiblingNodeID() {
+      if(is_leaf == true) {
+        return GetLogicalLeafNode()->next_node_id;
+      } else {
+        return GetLogicalInnerNode()->next_node_id;
+      }
     }
 
     /*
@@ -2871,6 +2927,21 @@ class BwTree {
   }
 
   /*
+   * GetLatestNodeSnapshot() - Return a pointer to the most recent snapshot
+   *
+   * This is wrapper that includes size checking
+   *
+   * NOTE: The snapshot object is not valid after it is popped out of
+   * the vector, since at that time the snapshot object will be destroyed
+   * which also freed up the logical node object
+   */
+  NodeSnapshot *GetLatestNodeSnapshot(std::vector<NodeSnapshot> *snapshot_p) {
+    assert(snapshot_p->size() > 0);
+
+    return &snapshot_p->back();
+  }
+
+  /*
    * JumpToLeftSibling() - Jump to the left sibling given a node
    *
    * When this function is called, we assume path_list_p includes the
@@ -2897,15 +2968,17 @@ class BwTree {
            path_list_p->size() != 1);
 
     // NOTE: This might reference invalid memory
-    // We must keep the back() held in the vector until
+    // We must keep the snapshot held in the vector until
     // we have finished processing it
-    NodeSnapshot *snapshot_p = &path_list_p.back();
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(path_list_p);
     assert(snapshot_p->is_leftmost_child == false);
 
-    // First do a simple type check
-    NodeType type = snapshot_p->node_p->GetType();
-    assert(type == NodeType::LeafRemoveType || \
-           type == NodeType::InnerRemoveType);
+    // First do a simple type check if node is not nullptr
+    if(snapshot_p->node_p != nullptr) {
+      NodeType type = snapshot_p->node_p->GetType();
+      assert(type == NodeType::LeafRemoveType || \
+             type == NodeType::InnerRemoveType);
+    }
 
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
@@ -2913,8 +2986,8 @@ class BwTree {
 
     // Here destructor is called
     path_list_p->pop_back();
-    snapshot_p = &path_list_p.back();
 
+    snapshot_p = GetLatestNodeSnapshot(path_list_p);
     if(snapshot_p->has_data == false) {
       CollectAllSepsOnInner(snapshot_p);
     }
@@ -2951,12 +3024,22 @@ class BwTree {
       LoadNodeID(left_sibling_id, entry_key_p, path_list_p);
 
       // Read the potentially redirected snapshot
-      snapshot_p = &path_list_p.back();
+      // (but do not pop it - so we directly return)
+      snapshot_p = GetLatestNodeSnapshot(path_list_p);
 
-      CollectMetadataOnInner(snapshot_p);
-      assert(snapshot_p->has_data == false);
+      // try to consolidate the node for meta data
+      if(snapshot_p->is_leaf) {
+        CollectMetadataOnLeaf(snapshot_p);
 
-      KeyType *ubound_p = snapshot_p->GetLogicalInnerNode()->ubound_p;
+        assert(snapshot_p->has_data == false);
+      } else {
+        CollectMetadataOnInner(snapshot_p);
+
+        assert(snapshot_p->has_data == false);
+      }
+
+      // Get high key using logical leaf or inner node
+      const KeyType *ubound_p = snapshot_p->GetHighKey();
 
       // If the high key of the left sibling equals the low key
       // then we know it is the real left sibling
@@ -2967,8 +3050,8 @@ class BwTree {
         break;
       }
 
-      left_sibling_id = snapshot_p->GetLogicalInnerNode()->next_node_id;
-      // We know it will never be invalid node id since ubound_p <= lbound_p
+      left_sibling_id = snapshot_p->GetRightSiblingNodeID();
+      // We know it will never be invalid node id since ubound_p < lbound_p
       // which implies the high key is not +Inf, so there are other nodes to
       // its right side
       assert(left_sibling_id != INVALID_NODE_ID);
@@ -2981,6 +3064,18 @@ class BwTree {
     return;
   }
 
+  /*
+   * LoadNodeID() - Given a NodeID, take a snapshot of the node
+   *
+   * NOTE: This function defines the help-along protocol, i.e. if we find
+   * a SMO on top of the delta chain, we should help-along that SMO before
+   * doing our own job. This might incur a recursive call of this function.
+   *
+   * If we see a remove node, then the actual NodeID pushed into the path
+   * list stack may not equal the NodeID passed in this function. So when
+   * we need to read NodeID, always use the one stored in the NodeSnapshot
+   * vector instead of using a previously passed one
+   */
   void LoadNodeID(NodeID node_id,
                   const KeyType *lbound_p,
                   std::vector<NodeSnapshot> *path_list_p) {
@@ -3000,7 +3095,12 @@ class BwTree {
 
     // Put this into the list in case that a remove node causes
     // backtracking
-    path_list_p->push_back(snapshot);
+    // NOTE: 1. snapshot is invalid after this point
+    //       2. We need to retrieve it using GetLatestNodeSnapshot()
+    path_list_p->push_back(std::move(snapshot));
+
+    // This is the moved version
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(path_list_p);
 
     NodeType type = node_p->GetType();
 
