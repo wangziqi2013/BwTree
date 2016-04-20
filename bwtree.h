@@ -2983,6 +2983,8 @@ class BwTree {
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
     const KeyType *lbound_p = snapshot_p->lbound_p;
+    // We use this in assertion
+    const NodeID removed_node_id = snapshot_p->node_id;
 
     // Here destructor is called
     path_list_p->pop_back();
@@ -3016,6 +3018,9 @@ class BwTree {
 
     // This is our starting point
     NodeID left_sibling_id = it->second;
+    // This is used for LoadNodeID() if the left sibling itself
+    // is removed, then we need to recursively call this function
+    // to find the left left sibling, with the entry key
     const KeyType *entry_key_p = &it->first;
 
     while(1) {
@@ -3038,23 +3043,31 @@ class BwTree {
         assert(snapshot_p->has_data == false);
       }
 
-      // Get high key using logical leaf or inner node
+      // Get high key and left sibling NodeID
       const KeyType *ubound_p = snapshot_p->GetHighKey();
+      // This will be used in next iteration
+      left_sibling_id = snapshot_p->GetRightSiblingNodeID();
 
       // If the high key of the left sibling equals the low key
       // then we know it is the real left sibling
       // Or the node has already been consolidated, then the range
       // of the node would cover current low key
-      if(KeyCmpEqual(*ubound_p, *lbound_p) || \
-         KeyCmpGreater(*ubound_p, *lbound_p)) {
-        break;
-      }
+      if(KeyCmpEqual(*ubound_p, *lbound_p)) {
+        bwt_printf("Find a exact match of low/high key\n");
 
-      left_sibling_id = snapshot_p->GetRightSiblingNodeID();
-      // We know it will never be invalid node id since ubound_p < lbound_p
-      // which implies the high key is not +Inf, so there are other nodes to
-      // its right side
-      assert(left_sibling_id != INVALID_NODE_ID);
+        assert(left_sibling_id == removed_node_id);
+
+        break;
+      } else if(KeyCmpGreater(*ubound_p, *lbound_p)) {
+        bwt_printf("The range of left sibling covers current node\n");
+
+        break;
+      } else {
+        // We know it will never be invalid node id since ubound_p < lbound_p
+        // which implies the high key is not +Inf, so there are other nodes to
+        // its right side
+        assert(left_sibling_id != INVALID_NODE_ID);
+      }
 
       // For the next iteration, we traverse to the node to its right
       // using the next node ID and its high key as next node's low key
