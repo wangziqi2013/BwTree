@@ -2957,6 +2957,8 @@ class BwTree {
    * we see a node whose high key equals the low key we are searching for,
    * or whose range covers the low key (in the latter case, we know the
    * merge delta has already been posted)
+   *
+   * NOTE: It is possible for us to find the left sibling of an nullptr
    */
   void JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
     bwt_printf("Jumping to the left sibling\n");
@@ -3077,6 +3079,39 @@ class BwTree {
     return;
   }
 
+/*
+ * TakeNodeSnapshot() - Take the snapshot of a node by pushing node information
+ *
+ * This function simply copies NodeID, low key, and physical pointer into
+ * the snapshot object, and pushes snapshot into the path list
+ *
+ * NOTE: We use move semantics to push the snapshot, such that the instance will
+ * be invalidated (logical node pointer being set to nullptr) after the move
+ */
+void TakeNodeSnapshot(NodeID node_id,
+                      const KeyType *lbound_p,
+                      std::vector<NodeSnapshot> *path_list_p) {
+  const BaseNode *node_p = GetNode(node_id);
+
+  // This will create an instance with corresponding logical node
+  // structure
+  bool is_leaf = node_p->IsOnLeafDeltaChain();
+  NodeSnapshot snapshot = NodeSnapshot(is_leaf);
+
+  snapshot.node_id = node_id;
+  snapshot.node_p = node_p;
+  // This is useful for finding left sibling
+  snapshot.lbound_p = lbound_p;
+
+  // Put this into the list in case that a remove node causes
+  // backtracking
+  // NOTE: 1. snapshot is invalid after this point
+  //       2. We need to retrieve it using GetLatestNodeSnapshot()
+  path_list_p->push_back(std::move(snapshot));
+
+  return;
+}
+
   /*
    * LoadNodeID() - Given a NodeID, take a snapshot of the node
    *
@@ -3092,63 +3127,86 @@ class BwTree {
   void LoadNodeID(NodeID node_id,
                   const KeyType *lbound_p,
                   std::vector<NodeSnapshot> *path_list_p) {
-    bwt_printf("Jumping to node ID = %lu\n", node_id);
+    bwt_printf("Loading node ID = %lu\n", node_id);
 
-    BaseNode *node_p = GetNode(node_id);
-
-    // This will create an instance with corresponding logical node
-    // structure
-    bool is_leaf = node_p->IsOnLeafDeltaChain();
-    NodeSnapshot snapshot = NodeSnapshot(is_leaf);
-
-    snapshot.node_id = node_id;
-    snapshot.node_p = node_p;
-    // This is useful for finding left sibling
-    snapshot.lbound_p = lbound_p;
-
-    // Put this into the list in case that a remove node causes
-    // backtracking
-    // NOTE: 1. snapshot is invalid after this point
-    //       2. We need to retrieve it using GetLatestNodeSnapshot()
-    path_list_p->push_back(std::move(snapshot));
-
-    // This is the moved version
+    // First read in the node's physical pointer
+    TakeNodeSnapshot(node_id, lbound_p, path_list_p);
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(path_list_p);
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    // This is possible since we clear NodeID -> BaseNode * relation after
+    // we have posted index term delete delta
+    if(node_p == nullptr) {
+      // Up on seeing empty pointer, we simply jump to the left sibling
+      JumpToLeftSibling();
+
+      return;
+    }
 
     NodeType type = node_p->GetType();
 
     switch(type) {
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
+        bwt_printf("Helping along remove node...\n");
+
         const DeltaNode *delta_node_p = \
           static_cast<const DeltaNode *>(node_p);
 
-        BaseNode *merge_right_branch = delta_node_p->child_node_p;
+        const BaseNode *merge_right_branch = \
+          delta_node_p->child_node_p;
 
         JumpToLeftSibling();
 
-        NodeSnapshot *left_snapshot_p = &path_list_p.back();
-        BaseNode *left_sibling_p = left_snapshot_p->node_p;
+        // That is the left sibling's snapshot
+        NodeSnapshot *left_snapshot_p = \
+          GetLatestNodeSnapshot(path_list_p);
+        const BaseNode *left_sibling_p = left_snapshot_p->node_p;
 
-        bool ret = false;
-
-        // If we are currently on leaf, just post leaf merge delta
-        if(is_leaf == true) {
-          ret = \
-            PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         lbound_p,
-                                         merge_right_branch);
+        if(left_snapshot_p->is_leaf == true) {
+          CollectMetadataOnLeaf(left_snapshot_p);
         } else {
-          ret = \
-            PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          lbound_p,
-                                          merge_right_branch);
+          CollectMetadataOnInner(left_snapshot_p);
         }
 
-        // If CAS succeeds just exit switch statement
-        if(ret == true) {
+        const KeyType *ubound_p = left_snapshot_p->GetHighKey();
+        const NodeID left_next_id = left_snapshot_p->GetRightSiblingNodeID();
+        if(KeyCmpEqual(*ubound_p, *lbound_p)) {
+          if(left_next_id == node_id) {
+            bool ret = false;
+
+            // If we are currently on leaf, just post leaf merge delta
+            if(left_snapshot_p->is_leaf == true) {
+              ret = \
+                PostMergeNode<LeafMergeNode>(left_snapshot_p,
+                                             lbound_p,
+                                             merge_right_branch);
+            } else {
+              ret = \
+                PostMergeNode<InnerMergeNode>(left_snapshot_p,
+                                              lbound_p,
+                                              merge_right_branch);
+            }
+
+            // If CAS succeeds just exit switch statement
+            if(ret == true) {
+              bwt_printf("Merge delta CAS succeeds\n");
+
+              break;
+            } else {
+              bwt_printf("Merge delta CAS fails\n");
+            }
+          } else {
+            bwt_printf("Key matches, but next node ID has changed"
+                       " (split on top of merge?)\n");
+          }
+        } else {
+          bwt_printf("High key and low key does not match, "
+                     "either merge has been posted, or it splits\n");
+
           break;
         }
+
       } // case Inner/LeafRemoveType
     } // switch
 
