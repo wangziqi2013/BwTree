@@ -3123,6 +3123,30 @@ void TakeNodeSnapshot(NodeID node_id,
   return;
 }
 
+/*
+ * RevalidateParent() - This function reloads parent node, and revalidate
+ *                      it to left or right sibling if it has been merged
+ *                      or splited
+ *
+ * In this function we need to consider that it might be called recursively
+ * which implies the parent node is not always the second last node in the
+ * NodeSnapshot list
+ *
+ * We provide a separator key for identifying the correct parent node if
+ * it has splited. This key is the key we used when traversing down on
+ * the parent node.
+ */
+void RevalidateParent(const KeyType *lbound_p,
+                      std::vector<NodeSnapshot> *path_list_p,
+                      int parent_index) {
+  // Validate index to avoid out of bound access
+  assert(parent_index >= 0 && parent_index < path_list_p->size());
+
+  NodeSnapshot *parent_snapshot_p = &path_list_p[parent_index];
+
+  return;
+}
+
   /*
    * LoadNodeID() - Given a NodeID, take a snapshot of the node
    *
@@ -3249,18 +3273,51 @@ void TakeNodeSnapshot(NodeID node_id,
           }
         } // while(1)
 
+        // Even if it succeeds we need to take the most up to date snapshot
+        // and use the merge node pointer as identifier
+        TakeNodeSnapshot(node_id, lbound_p, path_list_p);
+        snapshot_p = GetLatestNodeSnapshot(path_list_p);
+        node_p = snapshot_p->node_p;
+        // If the node is not a merge node anymore (somebody has sneaked in
+        // and appended something)
+        if(node_p == nullptr || \
+           (node_p->GetType() != NodeType::LeafMergeType && \
+            node_p->GetType() != NodeType::InnerMergeType)) {
+          // TODO: Need to put remove node into delta chain for recycling, and
+          // set the NodeID mapping to nullptr
+
+          return;
+        }
+
         // FALL THROUGH TO MERGE
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
-        // Make sure that the current node has a parent
-        int path_list_size = path_list_p->size();
-        assert(path_list_size >= 2);
+        while(1) {
+          // Make sure that the current node has a parent
+          int path_list_size = path_list_p->size();
+          assert(path_list_size >= 2);
 
-        // This points to its parent node, since we already ensured
-        // there is a parent
-        NodeSnapshot *parent_snapshot_p = &path_list_p[path_list_size - 2];
-        NodeID parent_node_id = parent_snapshot_p->node_id;
+          // This points to its parent node, since we already ensured
+          // there is a parent
+          NodeSnapshot *parent_snapshot_p = &path_list_p[path_list_size - 2];
+          NodeID parent_node_id = parent_snapshot_p->node_id;
+          // This is useful if the parent node also needs a backtracking
+          const KeyType *parent_lbound_p = parent_snapshot_p->lbound_p;
+
+          // Might induce some recursive invocation and jumps to
+          // another node on the same level
+          LoadNodeID(parent_node_id, parent_lbound_p, path_list_p);
+
+          // We reuse this variable name. Now it points to the most up-to-date
+          // parent node snapshot
+          parent_snapshot_p = GetLatestNodeSnapshot(path_list_p);
+
+          // We know parent node must be a inner
+          assert(parent_snapshot_p->is_leaf == false);
+
+          CollectMetadataOnInner(parent_snapshot_p);
+        } // while (1)
       } // case Inner/LeafMergeNode
     } // switch
 
