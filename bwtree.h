@@ -1304,18 +1304,27 @@ class BwTree {
 
     /*
      * Move Constructor - Safely nullify right hand side logical pointer
+     *
+     * NOTE: DO NOT FORGET TO FREE THIS NODE'S LOGICAL NODE
      */
     NodeSnapshot(const NodeSnapshot &&p_ns) :
       node_id{p_ns.node_id},
       node_p{p_ns.node_p},
-      logical_node_p{p_ns.logical_node_p},
+      //logical_node_p{p_ns.logical_node_p},
       has_data{p_ns.has_data},
       is_leaf{p_ns.is_leaf},
       is_split_sibling{p_ns.is_split_sibling},
       is_leftmost_child{p_ns.is_leftmost_child},
       is_root{p_ns.is_root},
       lbound_p{p_ns.lbound_p} {
-      // Avoid the node being destroyed on destruction
+      // First release memory of the current logical node
+      assert(logical_node_p != nullptr);
+      delete logical_node_p;
+
+      // Then copy the logical node
+      logical_node_p = p_ns.logical_node_p;
+
+      // Avoid the node being destroyed on destruction of the old node
       p_ns.logical_node_p = nullptr;
 
       return;
@@ -2980,6 +2989,8 @@ class BwTree {
       NodeType type = snapshot_p->node_p->GetType();
       assert(type == NodeType::LeafRemoveType || \
              type == NodeType::InnerRemoveType);
+    } else {
+      bwt_printf("A nullptr is passed in\n");
     }
 
     // This is the low key of current removed node. Also
@@ -3176,7 +3187,7 @@ void TakeNodeSnapshot(NodeID node_id,
 
           const KeyType *ubound_p = left_snapshot_p->GetHighKey();
           const NodeID left_next_id = left_snapshot_p->GetRightSiblingNodeID();
-          if(KeyCmpEqual(*ubound_p, *lbound_p)) {
+          if(KeyCmpEqual(*ubound_p, *lbound_p) == true) {
             if(left_next_id == node_id) {
               bool ret = false;
 
@@ -3193,22 +3204,29 @@ void TakeNodeSnapshot(NodeID node_id,
                                                 merge_right_branch);
               }
 
-              // If CAS succeeds just exit switch statement
+              // If CAS succeed just exit switch statement
               if(ret == true) {
                 bwt_printf("Merge delta CAS succeeds\n");
 
+                // This breaks from while loop
                 break;
               } else {
                 bwt_printf("Merge delta CAS fails\n");
               } // if ret == true
             } else {
-              bwt_printf("Key matches, but next node ID has changed"
-                         " (split on top of merge?)\n");
-            } // if next ID == node ID
-          } else {
-            bwt_printf("High key and low key does not match, "
-                       "either merge has been posted, or it splits\n");
+              bwt_printf("Key matches, but next node ID has changed; "
+                         "(split on top of merge?)\n");
 
+              // This breaks from while loop
+              break;
+            } // if next ID == node ID
+          } else if(KeyCmpLess(*ubound_p, *lbound_p) == true) {
+            bwt_printf("High key < low key; split happens. "
+                       "We do not know whether merge is present\n");
+          } else {
+            bwt_printf("High key >= low key; we know it has merged\n");
+
+            // This breaks from while loop
             break;
           } // if high key == low key
 
@@ -3235,7 +3253,14 @@ void TakeNodeSnapshot(NodeID node_id,
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
+        // Make sure that the current node has a parent
+        int path_list_size = path_list_p->size();
+        assert(path_list_size >= 2);
 
+        // This points to its parent node, since we already ensured
+        // there is a parent
+        NodeSnapshot *parent_snapshot_p = &path_list_p[path_list_size - 2];
+        NodeID parent_node_id = parent_snapshot_p->node_id;
       } // case Inner/LeafMergeNode
     } // switch
 
