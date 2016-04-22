@@ -3576,16 +3576,101 @@ void FinishPartialSMO(Context *context_p) {
 
       bwt_printf("Continue to post index term delete delta\n");
 
+      // Update type information and make sure it is the correct node
+      type = node_p->GetType();
+      assert(type == NodeType::InnerMergeType ||
+             type == NodeType::LeafMergeType);
+
       // FALL THROUGH TO MERGE
     } // case Inner/LeafRemoveType
     case NodeType::InnerMergeType:
     case NodeType::LeafMergeType: {
+      // We could not find a merge delta on left most child node
+      assert(snapshot_p->is_leftmost_child == false);
 
+      // First consolidate parent node and find the left/right
+      // sep pair plus left node ID
+      NodeSnapshot *parent_snapshot_p = \
+        GetLatestParentNodeSnapshot(context_p);
+
+      if(parent_snapshot_p->has_data == false) {
+        CollectAllSepsOnInner(parent_snapshot_p);
+      }
+
+      assert(parent_snapshot_p->has_data == true);
+
+      const KeyType *merge_key_p = nullptr;
+      const KeyType *prev_key_p = nullptr;
+      const KeyType *next_key_p = nullptr;
+      NodeID prev_node_id = INVALID_NODE_ID;
+      if(type == NodeType::InnerMergeType) {
+        const InnerMergeNode *merge_node_p = \
+          static_cast<InnerMergeNode *>(node_p);
+
+        merge_key_p = merge_node_p->merge_key;
+      }
     } // case Inner/LeafMergeNode
   } // switch
 
   return;
 }
+
+  /*
+   * FindMergePrevNextKey() - Find merge next and prev key and node ID
+   *
+   * This function loops through keys in the snapshot, and if there is a
+   * match of the merge key, its previous key and next key are collected.
+   * Also the node ID of its previous key is collected
+   */
+  void FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
+                            const KeyType *merge_key_p,
+                            const KeyType **prev_key_p_p,
+                            const KeyType **next_key_p_p,
+                            NodeID *prev_node_id_p) {
+    // We could only post merge key on merge node
+    assert(snapshot_p->is_leaf == false);
+
+    // This is the map that stores key to node ID Mapping
+    const KeyNodeIDMap &sep_map = \
+      snapshot_p->GetLogicalInnerNode()->GetContainer();
+
+    assert(sep_map.size() >= 2);
+
+    // it1 should not be the key since we do not allow
+    // merge node on the leftmost child
+    typename KeyNodeIDMap::iterator it1 = sep_map.begin();
+    decltype(it1) it2 = it1 + 1;
+    decltype(it2) it3 = it2 + 1;
+
+    while(it3 != sep_map.end()) {
+      if(KeyCmpEqual(it2->first, *merge_key_p) == true) {
+        *prev_key_p_p = &it1->first;
+        *next_key_p_p = &it3->first;
+        // We use prev key's node ID
+        *prev_node_id_p = it1->second;
+
+        return;
+      }
+
+      it1++;
+      it2++;
+      it3++;
+    }
+
+    // Special case: sep is the last in parent node
+    // In this case we need to use high key as the next sep key
+    if(KeyCmpEqual(it2->first, *merge_key_p) == true) {
+      *prev_key_p_p = &it1->first;
+      *next_key_p_p = snapshot_p->GetHighKey();
+      *prev_node_id_p = it1->second;
+    } else {
+      bwt_printf("ERROR: Did not find merge key in parent node\n");
+
+      assert(false);
+    }
+
+    return;
+  }
 
   /*
    * PostMergeNode() - Post a leaf merge node on top of a delta chain
