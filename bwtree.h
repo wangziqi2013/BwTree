@@ -149,7 +149,14 @@ class BwTree {
   constexpr static size_t NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
   // If the length of delta chain exceeds this then we consolidate the node
-  constexpr static DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+
+  // If node size goes above this then we split it
+  constexpr static size_t INNER_NODE_SIZE_UTHRESHOLD = 16;
+  constexpr static size_t LEAF_NODE_SIZE_UTHRESHOLD = 16;
+
+  constexpr static size_t INNER_NODE_SIZE_LTHRESHOLD = 8;
+  constexpr static size_t LEAF_NODE_SIZE_LTHRESHOLD = 8;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -3926,12 +3933,15 @@ class BwTree {
       if(ret == true) {
         bwt_printf("Leaf node consolidation CAS succeeds\n");
 
+        // Update current snapshot using our best knowledge
+        snapshot_p->node_p = leaf_node_p;
+
         // TODO: PUT OLD NODE CHAIN INTO EPOCH
       } else {
         bwt_printf("Leaf node consolidation CAS failed. NO ABORT\n");
 
         delete leaf_node_p;
-      }
+      } // if CAS succeeds / fails
     } else {
       const InnerNode *inner_node_p = \
         snapshot_p->GetLogicalInnerNode()->ToInnerNode();
@@ -3940,12 +3950,64 @@ class BwTree {
       if(ret == true) {
         bwt_printf("Inner node consolidation CAS succeeds\n");
 
+        snapshot_p->node_p = inner_node_p;
+
         // TODO: PUT OLD NODE CHAIN INTO EPOCH
       } else {
         bwt_printf("Inner node consolidation CAS failed. NO ABORT\n");
 
+        // TODO: If we want to keep delta chain length constant then it
+        // should abort here
+
         delete inner_node_p;
+      } // if CAS succeeds / fails
+    } // if it is leaf / is inner
+
+    return;
+  }
+
+  /*
+   * AdjustNodeSize() - Post split or merge delta if a node becomes overflow
+   *                    or underflow
+   *
+   * For leftmost children nodes and for root node (which has is_leftmost
+   * flag set) we never post remove delta, the merge of which would change
+   * its parent node's low key
+   */
+  void AdjustNodeSize(Context *context_p) {
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    const BaseNode *node_p = snapshot_p->node_p;
+    NodeID node_id = snapshot_p->node_id;
+
+    // We do not adjust size for delta nodes
+    if(node_p->IsDeltaNode() == true) {
+      // TODO: If we want to strictly enforce the size of any node
+      // then we should aggressively consolidate here and always
+      // Though it brings huge overhead because now we are consolidating
+      // every node on the path
+
+      return;
+    }
+
+    if(snapshot_p->is_leaf == true) {
+      const LeafNode *leaf_node_p = \
+        static_cast<const LeafNode *>(node_p);
+
+      if(snapshot_p->has_data == false) {
+        CollectAllValuesOnLeaf(snapshot_p);
       }
+
+      assert(snapshot_p->has_data == true);
+
+      size_t node_size = leaf_node_p->data_list.size();
+
+      if(node_size < INNER_NODE_SIZE_THRESHOLD) {
+        return;
+      }
+
+
+    } else {
+
     }
 
     return;
