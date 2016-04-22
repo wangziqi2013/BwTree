@@ -1817,39 +1817,52 @@ class BwTree {
    * it does not want to resolve it from bottom up)
    */
   void Traverse(Context *context_p) {
-    switch(context_p->current_state) {
-      case OpState::Init: {
-        assert(context_p->path_list.size() == 0);
-        assert(context_p->abort_flag == false);
-        assert(context_p->current_level == 0);
+    while(1) {
+      switch(context_p->current_state) {
+        case OpState::Init: {
+          assert(context_p->path_list.size() == 0);
+          assert(context_p->abort_flag == false);
+          assert(context_p->current_level == 0);
 
-        NodeSnapshot snapshot{false};
+          NodeID start_node_id = root_id.load();
 
-        // This is only true for this node
-        snapshot.is_root = true;
+          // We need to call this even for root node since there could
+          // be split delta posted on to root node
+          LoadNodeID(start_node_id,
+                     context_p,
+                     nullptr,      // This is only used when splitting nodes
+                     true);        // root ID is implicitly leftmost
 
-        // No low key for root node
-        snapshot.lbound_p = nullptr;
+          // There could be an abort here, and we could not directly jump
+          // to Init state since we would like to do some clean up or
+          // statistics after aborting
+          if(context_p.abort_flag == true) {
+            context_p.current_state = OpState::Abort;
 
-        // This fixes the view
-        snapshot.node_id = root_id.load();
-        snapshot.node_p = GetNode(root_id);
+            // This goes to the beginning of loop
+            break;
+          }
 
-        // Put the initial state into stack list
-        context_p->path_list.push_back(snapshot);
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+          snapshot_p->SetRootFlag();
 
-        // root node must be an inner node
-        context_p->current_state = OpState::Inner;
+          bwt_printf("Successfully loading root node ID\n");
 
-        break;
-      } // case Init
-      case OpState::Inner: {
-        NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context_p->path_list);
-        const KeyType *search_key_p = context_p->search_key_p;
+          // root node must be an inner node
+          // NOTE: We do not traverse down in this state, just hand it
+          // to Inner state and let it do all generic job
+          context_p->current_state = OpState::Inner;
 
-        NavigateInnerNode(*search_key_p, )
-      } // case Inner
-    } // switch current_state
+          break;
+        } // case Init
+        case OpState::Inner: {
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context_p->path_list);
+          const KeyType *search_key_p = context_p->search_key_p;
+
+          NavigateInnerNode(*search_key_p, )
+        } // case Inner
+      } // switch current_state
+    } // while(1)
   }
 
   /*
@@ -3156,7 +3169,7 @@ class BwTree {
    * the vector, since at that time the snapshot object will be destroyed
    * which also freed up the logical node object
    */
-  NodeSnapshot *GetLatestNodeSnapshot(const Context *context_p) {
+  inline NodeSnapshot *GetLatestNodeSnapshot(const Context *context_p) const {
     const std::vector<NodeSnapshot> *path_list_p = \
       context_p->path_list;
 
@@ -3511,6 +3524,9 @@ void FinishPartialSMO(Context *context_p) {
   // the left sibling
   const BaseNode *node_p = snapshot_p->node_p;
   NodeID node_id = snapshot_p->node_id;
+  // NOTE: For root node this is nullptr
+  // But we do not allow posting remove delta on root node
+  // which means it would not be
   const KeyType *lbound_p = snapshot_p->lbound_p;
 
   // And also need to update this if we post a new node
