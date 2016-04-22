@@ -3492,12 +3492,13 @@ void FinishPartialSMO(Context *context_p) {
   // We assume the last node is the node we will help for
   NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-  // These three variables serves as a reference and could not
-  // be modified
+  // NOTE: Need to update these three variables if we jump to
+  // the left sibling
   const BaseNode *node_p = snapshot_p->node_p;
-  const NodeID node_id = snapshot_p->node_id;
-  const KeyType *const lbound_p = snapshot_p->lbound_p;
+  NodeID node_id = snapshot_p->node_id;
+  const KeyType *lbound_p = snapshot_p->lbound_p;
 
+  // And also need to update this if we post a new node
   const NodeType type = node_p->GetType();
 
   switch(type) {
@@ -3581,6 +3582,16 @@ void FinishPartialSMO(Context *context_p) {
       assert(type == NodeType::InnerMergeType ||
              type == NodeType::LeafMergeType);
 
+      // We may want to use snapshot_p
+      snapshot_p = left_snapshot_p;
+
+      // Also update the new merge node back to snapshot
+      snapshot_p->node_p = node_p;
+
+      // Update these two to reflect that we have reached a new node
+      node_id = snapshot_p->node_id;
+      lbound_p = snapshot_p->lbound_p;
+
       // FALL THROUGH TO MERGE
     } // case Inner/LeafRemoveType
     case NodeType::InnerMergeType:
@@ -3593,6 +3604,7 @@ void FinishPartialSMO(Context *context_p) {
       NodeSnapshot *parent_snapshot_p = \
         GetLatestParentNodeSnapshot(context_p);
 
+      // Consolidate parent node
       if(parent_snapshot_p->has_data == false) {
         CollectAllSepsOnInner(parent_snapshot_p);
       }
@@ -3600,15 +3612,76 @@ void FinishPartialSMO(Context *context_p) {
       assert(parent_snapshot_p->has_data == true);
 
       const KeyType *merge_key_p = nullptr;
+
+      // These three needs to be found in the parent node
+      // Since we do not alter parent node's snapshot since last time we
+      // saw it, we could always find the sep and its prev/next/node ID
       const KeyType *prev_key_p = nullptr;
       const KeyType *next_key_p = nullptr;
       NodeID prev_node_id = INVALID_NODE_ID;
+
+      int depth = 0;
+
       if(type == NodeType::InnerMergeType) {
         const InnerMergeNode *merge_node_p = \
-          static_cast<InnerMergeNode *>(node_p);
+          static_cast<const InnerMergeNode *>(node_p);
+
+        depth = merge_node_p->depth + 1;
 
         merge_key_p = merge_node_p->merge_key;
+      } else if(type == NodeType::LeafMergeType) {
+        const LeafMergeNode *merge_node_p = \
+          static_cast<const LeafMergeNode *>(node_p);
+
+        depth = merge_node_p->depth + 1;
+
+        merge_key_p = merge_node_p->merge_key;
+      } else {
+        bwt_printf("ERROR: Illegal node type: %d\n", type);
+      } // If on type of merge node
+
+      // if this is false then we have already deleted the index term
+      bool merge_key_found = \
+        FindMergePrevNextKey(parent_snapshot_p,
+                             merge_key_p,
+                             &prev_key_p,
+                             &next_key_p,
+                             &prev_node_id);
+
+      // If merge key is not found then we know we have already deleted the
+      // index term
+      if(merge_key_found == false) {
+        break;
       }
+
+      const InnerDeleteNode *delete_node_p = \
+        InnerDeleteNode{*merge_key_p,
+                        *next_key_p,
+                        *prev_key_p,
+                        prev_node_id,
+                        depth,
+                        node_p};
+
+      // Assume parent has not changed, and CAS the index term delete delta
+      // If CAS failed then parent has changed, and we have no idea how it
+      // could be modified. The safest way is just abort
+      bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
+                                      delete_node_p,
+                                      parent_snapshot_p->node_id);
+      if(ret == true) {
+        bwt_printf("Index term delete delta installed\n");
+      } else {
+        bwt_printf("Index term delete delta install failed. ABORT\n");
+
+        context_p->abort_flag = true;
+
+        return;
+      }
+
+      // Update in parent snapshot
+      parent_snapshot_p->node_p = delete_node_p;
+
+      break;
     } // case Inner/LeafMergeNode
   } // switch
 
@@ -3621,8 +3694,14 @@ void FinishPartialSMO(Context *context_p) {
    * This function loops through keys in the snapshot, and if there is a
    * match of the merge key, its previous key and next key are collected.
    * Also the node ID of its previous key is collected
+   *
+   * NOTE: There is possibility that the index term has already been
+   * deleted in the parent node, in which case this function will not
+   * merge key.
+   *
+   * Return true if the merge key is found. false if merge key not found
    */
-  void FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
+  bool FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
                             const KeyType *merge_key_p,
                             const KeyType **prev_key_p_p,
                             const KeyType **next_key_p_p,
@@ -3649,7 +3728,7 @@ void FinishPartialSMO(Context *context_p) {
         // We use prev key's node ID
         *prev_node_id_p = it1->second;
 
-        return;
+        return true;
       }
 
       it1++;
@@ -3663,13 +3742,16 @@ void FinishPartialSMO(Context *context_p) {
       *prev_key_p_p = &it1->first;
       *next_key_p_p = snapshot_p->GetHighKey();
       *prev_node_id_p = it1->second;
-    } else {
-      bwt_printf("ERROR: Did not find merge key in parent node\n");
 
-      assert(false);
+      return true;
+    } else {
+      bwt_printf("Did not find merge key in parent node - already deleted\n");
+
+      return false
     }
 
-    return;
+    assert(false);
+    return false;
   }
 
   /*
