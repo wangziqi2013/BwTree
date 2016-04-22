@@ -3485,6 +3485,8 @@ class BwTree {
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
     FinishPartialSMO(context_p);
+    ConsolidateNode(context_p);
+    AdjustNodeSize(context_p);
 
     return;
   }
@@ -3505,6 +3507,8 @@ class BwTree {
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
     FinishPartialSMO(context_p);
+    ConsolidateNode(context_p);
+    AdjustNodeSize(context_p);
 
     return;
   }
@@ -3647,6 +3651,22 @@ class BwTree {
 
         assert(parent_snapshot_p->has_data == true);
 
+        // If debug is on, we extract the next node ID
+        // which is the deleted node ID
+        #ifdef BWTREE_DEBUG
+        if(snapshot_p->has_metadata == false) {
+          if(snapshot_p->is_leaf) {
+            CollectMetadataOnLeaf(snapshot_p);
+          } else {
+            CollectMetadataOnInner(snapshot_p);
+          }
+        }
+
+        NodeID deleted_node_id = snapshot_p->GetNextNodeID();
+        #else
+        NodeID = INVALID_NODE_ID;
+        #endif
+
         const KeyType *merge_key_p = nullptr;
 
         // These three needs to be found in the parent node
@@ -3682,7 +3702,8 @@ class BwTree {
                                merge_key_p,
                                &prev_key_p,
                                &next_key_p,
-                               &prev_node_id);
+                               &prev_node_id,
+                               deleted_node_id);
 
         // If merge key is not found then we know we have already deleted the
         // index term
@@ -3752,7 +3773,7 @@ class BwTree {
 
         assert(context_p->path_list.size() > 0);
 
-        // There is no parent node
+        // SPLIT ROOT NODE!!
         if(context_p->path_list.size() == 1) {
           bwt_printf("Root splits!\n");
 
@@ -3776,7 +3797,7 @@ class BwTree {
                                      new_root_id);
 
           if(ret == true) {
-            bwt_printf("Install node CAS succeeds\n");
+            bwt_printf("Install root CAS succeeds\n");
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
 
@@ -3786,9 +3807,11 @@ class BwTree {
 
             return;
           } // if CAS succeeds/fails
+
+          // NOTE: We do not have to update the snapshot to reflect newly assigned
+          // root node
         } else {
-          // First consolidate parent node and find the left/right
-          // sep pair plus left node ID
+          // First consolidate parent node and find the right sep
           NodeSnapshot *parent_snapshot_p = \
             GetLatestParentNodeSnapshot(context_p);
 
@@ -3929,7 +3952,6 @@ class BwTree {
   }
 
 
-
   /*
    * FindSplitNextKey() - Given a parent snapshot, find the next key of
    *                      the current split key
@@ -3942,6 +3964,10 @@ class BwTree {
    * Returns true if split key is not found (i.e. we could insert index term)
    *
    * NOTE: This function assumes the snapshot already has data and metadata
+   *
+   * NOTE 2: This function checks whether the PID has already been inserted
+   * using both the sep key and NodeID. These two must match, otherwise we
+   * observed an inconsistent state
    */
   bool FindSplitNextKey(const NodeSnapshot *snapshot_p,
                         const KeyType *split_key_p,
@@ -3997,13 +4023,18 @@ class BwTree {
    *
    * NOTE 2: This function assumes the snapshot already has data and metadata
    *
+   * NOTE 3: This function asserts the sep deleted is the node
+   * that refers to the removing node. This is critical because otherwise we
+   * are deleting the wrong node
+   *
    * Return true if the merge key is found. false if merge key not found
    */
   bool FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
                             const KeyType *merge_key_p,
                             const KeyType **prev_key_p_p,
                             const KeyType **next_key_p_p,
-                            NodeID *prev_node_id_p) {
+                            NodeID *prev_node_id_p,
+                            NodeID deleted_node_id) {
     // We could only post merge key on merge node
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->has_data == true);
@@ -4028,6 +4059,13 @@ class BwTree {
         // We use prev key's node ID
         *prev_node_id_p = it1->second;
 
+        // Make sure it2 refers to the node we are removing
+        #ifdef BWTREE_DEBUG
+        assert(deleted_node_id == it2->second);
+        #else
+        assert(deleted_node_id == INVALID_NODE_ID);
+        #endif
+
         return true;
       }
 
@@ -4042,6 +4080,13 @@ class BwTree {
       *prev_key_p_p = &it1->first;
       *next_key_p_p = snapshot_p->GetHighKey();
       *prev_node_id_p = it1->second;
+
+      // Same as above
+      #ifdef BWTREE_DEBUG
+      assert(deleted_node_id == it2->second);
+      #else
+      assert(deleted_node_id == INVALID_NODE_ID);
+      #endif
 
       return true;
     } else {
