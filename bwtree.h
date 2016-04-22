@@ -1741,6 +1741,21 @@ class BwTree {
   }
 
   /*
+   * InstallRootNode() - Replace the old root with a new one
+   *
+   * There is change that this function would fail. In that case it returns
+   * false, which implies there are some other threads changing the root ID
+   */
+  bool InstallRootNode(NodeID old_root_node_id
+                       NodeID new_root_node_id) {
+    bool ret = \
+      root_id.compare_exchange_strong(old_root_node_id,
+                                      new_root_node_id);
+
+    return ret;
+  }
+
+  /*
    * InstallNewNode() - Install a new node into the mapping table
    *
    * This function does not return any value since we assume new node
@@ -3521,13 +3536,18 @@ void FinishPartialSMO(Context *context_p) {
         return;
       }
 
-      // This is no longer valid pointer
-      snapshot_p = nullptr;
-
       // That is the left sibling's snapshot
       NodeSnapshot *left_snapshot_p = \
         GetLatestNodeSnapshot(path_list_p);
         const BaseNode *left_sibling_p = left_snapshot_p->node_p;
+
+      // Update current node information
+      node_p = left_snapshot_p->node_p;
+      node_id = left_snapshot_p->node_id;
+      lbound_p = left_snapshot_p->lbound_p;
+
+      // Now they are equal
+      snapshot_p = left_snapshot_p;
 
       // if debug is on, make sure it is the left sibling
       #ifdef BWTREE_DEBUG
@@ -3582,20 +3602,15 @@ void FinishPartialSMO(Context *context_p) {
       assert(type == NodeType::InnerMergeType ||
              type == NodeType::LeafMergeType);
 
-      // We may want to use snapshot_p
-      snapshot_p = left_snapshot_p;
-
-      // Also update the new merge node back to snapshot
+      // Update the new merge node back to snapshot
       snapshot_p->node_p = node_p;
-
-      // Update these two to reflect that we have reached a new node
-      node_id = snapshot_p->node_id;
-      lbound_p = snapshot_p->lbound_p;
 
       // FALL THROUGH TO MERGE
     } // case Inner/LeafRemoveType
     case NodeType::InnerMergeType:
     case NodeType::LeafMergeType: {
+      bwt_printf("Helping along merge delta\n");
+
       // We could not find a merge delta on left most child node
       assert(snapshot_p->is_leftmost_child == false);
 
@@ -3690,6 +3705,8 @@ void FinishPartialSMO(Context *context_p) {
     } // case Inner/LeafMergeNode
     case NodeType::InnerSplitType:
     case NodeType::LeafSplitType: {
+      bwt_printf("Helping along split node\n");
+
       // We need to read these three from split delta node
       int depth = 0;
       const KeyType *split_key_p = nullptr;
@@ -3718,6 +3735,36 @@ void FinishPartialSMO(Context *context_p) {
       if(context_p->path_list.size() == 1) {
         bwt_printf("Root splits!\n");
 
+        // Allocate a new node ID for the newly created node
+        NodeId new_root_id = GetNextNodeID();
+
+        // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
+        const InnerNode *inner_node_p = \
+          new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
+
+        SepItem item1{GetNegInfKey(), node_id};
+        SepItem item2{*split_key_p, split_node_id};
+
+        inner_node_p->sep_list.push_back(item1);
+        inner_node_p->sep_list.push_back(item2);
+
+        // First we need to install the new node with NodeID
+        // This makes it visible
+        InstallNewNode(new_root_id, inner_node_p);
+        bool ret = InstallRootNode(snapshot_p->node_id,
+                                   new_root_id);
+
+        if(ret == true) {
+          bwt_printf("Install node CAS succeeds\n");
+        } else {
+          bwt_printf("Install root CAS failed. ABORT\n");
+
+          delete inner_node_p;
+          // TODO: REMOVE THE NEWLY ALLOCATED ID
+          context_p->abort_flag = true;
+
+          return;
+        } // if CAS succeeds/fails
       } else {
         // First consolidate parent node and find the left/right
         // sep pair plus left node ID
@@ -3774,6 +3821,10 @@ void FinishPartialSMO(Context *context_p) {
 
       break;
     } // case split node
+    default: {
+      // By default we do not do anything special
+      break;
+    }
   } // switch
 
   return;
