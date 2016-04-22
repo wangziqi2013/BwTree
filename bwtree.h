@@ -407,6 +407,69 @@ class BwTree {
   }
 
   /*
+   * enum class OpState - Current state of the state machine
+   *
+   * Init - We need to load root ID and start the traverse
+   *        After loading root ID should switch to Inner state
+   *        since we know there must be an inner node
+   * Inner - We are currently on an inner node, and want to go one
+   *         level down
+   * Leaf - We are currently on a leaf node, and want to collect data
+   */
+  enum class OpState {
+    Init,
+    Inner,
+    Leaf,
+  };
+
+  /*
+   * struct Context - Stores per thread context data that is used during
+   *                  tree traversal
+   *
+   * NOTE: For each thread there could be only 1 instance of this object
+   * so we forbid copy construction and assignment and move
+   */
+  struct Context {
+    const KeyType *search_key_p;
+    OpState current_state;
+
+    // Whether to abort current traversal, and start a new one
+    // after seeing this flag, all function should return without
+    // any further action, and let the main driver to perform abort
+    // and restart
+    bool abort_flag;
+    std::vector<NodeSnapshot> path_list;
+
+    // How many times we have aborted
+    size_t abort_counter;
+    // Current level (root = 0)
+    int current_level;
+
+    /*
+     * Constructor - Initialize a context object into initial state
+     */
+    Context(const KeyType p_search_key_p) :
+      search_key_p{p_search_key_p},
+      current_state{OpState::Init},
+      abort_flag{false},
+      path_list{},
+      abort_counter{0},
+      current_level{0}
+    {}
+
+    /*
+     * Copy constructor - deleted
+     * Assignment operator - deleted
+     * Move constructor - deleted
+     * Move assignment - deleted
+     */
+    Context(const Context &p_context) = delete;
+    Context &operator=(const Context &p_context) = delete;
+    Context(Context &&p_context) = delete;
+    Context &operator=(Context &&p_context) = delete;
+  };
+
+  /*
    * struct DataItem - Actual data stored inside leaf of bw-tree
    *
    * We choose to define our own data container rather than using
@@ -1310,24 +1373,47 @@ class BwTree {
     NodeSnapshot(const NodeSnapshot &&p_ns) :
       node_id{p_ns.node_id},
       node_p{p_ns.node_p},
-      //logical_node_p{p_ns.logical_node_p},
+      logical_node_p{p_ns.logical_node_p},
       has_data{p_ns.has_data},
       is_leaf{p_ns.is_leaf},
       is_split_sibling{p_ns.is_split_sibling},
       is_leftmost_child{p_ns.is_leftmost_child},
       is_root{p_ns.is_root},
       lbound_p{p_ns.lbound_p} {
-      // First release memory of the current logical node
-      assert(logical_node_p != nullptr);
-      delete logical_node_p;
-
-      // Then copy the logical node
-      logical_node_p = p_ns.logical_node_p;
 
       // Avoid the node being destroyed on destruction of the old node
       p_ns.logical_node_p = nullptr;
 
       return;
+    }
+
+    /*
+     * Move assignment - Safely move the logical node into another object
+     *
+     * This function will delete the current logical node for this node
+     * and replace it with the pointer on RHS
+     */
+    NodeSnapshot &operator=(NodeSnapshot &&snapshot) {
+      // We do not allow any NodeSnapshot object to have non-empty
+      // logical pointer
+      assert(logical_node_p != nullptr);
+      delete logical_node_p;
+
+      node_id = snapshot.node_id;
+      node_p = snapshot.node_p;
+      logical_node_p = snapshot.logical_node_p;
+      has_data = snapshot.has_data;
+      is_leaf = snapshot.is_leaf;
+      is_split_sibling = snapshot.is_split_sibling;
+      is_leftmost_child = snapshot.is_leftmost_child;
+      is_root = snapshot.is_root;
+      lbound_p = snapshot.lbound_p;
+
+      // This completes the move semantics
+      snapshot.logical_node_p = nullptr;
+
+      // Return a reference of LHS of the assignment
+      return *this;
     }
 
     /*
@@ -1341,6 +1427,8 @@ class BwTree {
       if(logical_node_p) {
         delete logical_node_p;
       }
+
+      return;
     }
 
     /*
@@ -1649,6 +1737,18 @@ class BwTree {
             type == NodeType::LeafRemoveType ||
             type == NodeType::LeafSplitType ||
             type == NodeType::LeafType);
+  }
+
+  void Traverse(Context *context_p) {
+    switch(context_p->current_state) {
+      case OpState::Init: {
+        assert(context_p->path_list.size() == 0);
+        assert(context_p->abort_flag == false);
+        assert(context_p->current_level == 0);
+
+        NodeSnapshot snapshot{false};
+      }
+    }
   }
 
   /*
@@ -3140,9 +3240,13 @@ void RevalidateParent(const KeyType *lbound_p,
                       std::vector<NodeSnapshot> *path_list_p,
                       int parent_index) {
   // Validate index to avoid out of bound access
-  assert(parent_index >= 0 && parent_index < path_list_p->size());
+  // NOTE: parent index should not point to the last element since we
+  // also need children
+  assert(parent_index >= 0 && parent_index < path_list_p->size() - 1);
 
   NodeSnapshot *parent_snapshot_p = &path_list_p[parent_index];
+  NodeID parent_node_id = parent_snapshot_p->node_id;
+  //parent_snapshot_p
 
   return;
 }
