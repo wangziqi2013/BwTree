@@ -3127,6 +3127,28 @@ class BwTree {
   }
 
   /*
+   * GetLatestParentNodeSnapshot() - Return the pointer to the parent node of
+   *                                 the current node
+   *
+   * This function assumes the current node is always the one on the top of
+   * the stack.
+   *
+   * NOTE: The same as GetLatestNodeSnapshot(), be careful when popping
+   * snapshots out of the stack
+   */
+  NodeSnapshot *GetLatestParentNodeSnapshot(const Context *context_p) {
+    const std::vector<NodeSnapshot> *path_list_p = \
+      context_p->path_list;
+
+    // Make sure the current node has a parent
+    size_t path_list_size = path_list_p->size();
+    assert(path_list_size >= 2);
+
+    // This is the address of the parent node
+    return &path_list_p[path_list_size - 2];
+  }
+
+  /*
    * JumpToLeftSibling() - Jump to the left sibling given a node
    *
    * When this function is called, we assume path_list_p includes the
@@ -3143,10 +3165,13 @@ class BwTree {
    * or whose range covers the low key (in the latter case, we know the
    * merge delta has already been posted)
    *
-   * NOTE: It is possible for us to find the left sibling of an nullptr
+   * NOTE: This function might abort. Please check context and make proper
+   * decisions
    */
-  void JumpToLeftSibling(std::vector<NodeSnapshot> *path_list_p) {
+  void JumpToLeftSibling(Context *context_p) {
     bwt_printf("Jumping to the left sibling\n");
+
+    std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
 
     // Make sure the path list is not empty, and that it has a parent node
     // Even if the original root node splits, the node we are on must be the
@@ -3154,20 +3179,15 @@ class BwTree {
     assert(path_list_p->size() != 0 && \
            path_list_p->size() != 1);
 
-    // NOTE: This might reference invalid memory
-    // We must keep the snapshot held in the vector until
-    // we have finished processing it
+    // Get last record which is the current node's context
+    // and we must make sure the current node is not left mode node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(path_list_p);
     assert(snapshot_p->is_leftmost_child == false);
 
-    // First do a simple type check if node is not nullptr
-    if(snapshot_p->node_p != nullptr) {
-      NodeType type = snapshot_p->node_p->GetType();
-      assert(type == NodeType::LeafRemoveType || \
-             type == NodeType::InnerRemoveType);
-    } else {
-      bwt_printf("A nullptr is passed in\n");
-    }
+    // Check currently we are on a remove node
+    NodeType type = snapshot_p->node_p->GetType();
+    assert(type == NodeType::LeafRemoveType || \
+           type == NodeType::InnerRemoveType);
 
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
@@ -3175,10 +3195,11 @@ class BwTree {
     // We use this in assertion
     const NodeID removed_node_id = snapshot_p->node_id;
 
-    // Here destructor is called
-    path_list_p->pop_back();
+    // Get its parent node
+    snapshot_p = GetLatestParentNodeSnapshot(context_p);
+    assert(snapshot_p->is_leaf == false);
 
-    snapshot_p = GetLatestNodeSnapshot(path_list_p);
+    // Load data into the parent node if there is not
     if(snapshot_p->has_data == false) {
       CollectAllSepsOnInner(snapshot_p);
     }
@@ -3186,9 +3207,10 @@ class BwTree {
     // After this point there must be data associated with the
     // node snapshot
     assert(snapshot_p->has_data == true);
+    assert(snapshot_p->has_metadata == true);
 
     const KeyNodeIDMap &key_value_map = \
-      snapshot_p->GetLogicalInnerNode()->key_value_map;
+      snapshot_p->GetLogicalInnerNode()->GetContainer();
     typename KeyNodeIDMap::iterator it{};
 
     for(it = key_value_map.rbegin();
@@ -3202,20 +3224,34 @@ class BwTree {
     } // for right to left iteration of SepItem
 
     // This could not be true since the left most SepItem
-    // will always be valid
+    // will always be valid (i.e. we always hit break)
     assert(it != key_value_map.rend());
 
-    // This is our starting point
+    // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
+
     // This is used for LoadNodeID() if the left sibling itself
     // is removed, then we need to recursively call this function
     // to find the left left sibling, with the entry key
     const KeyType *entry_key_p = &it->first;
 
+    // If it is the leftmost child node we mark this as true
+    bool is_leftmost_child = false;
+    if(KeyCmpEqual(*entry_key_p,
+                   *snapshot_p->GetLogicalInnerNode()->lbound_p) == true) {
+      is_leftmost_child = true;
+    }
+
     while(1) {
       // This might incur recursive update
       // We need to pass in the low key of left sibling node
-      LoadNodeID(left_sibling_id, entry_key_p, path_list_p);
+      JumpToNodeId(left_sibling_id, context_p, entry_key_p, is_leftmost_child);
+
+      if(context_p->abort_flag == true) {
+        bwt_printf("ABORT\n");
+
+        return;
+      }
 
       // Read the potentially redirected snapshot
       // (but do not pop it - so we directly return)
@@ -3224,17 +3260,19 @@ class BwTree {
       // try to consolidate the node for meta data
       if(snapshot_p->is_leaf) {
         CollectMetadataOnLeaf(snapshot_p);
-
-        assert(snapshot_p->has_data == false);
       } else {
         CollectMetadataOnInner(snapshot_p);
-
-        assert(snapshot_p->has_data == false);
       }
+
+      // After this point the new node has metadata
+      assert(snapshot_p->has_metadata == true);
 
       // Get high key and left sibling NodeID
       const KeyType *ubound_p = snapshot_p->GetHighKey();
+
       // This will be used in next iteration
+      // NOTE: The variable name is a little bit confusing, because
+      // this variable was created outside of the loop
       left_sibling_id = snapshot_p->GetRightSiblingNodeID();
 
       // If the high key of the left sibling equals the low key
@@ -3244,13 +3282,36 @@ class BwTree {
       if(KeyCmpEqual(*ubound_p, *lbound_p)) {
         bwt_printf("Find a exact match of low/high key\n");
 
-        assert(left_sibling_id == removed_node_id);
+        // We need to take care that high key is not sufficient for identifying
+        // the correct left sibling
+        if(left_sibling_id == removed_node_id) {
+          bwt_printf("Find real left sibling, next id == removed id\N");
 
-        break;
+          // Quit the loop
+          break;
+        } else {
+          bwt_printf("key match but next node ID does not match. ABORT\n");
+          bwt_printf("    (Maybe it has been merged and then splited?)\n");
+
+          // If key match but next node ID does not match then just abort
+          // since it is the case that left sibling has already been merged
+          // with the removed node, and then it splits
+          // We could not handle such case, so just abort
+          context_p->abort_flag = true;
+
+          // Return and propagate abort information
+          return;
+        }
       } else if(KeyCmpGreater(*ubound_p, *lbound_p)) {
         bwt_printf("The range of left sibling covers current node\n");
+        bwt_printf("    Don't know for sure what happened\n");
 
-        break;
+        // We also do not know what happened since it could be possible
+        // that the removed node is merged, consolidated, and then splited
+        // on a split key greater than the previous merge key
+        context_p->abort_flag = true;
+
+        return;
       } else {
         // We know it will never be invalid node id since ubound_p < lbound_p
         // which implies the high key is not +Inf, so there are other nodes to
@@ -3261,6 +3322,9 @@ class BwTree {
       // For the next iteration, we traverse to the node to its right
       // using the next node ID and its high key as next node's low key
       entry_key_p = ubound_p;
+
+      // As long as we traverse right, this becomes not true
+      is_leftmost_child = false;
     } // while(1)
 
     return;
@@ -3312,16 +3376,13 @@ void TakeNodeSnapshot(NodeID node_id,
  * path stack, using the given NodeID and low key
  *
  * NOTE: The left most child flag will be ignored because in current
- * design when this is called we always go right, which must be in the
- * same parent node because we only traverse right when seeing split delta
- * or when finding left sibling. In both cases we know there would not
- * be parent bound cross
+ * design when this is called we always go within the same parent node
  *
  * NOTE 2: If right traversal cross parent node boundary then NOTE 1
  * is no longer true
  *
- * NOTE 3: Since we always traverse to right, the leaf/inner identity will
- * not change
+ * NOTE 3: Since we always traverse on the same level, the leaf/inner identity
+ * does not change
  *
  * NOTE 4: We need to clear all cached data and metadata inside the logical
  * node since it is not changed to another NodeID
