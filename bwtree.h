@@ -1502,6 +1502,30 @@ class BwTree {
     }
 
     /*
+     * GetLowKey() - Return the low key of a snapshot
+     *
+     * This is useful sometimes for assertion conditions
+     */
+    inline KeyType *GetLowKey() {
+      if(is_leaf == true) {
+        return GetLogicalLeafNode()->lbound_p;
+      } else {
+        return GetLogicalInnerNode()->lbound_p;
+      }
+    }
+
+    /*
+     * GetNextNodeID() - Return the NodeID of its right sibling
+     */
+    inline NodeID GetNextNodeID() {
+      if(is_leaf == true) {
+        return GetLogicalLeafNode().next_node_id;
+      } else {
+        return GetLogicalInnerNode().next_node_id;
+      }
+    }
+
+    /*
      * GetRightSiblingNodeID() - Return the node ID of right sibling
      *                           node (could be INVALID_NODE_ID)
      *
@@ -3391,10 +3415,6 @@ void UpdateNodeSnapshot(NodeID node_id,
                         Context *context_p,
                         const KeyType *lbound_p,
                         bool is_leftmost_child) {
-  // We only call this if we see a sibling pointer from split node
-  // so we know the updated node could never be an left most child
-  assert(is_leftmost_child == false);
-
   const BaseNode *node_p = GetNode(node_id);
 
   // We operate on the latest snapshot instead of creating a new one
@@ -3430,7 +3450,7 @@ void LoadNodeID(NodeID node_id,
   bwt_printf("Loading NodeID = %lu\n", node_id);
 
   // This pushes a new snapshot into stack
-  TakeNodeSnapshot(node_id, lbound_p, context_p, is_leftmost_child);
+  TakeNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
   FinishPartialSMO(context_p);
 
   return;
@@ -3471,102 +3491,108 @@ void JumpToNodeId(NodeID node_id,
 void FinishPartialSMO(Context *context_p) {
   // We assume the last node is the node we will help for
   NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-  const BaseNode *node_p = snapshot_p->node_p;
 
-  NodeType type = node_p->GetType();
+  // These two variables serves as a reference and could not
+  // be modified
+  const BaseNode const *node_p = snapshot_p->node_p;
+  const NodeID node_id = snapshot_p->node_id;
+
+  const NodeType type = node_p->GetType();
 
   switch(type) {
     case NodeType::LeafRemoveType:
     case NodeType::InnerRemoveType: {
       bwt_printf("Helping along remove node...\n");
 
-      // Since remove node will not be modified, we could keep
-      // retrying until succeeds
-      // But we should be cautious to check whether the removed
-      // node has been freed by checking for null pointer
-      while(1) {
-          const DeltaNode *delta_node_p = \
-            static_cast<const DeltaNode *>(node_p);
+      const DeltaNode *delta_node_p = \
+        static_cast<const DeltaNode *>(node_p);
 
-          const BaseNode *merge_right_branch = \
-            delta_node_p->child_node_p;
+      const BaseNode *merge_right_branch = \
+        delta_node_p->child_node_p;
 
-          JumpToLeftSibling();
+      JumpToLeftSibling();
 
-          // That is the left sibling's snapshot
-          NodeSnapshot *left_snapshot_p = \
-            GetLatestNodeSnapshot(path_list_p);
-          const BaseNode *left_sibling_p = left_snapshot_p->node_p;
+      // That is the left sibling's snapshot
+      NodeSnapshot *left_snapshot_p = \
+        GetLatestNodeSnapshot(path_list_p);
+        const BaseNode *left_sibling_p = left_snapshot_p->node_p;
 
-        if(left_snapshot_p->is_leaf == true) {
-          CollectMetadataOnLeaf(left_snapshot_p);
-        } else {
-          CollectMetadataOnInner(left_snapshot_p);
-        }
+      #ifdef BWTREE_DEBUG
 
-        const KeyType *ubound_p = left_snapshot_p->GetHighKey();
-        const NodeID left_next_id = left_snapshot_p->GetRightSiblingNodeID();
-        if(KeyCmpEqual(*ubound_p, *lbound_p) == true) {
-          if(left_next_id == node_id) {
-            bool ret = false;
+      if(left_snapshot_p->is_leaf == true) {
+        CollectMetadataOnLeaf(left_snapshot_p);
+      } else {
+        CollectMetadataOnInner(left_snapshot_p);
+      }
 
-            // If we are currently on leaf, just post leaf merge delta
-            if(left_snapshot_p->is_leaf == true) {
-              ret = \
-                PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                             lbound_p,
-                                             merge_right_branch);
-            } else {
-              ret = \
-                PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                              lbound_p,
-                                              merge_right_branch);
-            }
+      // Make sure it is the real left sibling
+      assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *snapshot_p->GetLowKey());
+      assert(left_snapshot_p->GetNextNodeID() == node_id);
 
-            // If CAS succeed just exit switch statement
-            if(ret == true) {
-              bwt_printf("Merge delta CAS succeeds\n");
+      #endif
 
-              // This breaks from while loop
-              break;
-            } else {
-              bwt_printf("Merge delta CAS fails\n");
-            } // if ret == true
+      const KeyType *ubound_p = left_snapshot_p->GetHighKey();
+      const NodeID left_next_id = left_snapshot_p->GetRightSiblingNodeID();
+      if(KeyCmpEqual(*ubound_p, *lbound_p) == true) {
+        if(left_next_id == node_id) {
+          bool ret = false;
+
+          // If we are currently on leaf, just post leaf merge delta
+          if(left_snapshot_p->is_leaf == true) {
+            ret = \
+              PostMergeNode<LeafMergeNode>(left_snapshot_p,
+                                           lbound_p,
+                                           merge_right_branch);
           } else {
-            bwt_printf("Key matches, but next node ID has changed; "
-                       "(split on top of merge?)\n");
+            ret = \
+              PostMergeNode<InnerMergeNode>(left_snapshot_p,
+                                            lbound_p,
+                                            merge_right_branch);
+          }
+
+          // If CAS succeed just exit switch statement
+          if(ret == true) {
+            bwt_printf("Merge delta CAS succeeds\n");
 
             // This breaks from while loop
             break;
-          } // if next ID == node ID
-        } else if(KeyCmpLess(*ubound_p, *lbound_p) == true) {
-          bwt_printf("High key < low key; split happens. "
-                     "We do not know whether merge is present\n");
+          } else {
+            bwt_printf("Merge delta CAS fails\n");
+          } // if ret == true
         } else {
-          bwt_printf("High key >= low key; we know it has merged\n");
+          bwt_printf("Key matches, but next node ID has changed; "
+                     "(split on top of merge?)\n");
 
           // This breaks from while loop
           break;
-        } // if high key == low key
+        } // if next ID == node ID
+      } else if(KeyCmpLess(*ubound_p, *lbound_p) == true) {
+        bwt_printf("High key < low key; split happens. "
+                   "We do not know whether merge is present\n");
+      } else {
+        bwt_printf("High key >= low key; we know it has merged\n");
 
-        bwt_printf("Retry posting merge delta node\n");
+        // This breaks from while loop
+        break;
+      } // if high key == low key
 
-        // This will destroy the logical node instance
-        path_list_p->pop_back();
+      bwt_printf("Retry posting merge delta node\n");
 
-        TakeNodeSnapshot(node_id, lbound_p, path_list_p);
-        snapshot_p = GetLatestNodeSnapshot(path_list_p);
-        node_p = snapshot_p->node_p;
+      // This will destroy the logical node instance
+      path_list_p->pop_back();
 
-        // This is possible since we clear NodeID -> BaseNode * relation after
-        // we have posted index term delete delta
-        if(node_p == nullptr) {
-          // Up on seeing empty pointer, we simply jump to the left sibling
-          JumpToLeftSibling();
+      TakeNodeSnapshot(node_id, lbound_p, path_list_p);
+      snapshot_p = GetLatestNodeSnapshot(path_list_p);
+      node_p = snapshot_p->node_p;
 
-          return;
-        }
-      } // while(1)
+      // This is possible since we clear NodeID -> BaseNode * relation after
+      // we have posted index term delete delta
+      if(node_p == nullptr) {
+        // Up on seeing empty pointer, we simply jump to the left sibling
+        JumpToLeftSibling();
+
+        return;
+      }
 
       // Even if it succeeds we need to take the most up to date snapshot
       // and use the merge node pointer as identifier
