@@ -3683,10 +3683,27 @@ void FinishPartialSMO(Context *context_p) {
 
       break;
     } // case Inner/LeafMergeNode
+    case NodeType::InnerSplitType:
+    case NodeType::LeafSplitType:
   } // switch
 
   return;
 }
+
+  /*
+   * FindSplitNextKey() - Given a parent snapshot, find the next key of
+   *                      the current split key
+   *
+   * This function will search for the next key of the current split key
+   * If the split key is found, it just return false. In that case
+   * the key has already been inserted, and we should not post duplicate
+   * record
+   */
+  bool FindSplitNextKey(const NodeSnapshot *snapshot_p,
+                        const KeyType *split_key_p,
+                        const KeyType **next_key_p_p) {
+
+  }
 
   /*
    * FindMergePrevNextKey() - Find merge next and prev key and node ID
