@@ -3651,6 +3651,9 @@ void FinishPartialSMO(Context *context_p) {
       // If merge key is not found then we know we have already deleted the
       // index term
       if(merge_key_found == false) {
+        bwt_printf("Index term is absent; No need to remove\n");
+
+        // Out of switch
         break;
       }
 
@@ -3674,6 +3677,8 @@ void FinishPartialSMO(Context *context_p) {
         bwt_printf("Index term delete delta install failed. ABORT\n");
 
         context_p->abort_flag = true;
+        // DO NOT FORGET TO DELETE THIS
+        delete delete_node_p;
 
         return;
       }
@@ -3684,7 +3689,91 @@ void FinishPartialSMO(Context *context_p) {
       break;
     } // case Inner/LeafMergeNode
     case NodeType::InnerSplitType:
-    case NodeType::LeafSplitType:
+    case NodeType::LeafSplitType: {
+      // We need to read these three from split delta node
+      int depth = 0;
+      const KeyType *split_key_p = nullptr;
+      const KeyType *next_key_p = nullptr;
+      NodeID split_node_id = INVALID_NODE_ID;
+
+      if(type == NodeType::InnerSplitType) {
+        const InnerSplitNode *split_node_p = \
+          static_cast<const InnerSplitNode *>(node_p);
+
+        split_key_p = &split_node_p->split_key;
+        split_node_id = split_node_p->split_sibling;
+        depth = split_node_p->depth + 1;
+      } else {
+        const LeafSplitNode *split_node_p = \
+          static_cast<const LeafSplitNode *>(node_p);
+
+        split_key_p = &split_node_p->split_key;
+        split_node_id = split_node_p->split_sibling;
+        depth = split_node_p->depth + 1;
+      }
+
+      assert(context_p->path_list.size() > 0);
+
+      // There is no parent node
+      if(context_p->path_list.size() == 1) {
+        bwt_printf("Root splits!\n");
+
+      } else {
+        // First consolidate parent node and find the left/right
+        // sep pair plus left node ID
+        NodeSnapshot *parent_snapshot_p = \
+          GetLatestParentNodeSnapshot(context_p);
+
+        // Make sure there is data in the snapshot
+        if(parent_snapshot_p->has_data == false) {
+          CollectAllSepsOnInner(parent_snapshot_p);
+        }
+
+        assert(parent_snapshot_p->has_data == true);
+
+        // If this is false then we know the index term has already
+        // been inserted
+        bool split_key_absent = \
+          FindSplitNextKey(parent_snapshot_p,
+                           split_key_p,
+                           &next_key_p,
+                           split_node_id);
+
+        if(split_key_absent == false) {
+          bwt_printf("Index term is present. No need to insert\n");
+
+          // Break out of switch
+          break;
+        }
+
+        const InnerInsertNode *insert_node_p = \
+          new InnerInsertNode{*split_key_p,
+                              *next_key_p,
+                              split_node_id,
+                              depth,
+                              parent_snapshot_p->node_p};
+
+        // CAS
+        bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
+                                        insert_node_p,
+                                        parent_snapshot_p->node_p);
+        if(ret == true) {
+          bwt_printf("Index term insert delta CAS succeeds\n");
+        } else {
+          bwt_printf("Index term insert delta CAS failed. ABORT\n");
+
+          // Set abort, and remove the newly created node
+          context_p->abort_flag = true;
+          delete insert_node_p;
+
+          return;
+        } // if CAS succeeds/fails
+
+        parent_snapshot_p->node_p = insert_node_p;
+      } // if split root / else not split root
+
+      break;
+    } // case split node
   } // switch
 
   return;
@@ -3698,11 +3787,50 @@ void FinishPartialSMO(Context *context_p) {
    * If the split key is found, it just return false. In that case
    * the key has already been inserted, and we should not post duplicate
    * record
+   *
+   * Returns true if split key is not found (i.e. we could insert index term)
+   *
+   * NOTE: This function assumes the snapshot already has data and metadata
    */
   bool FindSplitNextKey(const NodeSnapshot *snapshot_p,
                         const KeyType *split_key_p,
-                        const KeyType **next_key_p_p) {
+                        const KeyType **next_key_p_p,
+                        const NodeID insert_pid) {
+    assert(snapshot_p->is_leaf == false);
+    assert(snapshot_p->has_data == true);
+    assert(snapshot_p->has_metadata == true);
 
+    const KeyNodeIDMap &sep_map = \
+      snapshot_p->GetLogicalInnerNode()->GetContainer();
+
+    assert(sep_map.size() >= 1);
+
+    typename KeyNodeIDMap::iterator it1 = sep_map.begin();
+
+    while(it1 != sep_map.end()) {
+      // We have inserted the same key before
+      if(KeyCmpEqual(it1->first, *split_key_p) == true) {
+        // Make sure the SepItem is used to map newly splited node
+        assert(insert_pid == it1->second);
+
+        return false;
+      }
+
+      // if we have found its next key, return it in the parameter
+      if(KeyCmpGreater(it1->first, *split_key_p) == true) {
+        *next_key_p_p = &it1->first;
+
+        return true;
+      }
+
+      it1++;
+    }
+
+    // If we reach here, then the split key is larger than all
+    // existing keys in the inner node
+    *next_key_p_p = snapshot_p->GetHighKey();
+
+    return true;
   }
 
   /*
@@ -3716,6 +3844,8 @@ void FinishPartialSMO(Context *context_p) {
    * deleted in the parent node, in which case this function will not
    * merge key.
    *
+   * NOTE 2: This function assumes the snapshot already has data and metadata
+   *
    * Return true if the merge key is found. false if merge key not found
    */
   bool FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
@@ -3725,6 +3855,8 @@ void FinishPartialSMO(Context *context_p) {
                             NodeID *prev_node_id_p) {
     // We could only post merge key on merge node
     assert(snapshot_p->is_leaf == false);
+    assert(snapshot_p->has_data == true);
+    assert(snapshot_p->has_metadata == true);
 
     // This is the map that stores key to node ID Mapping
     const KeyNodeIDMap &sep_map = \
