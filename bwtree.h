@@ -437,6 +437,8 @@ class BwTree {
     // after seeing this flag, all function should return without
     // any further action, and let the main driver to perform abort
     // and restart
+    // NOTE: Only the state machine driver could abort
+    // and other functions just return on seeing this flag
     bool abort_flag;
     std::vector<NodeSnapshot> path_list;
 
@@ -1747,8 +1749,30 @@ class BwTree {
         assert(context_p->current_level == 0);
 
         NodeSnapshot snapshot{false};
-      }
-    }
+
+        // This is only true for this node
+        snapshot.is_root = true;
+
+        // No low key for root node
+        snapshot.lbound_p = nullptr;
+
+        // This fixes the view
+        snapshot.node_id = root_id.load();
+        snapshot.node_p = GetNode(root_id);
+
+        // Put the initial state into stack list
+        context_p->path_list.push_back(snapshot);
+
+        // root node must be an inner node
+        context_p->current_state = OpState::Inner;
+
+        break;
+      } // case Init
+      case OpState::Inner: {
+        NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context_p->path_list);
+
+      } // case Inner
+    } // switch current_state
   }
 
   /*
@@ -3044,10 +3068,13 @@ class BwTree {
    * the vector, since at that time the snapshot object will be destroyed
    * which also freed up the logical node object
    */
-  NodeSnapshot *GetLatestNodeSnapshot(std::vector<NodeSnapshot> *snapshot_p) {
-    assert(snapshot_p->size() > 0);
+  NodeSnapshot *GetLatestNodeSnapshot(const Context *context_p) {
+    const std::vector<NodeSnapshot> *path_list_p = \
+      context_p->path_list;
 
-    return &snapshot_p->back();
+    assert(path_list_p->size() > 0);
+
+    return &path_list_p->back();
   }
 
   /*
