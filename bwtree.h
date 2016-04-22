@@ -1306,14 +1306,13 @@ class BwTree {
     // NOTE: Single key data is not classified as has data
     bool has_data;
 
+    // Whether the logical node contains metadata
+    bool has_metadata;
+
     // Whether logical node pointer points to a logical leaf node
     // or logical inner node
     // NOTE: This will not change once it is fixed
     const bool is_leaf;
-
-    // Whether we have traversed through a sibling pointer
-    // from a split delta node because of a half split state
-    bool is_split_sibling;
 
     // This is true if the node is the left most node in its parent
     // We could not remove the leftmost node in a parent
@@ -1345,8 +1344,8 @@ class BwTree {
       node_p{nullptr},
       logical_node_p{nullptr},
       has_data{false},
+      has_metadata{false},
       is_leaf{p_is_leaf},
-      is_split_sibling{false},
       is_leftmost_child{false},
       is_root{false},
       lbound_p{nullptr} {
@@ -1377,8 +1376,8 @@ class BwTree {
       node_p{p_ns.node_p},
       logical_node_p{p_ns.logical_node_p},
       has_data{p_ns.has_data},
+      has_metadata{p.has_metadata},
       is_leaf{p_ns.is_leaf},
-      is_split_sibling{p_ns.is_split_sibling},
       is_leftmost_child{p_ns.is_leftmost_child},
       is_root{p_ns.is_root},
       lbound_p{p_ns.lbound_p} {
@@ -1405,8 +1404,8 @@ class BwTree {
       node_p = snapshot.node_p;
       logical_node_p = snapshot.logical_node_p;
       has_data = snapshot.has_data;
+      has_metadata = snapshot.has_metadata;
       is_leaf = snapshot.is_leaf;
-      is_split_sibling = snapshot.is_split_sibling;
       is_leftmost_child = snapshot.is_leftmost_child;
       is_root = snapshot.is_root;
       lbound_p = snapshot.lbound_p;
@@ -1429,6 +1428,36 @@ class BwTree {
       if(logical_node_p) {
         delete logical_node_p;
       }
+
+      return;
+    }
+
+    /*
+     * ResetLogicalNode() - Clear data and metadata
+     *
+     * We need to clear metadata before calling collectAll* function
+     * since they rely on the fact that all metadata being invalid on entering
+     */
+    void ResetLogicalNode() {
+      // First reset metadata
+      logical_node_p->lbound_p = nullptr;
+      logical_node_p->ubound_p = nullptr;
+      logical_node_p->next_node_id = INVALID_NODE_ID;
+      has_metadata = false;
+
+      // Then reset data
+      if(is_leaf == true) {
+        LogicalLeafNode *node_p = GetLogicalLeafNode();
+
+        node_p->key_value_set.clear();
+        node_p->pointer_list.clear();
+      } else {
+        LogicalInnerNode *node_p = GetLogicalInnerNode();
+
+        node_p->key_value_map.clear();
+      }
+
+      has_data = false;
 
       return;
     }
@@ -2061,7 +2090,6 @@ class BwTree {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Make sure the structure is valid
-    assert(snapshot_p->is_split_sibling == false);
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
@@ -2157,10 +2185,6 @@ class BwTree {
             snapshot_p->node_id = branch_id;
             snapshot_p->node_p = branch_node_p;
 
-            // Set this to true means we have already traversed through a
-            // side sibling pointer because of a half split state
-            snapshot_p->is_split_sibling = true;
-
             // Since we have jumped to a new NodeID, we could see a remove node
             first_time = true;
 
@@ -2215,17 +2239,22 @@ class BwTree {
    * difference is that this wrapper accepts snapshot pointer, and also
    * it collects all metadata (low key, high key and next node id)
    *
-   * After this function returns, it is guaranteed that has_data flag
-   * inside snapshot object is set to true
+   * After this function returns, it is guaranteed that has_data and
+   * has_metadata flag inside snapshot object is set to true
    */
   void CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
+    // Make sure previous result does not interfere with this round
+    snapshot_p->ResetLogicalNode();
+
+    LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
+
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
-                                   snapshot_p->GetLogicalInnerNode(),
+                                   logical_node_p,
                                    true,
                                    true,
                                    true);
 
-    LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
+
 
     // Remove all key with INVALID_NODE_ID placeholder
     // since they are deleted nodes. This could not be
@@ -2238,6 +2267,7 @@ class BwTree {
     }
 
     snapshot_p->has_data = true;
+    snapshot_p->has_metadata = true;
 
     return;
   }
@@ -2259,6 +2289,7 @@ class BwTree {
                                    false);
 
     snapshot_p->has_data = false;
+    snapshot_p->has_metadata = true;
 
     return;
   }
@@ -2597,7 +2628,6 @@ class BwTree {
   void NavigateLeafNode(const KeyType &search_key,
                         NodeSnapshot *snapshot_p) const {
     assert(snapshot_p->is_leaf == true);
-    assert(snapshot_p->is_split_sibling == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->logical_node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
@@ -2732,7 +2762,6 @@ class BwTree {
             // and also notify caller that the NodeId has changed
             snapshot_p->node_p = node_p;
             snapshot_p->node_id = split_sibling_id;
-            snapshot_p->is_split_sibling = true;
 
             // Since we are on the branch side of a split node
             // there should not be any record with search key in
@@ -3026,8 +3055,11 @@ class BwTree {
    */
   void
   CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+    // Clear all states and saved values to avoid them interfering with
+    // this round
+    snapshot_p->ResetLogicalNode();
+
     assert(snapshot_p->is_leaf == true);
-    assert(snapshot_p->is_split_sibling == false);
     assert(snapshot_p->logical_node_p != nullptr);
 
     // We want to collect both ubound and lbound in this call
@@ -3040,6 +3072,7 @@ class BwTree {
                                     true);  // collect data
 
     snapshot_p->has_data = true;
+    snapshot_p->has_metadata = true;
 
     return;
   }
@@ -3055,8 +3088,9 @@ class BwTree {
    */
   void
   CollectMetadataOnLeaf(NodeSnapshot *snapshot_p) {
+    snapshot_p->ResetLogicalNode();
+
     assert(snapshot_p->is_leaf == true);
-    assert(snapshot_p->is_split_sibling == false);
     assert(snapshot_p->logical_node_p != nullptr);
 
     // We want to collect both ubound and lbound in this call
@@ -3069,6 +3103,7 @@ class BwTree {
                                     false); // Do not collect data
 
     snapshot_p->has_data = false;
+    snapshot_p->has_metadata = true;
 
     return;
   }
@@ -3314,11 +3349,9 @@ void UpdateNodeSnapshot(NodeID node_id,
   snapshot_p->node_id = node_id;
   snapshot_p->lbound_p = lbound_p;
 
-  // Invalidate the cache
-  snapshot_p->has_data = false;
-  snapshot_p->has_meta = false;
   // Resets all cached metadata and data
-  snapshot_p->ClearLogicalNode();
+  // including flags
+  snapshot_p->ResetLogicalNode();
 
   return;
 }
@@ -3326,8 +3359,8 @@ void UpdateNodeSnapshot(NodeID node_id,
 /*
  * LoadNodeID() - Push a new snapshot for the node pointed to by node_id
  *
- * This function is a wrapper for JumpToNodeID() which will push a new
- * snapshot into the path list.
+ * If we just want to modify existing snapshot object in the stack, we should
+ * call JumpToNodeID() instead
  */
 void LoadNodeID(NodeID node_id,
                 Context *context_p,
