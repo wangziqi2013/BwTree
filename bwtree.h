@@ -1729,8 +1729,8 @@ class BwTree {
    * This function does not retry
    */
   bool InstallNodeToReplace(NodeID node_id,
-                            BaseNode *node_p,
-                            BaseNode *prev_p) {
+                            const BaseNode *node_p,
+                            const BaseNode *prev_p) {
     // Make sure node id is valid and does not exceed maximum
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
@@ -3494,7 +3494,7 @@ void FinishPartialSMO(Context *context_p) {
 
   // These three variables serves as a reference and could not
   // be modified
-  const BaseNode *const node_p = snapshot_p->node_p;
+  const BaseNode *node_p = snapshot_p->node_p;
   const NodeID node_id = snapshot_p->node_id;
   const KeyType *const lbound_p = snapshot_p->lbound_p;
 
@@ -3544,16 +3544,19 @@ void FinishPartialSMO(Context *context_p) {
       bool ret = false;
 
       // If we are currently on leaf, just post leaf merge delta
+      // NOTE: node_p will be reset to the merge delta if CAS succeeds
       if(left_snapshot_p->is_leaf == true) {
         ret = \
           PostMergeNode<LeafMergeNode>(left_snapshot_p,
                                        lbound_p,
-                                       merge_right_branch);
+                                       merge_right_branch,
+                                       &node_p);
       } else {
         ret = \
           PostMergeNode<InnerMergeNode>(left_snapshot_p,
                                         lbound_p,
-                                        merge_right_branch);
+                                        merge_right_branch,
+                                        &node_p);
       }
 
       // If CAS fails just abort and return
@@ -3586,11 +3589,19 @@ void FinishPartialSMO(Context *context_p) {
 
   /*
    * PostMergeNode() - Post a leaf merge node on top of a delta chain
+   *
+   * This function is made to be a template since all logic except the
+   * node type is same.
+   *
+   * NOTE: This function takes an argument, such that if CAS succeeds it
+   * sets that pointer's value to be the new node we just created
+   * If CAS fails we do not touch that pointer
    */
   template <typename MergeNodeType>
-  bool PostMergeNode(NodeSnapshot *snapshot_p,
+  bool PostMergeNode(const NodeSnapshot *snapshot_p,
                      const KeyType *merge_key_p,
-                     const BaseNode *merge_branch_p) {
+                     const BaseNode *merge_branch_p,
+                     const BaseNode **node_p_p) {
     // This is the child node of merge delta
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
@@ -3607,10 +3618,11 @@ void FinishPartialSMO(Context *context_p) {
     }
 
     // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
-    LeafMergeNode *merge_node_p = new MergeNodeType{*merge_key_p,
-                                                    merge_branch_p,
-                                                    depth,
-                                                    node_p};
+    const LeafMergeNode *merge_node_p = \
+      new MergeNodeType{*merge_key_p,
+                        merge_branch_p,
+                        depth,
+                        node_p};
 
     // Compare and Swap!
     bool ret = InstallNodeToReplace(node_p, merge_node_p, node_p);
@@ -3618,6 +3630,8 @@ void FinishPartialSMO(Context *context_p) {
     // If CAS fails we delete the node and return false
     if(ret == false) {
       delete merge_node_p;
+    } else {
+      *node_p_p = merge_node_p
     }
 
     return ret;
