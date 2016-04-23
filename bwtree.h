@@ -2407,23 +2407,12 @@ class BwTree {
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
-    // Fast path: If we know data already exists then directly make
-    // use of them
+    // Even if it has data we need to clear, since we want to traverse
+    // to its sibling
     if(snapshot_p->has_data == true) {
-      bwt_printf("Fast path: Make use of cached data in snapshot\n");
+      bwt_printf("Inner snapshot already has data. Clear()\n");
 
-      auto &container = snapshot_p->GetLogicalInnerNode()->GetContainer();
-      for(auto it = container.rbegin();
-          it != container.rend();
-          it++) {
-        // The first sep that is less than or equal to search key
-        // from right to left
-        if(KeyCmpGreaterEqual(search_key, it->first) == true) {
-          *lbound_p_p = &it->first;
-
-          return it->second;
-        }
-      }
+      snapshot_p->ResetLogicalNode();
     }
 
     bool first_time = true;
@@ -2536,11 +2525,19 @@ class BwTree {
               return INVALID_NODE_ID;
             }
 
-            // Since we have jumped to a new NodeID, we could see a remove node
-            first_time = true;
-
             snapshot_p = GetLatestNodeSnapshot(context_p);
             node_p = snapshot_p->node_p;
+
+            // NOTE: IT IS POSSIBLE THAT JUMP TO NODE ID
+            // ALSO LOAD INTO THE SNAPSHOT
+            if(snapshot_p->has_data == true) {
+              bwt_printf("After inner jumping there is data. Clear()\n");
+
+              snapshot_p->ResetLogicalNode();
+            }
+
+            // Since we have jumped to a new NodeID, we could see a remove node
+            first_time = true;
 
             // Continue in the while loop to avoid setting first_time to false
             continue;
@@ -2890,12 +2887,13 @@ class BwTree {
     assert(snapshot_p->logical_node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
-    // Fast path: If there is already data cached
-    // then we just make use of it
+    // Even if it has cached data, we need to clean it since
+    // we want to traverse to sibling node
     if(snapshot_p->has_data == true) {
-      bwt_printf("Fast path: Already has data\n");
+      bwt_printf("Leaf snapshot already has data. Clear()\n");
 
-      return;
+      // This voids having value conflict problem
+      snapshot_p->ResetLogicalNode();
     }
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -2914,8 +2912,9 @@ class BwTree {
     // number of delta records to replay
     size_t log_count = 0;
 
-    LogicalLeafNode *logical_node_p = \
-      static_cast<LogicalLeafNode *>(snapshot_p->logical_node_p);
+    // We use this as a container, and write key-valuelist pair into
+    // its map
+    LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2942,7 +2941,6 @@ class BwTree {
             // First bulk load data item for the search key, if exists
             for(const DataItem &item : leaf_node_p->data_list) {
               if(KeyCmpEqual(item.key, search_key)) {
-                //bwt_printf("key = %d\n", item.key.key);
                 logical_node_p->BulkLoadValue(item);
 
                 break;
@@ -3029,6 +3027,13 @@ class BwTree {
           if(KeyCmpGreaterEqual(search_key, split_key)) {
             bwt_printf("Take leaf split right (NodeID branch)\n");
 
+            // Since we are on the branch side of a split node
+            // there should not be any record with search key in
+            // the chain from where we come since otherwise these
+            // records are misplaced
+            assert(logical_node_p->pointer_list.size() == 0);
+            assert(logical_node_p->key_value_set.size() == 0);
+
             NodeID split_sibling_id = split_node_p->split_sibling;
 
             // Jump to right sibling, with possibility that it aborts
@@ -3047,14 +3052,18 @@ class BwTree {
               return;
             }
 
+            // These three needs to be refreshed after switching node
             snapshot_p = GetLatestNodeSnapshot(context_p);
             node_p = snapshot_p->node_p;
+            logical_node_p = snapshot_p->GetLogicalLeafNode();
 
-            // Since we are on the branch side of a split node
-            // there should not be any record with search key in
-            // the chain from where we come since otherwise these
-            // records are misplaced
-            assert(logical_node_p->pointer_list.size() == 0);
+            // NOTE: IT IS POSSIBLE THAT JUMP TO NODE ID
+            // ALSO LOAD INTO THE SNAPSHOT
+            if(snapshot_p->has_data == true) {
+              bwt_printf("After leaf jumping there is data. Clear()\n");
+
+              snapshot_p->ResetLogicalNode();
+            }
 
             // Since we have switched to a new NodeID
             first_time = true;
