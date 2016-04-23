@@ -146,7 +146,7 @@ class BwTree {
   using KeyNodeIDMap = std::map<KeyType, NodeID, WrappedKeyComparator>;
 
   // The maximum number of nodes we could map in this index
-  constexpr static size_t NodeID MAPPING_TABLE_SIZE = 1 << 24;
+  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
@@ -430,6 +430,7 @@ class BwTree {
     Init,
     Inner,
     Leaf,
+    Abort
   };
 
   /*
@@ -1442,7 +1443,7 @@ class BwTree {
       node_p{p_ns.node_p},
       logical_node_p{p_ns.logical_node_p},
       has_data{p_ns.has_data},
-      has_metadata{p.has_metadata},
+      has_metadata{p_ns.has_metadata},
       is_leaf{p_ns.is_leaf},
       is_leftmost_child{p_ns.is_leftmost_child},
       is_root{p_ns.is_root},
@@ -1812,7 +1813,7 @@ class BwTree {
    * There is change that this function would fail. In that case it returns
    * false, which implies there are some other threads changing the root ID
    */
-  bool InstallRootNode(NodeID old_root_node_id
+  bool InstallRootNode(NodeID old_root_node_id,
                        NodeID new_root_node_id) {
     bool ret = \
       root_id.compare_exchange_strong(old_root_node_id,
@@ -1922,10 +1923,14 @@ class BwTree {
           break;
         } // case Init
         case OpState::Inner: {
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context_p->path_list);
-          const KeyType *search_key_p = context_p->search_key_p;
+          NodeID child_node_id = NavigateInnerNode(context_p);
 
-          NavigateInnerNode(*search_key_p, )
+          // Navigate could abort since it goes to another NodeID
+          if(context_p->abort_flag == true) {
+            context_p.current_state = OpState::Abort;
+
+            break;
+          }
         } // case Inner
       } // switch current_state
     } // while(1)
@@ -2024,7 +2029,7 @@ class BwTree {
                               const InnerNode *inner_node_p,
                               const KeyType *ubound_p) const {
     // If the upper bound is not set because we have not met a
-    // split delta node, then just set to the current upperbound
+    // split delta node, then just set to the current upper bound
     if(ubound_p == nullptr) {
       ubound_p = &inner_node_p->ubound;
     }
@@ -2202,14 +2207,16 @@ class BwTree {
    * do not make any assumpion about how jump is performed)
    */
   NodeID NavigateInnerNode(Context *context_p) const {
+    // First get the snapshot from context
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
+    // This search key will not be changed during navigation
+    const KeyType &search_key = *context_p->search_key_p;
+
     // Make sure the structure is valid
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
-
-    // First get the snapshot from context
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    KeyType &search_key = *context_p->search_key_p;
 
     bool first_time = true;
 
@@ -2238,7 +2245,6 @@ class BwTree {
           bwt_printf("ERROR: InnerRemoveNode not allowed\n");
 
           assert(first_time == true);
-          // TODO: Fix this to let it deal with remove node
           assert(false);
         } // case InnerRemoveType
         case NodeType::InnerInsertType: {
@@ -2631,107 +2637,6 @@ class BwTree {
   }
 
   /*
-   * SwitchToNewID() - Short hand helper function to update
-   * current node and current head node
-   *
-   * NOTE: This also saves the new ID and new node pointer into
-   * a stack which could be used to retrieve path history
-   */
-  inline void SwitchToNewID(NodeID new_id,
-                            BaseNode **current_node_pp,
-                            NodeType *current_node_type_p,
-                            BaseNode **current_head_node_pp,
-                            NodeType *current_head_node_type_p,
-                            std::vector<NodeSnapshot> *path_list_p) const {
-    *current_node_pp = GetNode(new_id);
-    *current_node_type_p = (*current_node_pp)->GetType();
-
-    *current_head_node_pp = *current_node_pp;
-    *current_head_node_type_p = *current_node_type_p;
-
-    // TODO: Save a snapshot object
-    // Save history for the new ID and new node pointer
-    //path_list_p->push_back(std::make_pair(new_id, *current_node_pp));
-
-    return;
-  }
-
-  /*
-   * TraverseDownInnerNode() - Find the leaf page given a key
-   *
-   * Append pairs of NodeID and BaseNode * type to path list since
-   * these two fixed a view for the leaf page at the time we return it
-   * And after we have finishing the job, we need to validate whether we
-   * are still working on the latest snapshot, by CAS NodeID with the pointer
-   */
-  void TraverseDownInnerNode(const KeyType &search_key,
-                             std::vector<NodeSnapshot> *path_list_p,
-                             NodeID start_id = INVALID_NODE_ID) {
-
-    // There is a slight difference: If start ID is a valid one
-    // then we just use it; otherwise we need to fetch the root ID
-    // from an atomic variable
-    if(start_id == INVALID_NODE_ID)
-    {
-      start_id = root_id.load();
-    }
-
-    NodeID current_node_id = root_id.load();
-
-    // Whether or not this has changed depends on the order of
-    // this line and the CAS on the root (if there is one)
-    BaseNode *current_node_p;
-    // We need to update this while traversing down the delta chain
-    NodeType current_node_type;
-
-    // This always points to the head of delta chain
-    BaseNode *current_head_node_p;
-    NodeType current_head_node_type;
-
-    SwitchToNewID(current_node_id,
-                  &current_node_p,
-                  &current_node_type,
-                  &current_head_node_p,
-                  &current_head_node_type,
-                  path_list_p);
-
-    while(1) {
-      if(current_node_type == NodeType::InnerType) {
-        bwt_printf("InnerType node\n");
-
-        InnerNode *inner_node_p = \
-          static_cast<InnerNode *>(current_node_p);
-        NodeID subtree_id = \
-          LocateSeparatorByKey(search_key, inner_node_p, nullptr);
-
-        current_node_id = subtree_id;
-        SwitchToNewID(current_node_id,
-                      &current_node_p,
-                      &current_node_type,
-                      &current_head_node_p,
-                      &current_head_node_type,
-                      path_list_p);
-        continue;
-      } // If current node type == InnerType
-      else if(IsLeafDeltaChainType(current_head_node_type)) {
-        bwt_printf("Leaf delta chain type (%d)\n", current_head_node_type);
-
-        // Current node and head pointer has been already pushed into
-        // the stack
-        return;
-      } // If IsLeafDeltaChainType(current_head_node_type)
-      else {
-        bwt_printf("ERROR: Unknown node type = %d\n", current_node_type);
-        bwt_printf("       node id = %lu\n", current_node_id);
-
-        assert(false);
-      }
-    }
-
-    return;
-  }
-
-  /*
    * NavigateLeafNode() - Find search key on a logical leaf node
    *
    * This function correctly deals with merge and split, starting on
@@ -2751,14 +2656,15 @@ class BwTree {
    * change.
    */
   void NavigateLeafNode(Context *context_p) const {
+    // This contains information for current node
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    const KeyType &search_key = *context_p->search_key_p;
+
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->logical_node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
     assert(snapshot_p->has_data == false);
-
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    KeyType &search_key = *context_p->search_key_p;
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -2878,7 +2784,9 @@ class BwTree {
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(node_p);
 
-          if(KeyCmpGreaterEqual(search_key, split_node_p->split_key)) {
+          const KeyType &split_key = split_node_p->split_key;
+
+          if(KeyCmpGreaterEqual(search_key, split_key)) {
             bwt_printf("Take leaf split right (NodeID branch)\n");
 
             NodeID split_sibling_id = split_node_p->split_sibling;
@@ -3420,7 +3328,7 @@ class BwTree {
         // We need to take care that high key is not sufficient for identifying
         // the correct left sibling
         if(left_sibling_id == removed_node_id) {
-          bwt_printf("Find real left sibling, next id == removed id\N");
+          bwt_printf("Find real left sibling, next id == removed id\n");
 
           // Quit the loop
           break;
@@ -3669,10 +3577,12 @@ class BwTree {
 
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = \
-          GetLatestNodeSnapshot(path_list_p);
-          const BaseNode *left_sibling_p = left_snapshot_p->node_p;
+          GetLatestNodeSnapshot(context_p);
+        const BaseNode *left_sibling_p = left_snapshot_p->node_p;
 
         // Update current node information
+        // NOTE: node_p will not be used here since we have already
+        // saved merge sibling in merge_right_branch
         node_p = left_snapshot_p->node_p;
         node_id = left_snapshot_p->node_id;
         lbound_p = left_snapshot_p->lbound_p;
@@ -3689,7 +3599,7 @@ class BwTree {
         }
 
         // Make sure it is the real left sibling
-        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *lbound_p);
+        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *lbound_p));
         assert(left_snapshot_p->GetNextNodeID() == node_id);
         #endif
 
@@ -3884,7 +3794,7 @@ class BwTree {
           bwt_printf("Root splits!\n");
 
           // Allocate a new node ID for the newly created node
-          NodeId new_root_id = GetNextNodeID();
+          NodeID new_root_id = GetNextNodeID();
 
           // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
           // NOTE: DO NOT MAKE IT CONSTANT since we will push separator into it
@@ -4154,6 +4064,10 @@ class BwTree {
 
         bwt_printf("Node size <= leaf lower threshold. Remove\n");
 
+        // TODO: If we support removing non-base nodes, then we need
+        // to fill into this will actual depth of the delta node
+        int depth = 1;
+
         const LeafRemoveNode *remove_node_p = \
           new LeafRemoveNode{depth, node_p};
 
@@ -4229,6 +4143,10 @@ class BwTree {
         }
 
         bwt_printf("Node size <= inner lower threshold. Remove\n");
+
+        // TODO: If we support removing non-base inner nodes then we should
+        // fill in actual delta chain depth here
+        int depth = 1;
 
         const InnerRemoveNode *remove_node_p = \
           new InnerRemoveNode{depth, node_p};
@@ -4397,7 +4315,7 @@ class BwTree {
     } else {
       bwt_printf("Did not find merge key in parent node - already deleted\n");
 
-      return false
+      return false;
     }
 
     assert(false);
@@ -4448,7 +4366,7 @@ class BwTree {
     if(ret == false) {
       delete merge_node_p;
     } else {
-      *node_p_p = merge_node_p
+      *node_p_p = merge_node_p;
     }
 
     return ret;
