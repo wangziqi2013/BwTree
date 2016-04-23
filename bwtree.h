@@ -2201,16 +2201,15 @@ class BwTree {
    * and update path history. (Such jump may happen multiple times, so
    * do not make any assumpion about how jump is performed)
    */
-  NodeID NavigateInnerNode(const KeyType &search_key,
-                           Context *context_p) const {
-
-    // First get the snapshot from path list
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
+  NodeID NavigateInnerNode(Context *context_p) const {
     // Make sure the structure is valid
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
+
+    // First get the snapshot from context
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    KeyType &search_key = *context_p->search_key_p;
 
     bool first_time = true;
 
@@ -2297,16 +2296,24 @@ class BwTree {
 
             NodeID branch_id = split_node_p->split_sibling;
 
-            // SERIALIZATION POINT!
-            const BaseNode *branch_node_p = GetNode(branch_id);
+            // Try to jump to the right branch
+            // If jump fails just abort
+            JumpToNodeId(branch_id,
+                         context_p,
+                         &split_key, // Equals low key of the target node
+                         false);     // Always could not be left child
 
-            snapshot_p->node_id = branch_id;
-            snapshot_p->node_p = branch_node_p;
+            if(context_p->abort_flag == true) {
+              bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+              return INVALID_NODE_ID;
+            }
 
             // Since we have jumped to a new NodeID, we could see a remove node
             first_time = true;
 
-            node_p = branch_node_p;
+            snapshot_p = GetLatestNodeSnapshot(context_p);
+            node_p = snapshot_p->node_p;
 
             // Continue in the while loop to avoid setting first_time to false
             continue;
@@ -2743,13 +2750,15 @@ class BwTree {
    * This function is read-only, so it does not need to validate any structure
    * change.
    */
-  void NavigateLeafNode(const KeyType &search_key,
-                        NodeSnapshot *snapshot_p) const {
+  void NavigateLeafNode(Context *context_p) const {
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->logical_node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
     assert(snapshot_p->has_data == false);
+
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    KeyType &search_key = *context_p->search_key_p;
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -2873,13 +2882,21 @@ class BwTree {
             bwt_printf("Take leaf split right (NodeID branch)\n");
 
             NodeID split_sibling_id = split_node_p->split_sibling;
-            // SERIALIZATION POINT!
-            node_p = GetNode(split_sibling_id);
 
-            // Update current NodeID and pointer
-            // and also notify caller that the NodeId has changed
-            snapshot_p->node_p = node_p;
-            snapshot_p->node_id = split_sibling_id;
+            // Jump to right sibling, with possibility that it aborts
+            JumpToNodeId(split_sibling_id,
+                         context_p,
+                         &split_key, // This is the low key for target node
+                         false);     // Always could not be leftmost child
+
+            if(context_p->abort_flag == true) {
+              bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+              return;
+            }
+
+            snapshot_p = GetLatestNodeSnapshot(context_p);
+            node_p = snapshot_p->node_p;
 
             // Since we are on the branch side of a split node
             // there should not be any record with search key in
