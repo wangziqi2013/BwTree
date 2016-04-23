@@ -628,14 +628,14 @@ class BwTree {
      * Destructor - This must be virtual in order to properly destroy
      * the object only given a base type key
      */
-    virtual ~BaseNode() {}
+    ~BaseNode() {}
 
     /*
      * GetType() - Return the type of node
      *
      * This method does not allow overridding
      */
-    virtual NodeType GetType() const final {
+    inline NodeType GetType() const {
       return type;
     }
 
@@ -645,7 +645,7 @@ class BwTree {
      * This function is specially defined since we want to test
      * for remove node as a special case
      */
-    virtual bool IsLeafRemoveNode() const final {
+    inline bool IsLeafRemoveNode() const {
       return type == NodeType::LeafRemoveType;
     }
 
@@ -654,7 +654,7 @@ class BwTree {
      *
      * Same reason as above
      */
-    virtual bool IsInnerRemoveNode() const final {
+    inline bool IsInnerRemoveNode() const {
       return type == NodeType::InnerRemoveType;
     }
 
@@ -664,7 +664,7 @@ class BwTree {
      * All nodes that are neither inner nor leaf type are of
      * delta node type
      */
-    virtual bool IsDeltaNode() const final {
+    inline bool IsDeltaNode() const {
       if(type == NodeType::InnerType || \
          type == NodeType::LeafType) {
         return false;
@@ -677,7 +677,7 @@ class BwTree {
      * IsOnLeafDeltaChain() - Return whether the node is part of
      *                        leaf delta chain
      */
-    virtual bool IsOnLeafDeltaChain() const final {
+    bool IsOnLeafDeltaChain() const {
       return (type == NodeType::LeafType || \
               type == NodeType::LeafInsertType || \
               type == NodeType::LeafDeleteType || \

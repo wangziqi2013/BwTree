@@ -438,6 +438,34 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
+void InsertTest(TreeType *t) {
+  for(int i = 0;i < 100;i++) {
+    t->Insert(i, 1.11L * i);
+    t->Insert(i, 1.111L * i);
+    t->Insert(i, 1.1111L * i);
+    t->Insert(i, 1.11111L * i);
+  }
+  /*
+  t->Insert(1, 1.11);
+  t->Insert(2, 2.22);
+  t->Insert(3, 3.33);
+  t->Insert(4, 4.44);
+  t->Insert(5, 5.55);
+  t->Insert(1, 1.111);
+  t->Insert(1, 1.1111);
+  */
+
+  for(int i = 0;i < 103;i++) {
+    auto value_set = t->GetValue(i);
+
+    for(auto it : value_set) {
+      printf("Values = %lf\n", it);
+    }
+  }
+
+  return;
+}
+
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
@@ -461,6 +489,8 @@ int main() {
   //TestNavigateLeafNode(t1);
   TestCollectAllSepsOnInner(t1);
   //TestNavigateInnerNode(t1);
+
+  InsertTest(t1);
 
   return 0;
 }
