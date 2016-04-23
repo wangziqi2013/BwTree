@@ -4565,27 +4565,72 @@ class BwTree {
     return false;
   }
 
-  bool Insert(const RawKeyType &raw_key, ValueType &value) {
+  /*
+   * Insert() - Insert a key-value pair
+   *
+   * This function returns false if value already exists
+   * If CAS fails this function retries until it succeeds
+   */
+  bool Insert(const KeyType &key, ValueType &value) {
     bwt_printf("Insert called\n");
 
-    // Path history
-    std::vector<NodeSnapshot> ph{};
-    KeyType search_key = GetWrappedKey(raw_key);
+    while(1) {
+      Context context{&key};
 
-    TraverseDownInnerNode(search_key, &ph);
-    assert(ph.size() > 1UL);
+      Traverse(&context, true);
 
-    // Since it returns on seeing a leaf delta chain head
-    // We use reference here to avoid copy
-    const NodeSnapshot &ts = ph.back();
-    NodeID leaf_head_id = ts.node_id;
-    const BaseNode *leaf_head_p = ts.node_p;
+      const NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      const LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      KeyValueSet &container = logical_node_p->GetContainer();
 
-    if(key_dup == false) {
-      //IsKeyPresent(search_key, leaf_head_p);
+      // Enjoy the beauty of C++11
+      typename decltype(container)::iterator it = container.find(key);
+      if(it != container.end()) {
+        typename decltype((*(it->second)))::iterator it2 = \
+          it->second.find(value);
+
+        if(it2 != it->second.end()) {
+          return false;
+        }
+      }
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If node_p is a delta node then we have to use its
+      // delta value
+      int depth = 1;
+
+      if(node_p->IsDeltaNode() == true) {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        depth = delta_node_p->depth + 1;
+      }
+
+      const LeafInsertNode *insert_node_p = \
+        new LeafInsertNode{key, value, depth, node_p};
+
+      bool ret = InstallNodeToReplace(node_id,
+                                      insert_node_p,
+                                      node_p);
+      if(ret == true) {
+        bwt_printf("Leaf Insert delta CAS succeed\n");
+
+        // This will actually not be used anymore, so maybe
+        // could save this assignment
+        snapshot_p->node_p = insert_node_p;
+      } else {
+        bwt_printf("Leaf insert delta CAS failed\n");
+
+        delete insert_node_p;
+      }
+
+      bwt_printf("Retry installing leaf insert delta from the root\n");
     }
 
-    return false;
+    return true;
   }
 
  /*
