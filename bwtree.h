@@ -353,21 +353,38 @@ class BwTree {
   /*
    * KeyCmpEqual() - Compare a pair of keys for equality
    *
-   * If any of the key is +/-Inf then assertion fails
+   * If both of the keys are +/-Inf then assertion fails
+   * If one of them are +/-Inf, then always return false
    * Otherwise use key_eq_obj to compare (fast comparison)
    *
    * NOTE: This property does not affect <= and >= since these
    * two are implemented using > and < respectively
    */
   bool KeyCmpEqual(const KeyType &key1, const KeyType &key2) const {
-    if(key1.IsPosInf() || \
-       key1.IsNegInf() || \
-       key2.IsPosInf() || \
-       key2.IsNegInf()) {
+    bool key1_inf = key1.IsPosInf() || key1.IsNegInf();
+    bool key2_inf = key2.IsPosInf() || key2.IsNegInf();
+
+    // This is special treatment since we are using -Inf
+    // as the low key for parent node, so there would be
+    // comparison related with it in order to decide
+    // whether the child is a left most one
+    if(key1.IsNegInf() && key2.IsNegInf()) {
+      return true;
+    }
+
+    // We only forbid this
+    if(key1_inf && key2_inf) {
       bwt_printf("ERROR: Equality comparison involving Inf\n");
       bwt_printf("       [key1.type, key2.type] = [%d, %d]\n",
                  key1.type, key2.type);
+
       assert(false);
+    }
+
+    // We will use this when dealing with the leftmost node's low key
+    // and right most node's high key
+    if(key1_inf || key2_inf) {
+      return false;
     }
 
     return key_eq_obj(key1.key, key2.key);
@@ -469,6 +486,15 @@ class BwTree {
       abort_counter{0},
       current_level{0}
     {}
+
+    /*
+     * Destructor - Cleanup
+     */
+    ~Context() {
+      path_list.clear();
+
+      return;
+    }
 
     /*
      * Copy constructor - deleted
@@ -1115,6 +1141,8 @@ class BwTree {
     void BulkLoadValue(const DataItem &item) {
       auto ret = key_value_set.emplace(std::make_pair(item.key, ValueSet{}));
 
+      //bwt_printf("key = %d\n", item.key.key);
+
       // Make sure it does not already exist in key value set
       // This always holds since we could not have overlaping
       // key range inside two base nodes
@@ -1717,13 +1745,11 @@ class BwTree {
     assert(first_node_id == 1UL);
 
     SepItem neg_si {GetNegInfKey(), first_node_id};
-    //SepItem pos_si {GetPosInfKey(), INVALID_NODE_ID};
 
     InnerNode *root_node_p = \
       new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
     root_node_p->sep_list.push_back(neg_si);
-    //root_node_p->sep_list.push_back(pos_si);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -1910,6 +1936,15 @@ class BwTree {
    */
   void Traverse(Context *context_p,
                 bool collect_value) {
+    // We must start from a clean state
+    assert(context_p->path_list.size() == 0);
+
+    // This is the low key (i.e. "virtual sep key")
+    // for root node
+    // NOTE: This should be put inside the scope in case it is
+    // corrupted
+    KeyType root_lbound_key = GetNegInfKey();
+
     while(1) {
       // NOTE: break only breaks out this switch
       switch(context_p->current_state) {
@@ -1925,8 +1960,8 @@ class BwTree {
           // be split delta posted on to root node
           LoadNodeID(start_node_id,
                      context_p,
-                     nullptr,      // This is only used when splitting nodes
-                     true);        // root ID is implicitly leftmost
+                     &root_lbound_key,  // Root node has a "virtual sep"
+                     true);             // root ID is implicitly leftmost
 
           // There could be an abort here, and we could not directly jump
           // to Init state since we would like to do some clean up or
@@ -1983,8 +2018,10 @@ class BwTree {
           // know it definitely is the left most child since lbound is always
           // tight
           // NOTE: For root node, current_lbound_p is nullptr
-          if(current_lbound_p == nullptr ||
-             KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
+          if(KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
+            bwt_printf("Child node id = %lu is a left most child\n",
+                       child_node_id);
+
             is_leftmost_child = true;
           }
 
@@ -2572,8 +2609,6 @@ class BwTree {
                                    true,
                                    true);
 
-
-
     // Remove all key with INVALID_NODE_ID placeholder
     // since they are deleted nodes. This could not be
     // done inside the recursive function since it is
@@ -2907,6 +2942,7 @@ class BwTree {
             // First bulk load data item for the search key, if exists
             for(const DataItem &item : leaf_node_p->data_list) {
               if(KeyCmpEqual(item.key, search_key)) {
+                //bwt_printf("key = %d\n", item.key.key);
                 logical_node_p->BulkLoadValue(item);
 
                 break;
@@ -3771,6 +3807,9 @@ class BwTree {
       case NodeType::InnerRemoveType: {
         bwt_printf("Helping along remove node...\n");
 
+        // We could not find remove delta on left most child
+        assert(snapshot_p->is_leftmost_child == false);
+
         const DeltaNode *delta_node_p = \
           static_cast<const DeltaNode *>(node_p);
 
@@ -3791,6 +3830,11 @@ class BwTree {
           GetLatestNodeSnapshot(context_p);
         const BaseNode *left_sibling_p = left_snapshot_p->node_p;
 
+        // We save this before lbound_p which was once remove node lbound_p
+        // is overwritten with the lbound_p of left sibling
+        const KeyType *remove_node_lbound_p = lbound_p;
+        NodeID remove_node_id = node_id;
+
         // Update current node information
         // NOTE: node_p will not be used here since we have already
         // saved merge sibling in merge_right_branch
@@ -3809,9 +3853,13 @@ class BwTree {
           CollectMetadataOnInner(left_snapshot_p);
         }
 
+        //bwt_printf("high key = %d; lbound_p = %d\n",
+        //           left_snapshot_p->GetHighKey()->key,
+        //           remove_node_lbound_p->key);
+
         // Make sure it is the real left sibling
-        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *lbound_p));
-        assert(left_snapshot_p->GetNextNodeID() == node_id);
+        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *remove_node_lbound_p));
+        assert(left_snapshot_p->GetNextNodeID() == remove_node_id);
         #endif
 
         bool ret = false;
@@ -3821,13 +3869,13 @@ class BwTree {
         if(left_snapshot_p->is_leaf == true) {
           ret = \
             PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         lbound_p,
+                                         remove_node_lbound_p,
                                          merge_right_branch,
                                          &node_p);
         } else {
           ret = \
             PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          lbound_p,
+                                          remove_node_lbound_p,
                                           merge_right_branch,
                                           &node_p);
         }
@@ -3863,9 +3911,6 @@ class BwTree {
       case NodeType::LeafMergeType: {
         bwt_printf("Helping along merge delta\n");
 
-        // We could not find a merge delta on left most child node
-        assert(snapshot_p->is_leftmost_child == false);
-
         // First consolidate parent node and find the left/right
         // sep pair plus left node ID
         NodeSnapshot *parent_snapshot_p = \
@@ -3880,6 +3925,7 @@ class BwTree {
 
         // If debug is on, we extract the next node ID
         // which is the deleted node ID
+        /*
         #ifdef BWTREE_DEBUG
         if(snapshot_p->has_metadata == false) {
           if(snapshot_p->is_leaf) {
@@ -3891,8 +3937,12 @@ class BwTree {
 
         NodeID deleted_node_id = snapshot_p->GetNextNodeID();
         #else
-        NodeID = INVALID_NODE_ID;
+        NodeID deleted_node_id = INVALID_NODE_ID;
         #endif
+        */
+
+        // DUMMY PLACEHOLDER; DO NOT USE OR MODIFY
+        NodeID deleted_node_id = INVALID_NODE_ID;
 
         const KeyType *merge_key_p = nullptr;
 
@@ -4500,12 +4550,14 @@ class BwTree {
         // We use prev key's node ID
         *prev_node_id_p = it1->second;
 
+        /*
         // Make sure it2 refers to the node we are removing
         #ifdef BWTREE_DEBUG
         assert(deleted_node_id == it2->second);
         #else
         assert(deleted_node_id == INVALID_NODE_ID);
         #endif
+        */
 
         return true;
       }
@@ -4522,12 +4574,16 @@ class BwTree {
       *next_key_p_p = snapshot_p->GetHighKey();
       *prev_node_id_p = it1->second;
 
+      //bwt_printf("deleted id = %lu; it2->second = %lu\n", deleted_node_id, it2->second);
+
+      /*
       // Same as above
       #ifdef BWTREE_DEBUG
       assert(deleted_node_id == it2->second);
       #else
       assert(deleted_node_id == INVALID_NODE_ID);
       #endif
+      */
 
       return true;
     } else {
