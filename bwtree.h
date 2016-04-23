@@ -4633,6 +4633,61 @@ class BwTree {
     return true;
   }
 
+  /*
+   * GetValue() - Fill a value list with values stored
+   *
+   * This function accepts a value list as argument,
+   * and will copy all values into the list
+   *
+   * The return value is used to indicate whether the value set
+   * is empty or not
+   */
+  bool GetValue(const KeyType &search_key,
+                std::vector<ValueType> &value_list) {
+    Context context{&search_key};
+
+    Traverse(&context, true);
+
+    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    KeyValueSet &container = logical_node_p->GetContainer();
+
+    typename decltype(container)::iterator it = container.find(search_key);
+    if(it != container.end()) {
+      value_list = std::move(std::vector<ValueType>{it->second.begin(),
+                                                    it->second.end()});
+    } else {
+      return false;
+    }
+
+    assert(false);
+    return false;
+  }
+
+  /*
+   * GetValue() - Return an unordered set of values given the key
+   *
+   * This is an overridden version of the first GetValue(). The
+   * overhead is slightly less than the previous one since it does
+   * not construct a vector
+   */
+  ValueSet GetValue(const KeyType &search_key) {
+    Context context{&search_key};
+
+    Traverse(&context, true);
+
+    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    KeyValueSet &container = logical_node_p->GetContainer();
+
+    typename decltype(container)::iterator it = container.find(search_key);
+    if(it != container.end()) {
+      return ValueSet{it->second};
+    } else {
+      return ValueSet{};
+    }
+  }
+
  /*
   * Private Method Implementation
   */
