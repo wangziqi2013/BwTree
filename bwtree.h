@@ -533,9 +533,12 @@ class BwTree {
     {}
 
     /*
-     * Move Constructor - DO NOT ALLOW THIS
+     * Move Constructor - Move value_list
      */
-    DataItem(DataItem &&di) = delete;
+    DataItem(DataItem &&di) :
+      key{di.key},
+      value_list{std::move(di.value_list)}
+    {}
 
     /*
      * Move Assignment - DO NOT ALLOW THIS
@@ -724,7 +727,7 @@ class BwTree {
      * NOTE 2: We could get the split key by looking into this node's
      * low key
      */
-    LeafNode *GetSplitSibling() {
+    LeafNode *GetSplitSibling() const {
       size_t node_size = data_list.size();
       size_t split_key_index = node_size / 2;
 
@@ -737,7 +740,7 @@ class BwTree {
 
       // Copy data item into the new node
       for(int i = split_key_index;i < node_size;i++) {
-        leaf_node_p.data_list.push_back(data_list[i]);
+        leaf_node_p->data_list.push_back(data_list[i]);
       }
 
       return leaf_node_p;
@@ -890,7 +893,7 @@ class BwTree {
      *
      * This functions is similar to that in LeafNode
      */
-    LeafNode *GetSplitSibling() {
+    InnerNode *GetSplitSibling() const {
       size_t node_size = sep_list.size();
       size_t split_key_index = node_size / 2;
 
@@ -904,7 +907,7 @@ class BwTree {
 
       // Copy data item into the new node
       for(int i = split_key_index;i < node_size;i++) {
-        inner_node_p.sep_list.push_back(sep_list[i]);
+        inner_node_p->sep_list.push_back(sep_list[i]);
       }
 
       return inner_node_p;
@@ -1033,7 +1036,7 @@ class BwTree {
      * Constructor
      */
     InnerRemoveNode(int p_depth,
-                    BaseNode *p_child_node_p) :
+                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerRemoveType, p_depth, p_child_node_p}
     {}
   };
@@ -1273,11 +1276,7 @@ class BwTree {
         }
 
         // Construct a data item in-place
-        // NOTE: The third parameter is just for disambiguity (we overloaded
-        // the constructor to let it either receive an array of values or
-        // <key, value-vector> initializers). Compiler could not disambiguate
-        // without the extra dummy argument
-        leaf_node_p->data_list.emplace({it.first, it->second}, true);
+        leaf_node_p->data_list.push_back(DataItem{it.first, it.second});
       }
 
       return leaf_node_p;
@@ -1342,7 +1341,7 @@ class BwTree {
 
       // Iterate through the ordered map and push separator items
       for(auto &it : key_value_map) {
-        inner_node_p->sep_list.emplace({it.first, it.second});
+        inner_node_p->sep_list.push_back(SepItem{it.first, it.second});
       }
 
       return inner_node_p;
@@ -1560,7 +1559,7 @@ class BwTree {
      *
      * This deals with different node types
      */
-    inline KeyType *GetHighKey() {
+    inline const KeyType *GetHighKey() {
       if(is_leaf == true) {
         return GetLogicalLeafNode()->ubound_p;
       } else {
@@ -1586,9 +1585,9 @@ class BwTree {
      */
     inline NodeID GetNextNodeID() {
       if(is_leaf == true) {
-        return GetLogicalLeafNode().next_node_id;
+        return GetLogicalLeafNode()->next_node_id;
       } else {
-        return GetLogicalInnerNode().next_node_id;
+        return GetLogicalInnerNode()->next_node_id;
       }
     }
 
@@ -1828,7 +1827,8 @@ class BwTree {
    * This function does not return any value since we assume new node
    * installation would always succeed
    */
-  void InstallNewNode(NodeID node_id, BaseNode *node_p) {
+  void InstallNewNode(NodeID node_id,
+                      const BaseNode *node_p) {
     // We initialize the mapping table to always have 0 for
     // unused entries
     bool ret = InstallNodeToReplace(node_id, node_p, nullptr);
@@ -1852,7 +1852,7 @@ class BwTree {
    * If we want to keep the same snapshot then we should only
    * call GetNode() once and stick to that physical pointer
    */
-  BaseNode *GetNode(const NodeID node_id) const {
+  const BaseNode *GetNode(const NodeID node_id) const {
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
 
@@ -1914,8 +1914,8 @@ class BwTree {
           // There could be an abort here, and we could not directly jump
           // to Init state since we would like to do some clean up or
           // statistics after aborting
-          if(context_p.abort_flag == true) {
-            context_p.current_state = OpState::Abort;
+          if(context_p->abort_flag == true) {
+            context_p->current_state = OpState::Abort;
 
             // This goes to the beginning of loop
             break;
@@ -1948,7 +1948,7 @@ class BwTree {
             // This is defined in Navigate function
             assert(child_node_id == INVALID_NODE_ID);
 
-            context_p.current_state = OpState::Abort;
+            context_p->current_state = OpState::Abort;
 
             break;
           }
@@ -1965,7 +1965,7 @@ class BwTree {
           // If the sep key equals the low key of current node then we
           // know it definitely is the left most child since lbound is always
           // tight
-          if(KeyCmpEqual(current_lbound_p, lbound_p) == true) {
+          if(KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
             is_leftmost_child = true;
           }
 
@@ -1992,7 +1992,7 @@ class BwTree {
 
             // Then we start traversing leaf node, and deal
             // with potential aborts
-            context_p->current_level = OpState::Leaf;
+            context_p->current_state = OpState::Leaf;
 
             break;
           }
@@ -2339,7 +2339,7 @@ class BwTree {
    * with the NodeID.
    */
   NodeID NavigateInnerNode(Context *context_p,
-                           const KeyType **lbound_p_p) const {
+                           const KeyType **lbound_p_p) {
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -3323,13 +3323,13 @@ class BwTree {
    * the vector, since at that time the snapshot object will be destroyed
    * which also freed up the logical node object
    */
-  inline NodeSnapshot *GetLatestNodeSnapshot(const Context *context_p) const {
-    const std::vector<NodeSnapshot> *path_list_p = \
-      context_p->path_list;
+  inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) const {
+    std::vector<NodeSnapshot> *path_list_p = \
+      &context_p->path_list;
 
     assert(path_list_p->size() > 0);
 
-    return &path_list_p->back();
+    return &(path_list_p->back());
   }
 
   /*
@@ -3342,16 +3342,16 @@ class BwTree {
    * NOTE: The same as GetLatestNodeSnapshot(), be careful when popping
    * snapshots out of the stack
    */
-  NodeSnapshot *GetLatestParentNodeSnapshot(const Context *context_p) {
-    const std::vector<NodeSnapshot> *path_list_p = \
-      context_p->path_list;
+  NodeSnapshot *GetLatestParentNodeSnapshot(Context *context_p) {
+    std::vector<NodeSnapshot> *path_list_p = \
+      &context_p->path_list;
 
     // Make sure the current node has a parent
     size_t path_list_size = path_list_p->size();
     assert(path_list_size >= 2);
 
     // This is the address of the parent node
-    return &path_list_p[path_list_size - 2];
+    return &((*path_list_p)[path_list_size - 2]);
   }
 
   /*
@@ -3387,7 +3387,7 @@ class BwTree {
 
     // Get last record which is the current node's context
     // and we must make sure the current node is not left mode node
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(path_list_p);
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     assert(snapshot_p->is_leftmost_child == false);
 
     // Check currently we are on a remove node
@@ -3415,9 +3415,9 @@ class BwTree {
     assert(snapshot_p->has_data == true);
     assert(snapshot_p->has_metadata == true);
 
-    const KeyNodeIDMap &key_value_map = \
+    KeyNodeIDMap &key_value_map = \
       snapshot_p->GetLogicalInnerNode()->GetContainer();
-    typename KeyNodeIDMap::iterator it{};
+    typename KeyNodeIDMap::reverse_iterator it{};
 
     for(it = key_value_map.rbegin();
         it != key_value_map.rend();
@@ -3461,7 +3461,7 @@ class BwTree {
 
       // Read the potentially redirected snapshot
       // (but do not pop it - so we directly return)
-      snapshot_p = GetLatestNodeSnapshot(path_list_p);
+      snapshot_p = GetLatestNodeSnapshot(context_p);
 
       // try to consolidate the node for meta data
       if(snapshot_p->is_leaf) {
@@ -3716,7 +3716,9 @@ class BwTree {
     const KeyType *lbound_p = snapshot_p->lbound_p;
 
     // And also need to update this if we post a new node
-    const NodeType type = node_p->GetType();
+    // NOTE: This will be updated by remove node, so do not make
+    // it as constant
+    NodeType type = node_p->GetType();
 
     switch(type) {
       case NodeType::LeafRemoveType:
@@ -3863,14 +3865,14 @@ class BwTree {
 
           depth = merge_node_p->depth + 1;
 
-          merge_key_p = merge_node_p->merge_key;
+          merge_key_p = &merge_node_p->merge_key;
         } else if(type == NodeType::LeafMergeType) {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(node_p);
 
           depth = merge_node_p->depth + 1;
 
-          merge_key_p = merge_node_p->merge_key;
+          merge_key_p = &merge_node_p->merge_key;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n", type);
         } // If on type of merge node
@@ -3894,19 +3896,19 @@ class BwTree {
         }
 
         const InnerDeleteNode *delete_node_p = \
-          InnerDeleteNode{*merge_key_p,
-                          *next_key_p,
-                          *prev_key_p,
-                          prev_node_id,
-                          depth,
-                          node_p};
+          new InnerDeleteNode{*merge_key_p,
+                              *next_key_p,
+                              *prev_key_p,
+                              prev_node_id,
+                              depth,
+                              node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
         // If CAS failed then parent has changed, and we have no idea how it
         // could be modified. The safest way is just abort
         bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
                                         delete_node_p,
-                                        parent_snapshot_p->node_id);
+                                        parent_snapshot_p->node_p);
         if(ret == true) {
           bwt_printf("Index term delete delta installed\n");
         } else {
@@ -4065,7 +4067,8 @@ class BwTree {
    * and will just continue with its own job. There is no chance of abort
    */
   void ConsolidateNode(Context *context_p) {
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot();
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
@@ -4186,7 +4189,7 @@ class BwTree {
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
-        LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
+        const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
         const KeyType *split_key_p = &new_leaf_node_p->lbound;
 
         NodeID new_node_id = GetNextNodeID();
@@ -4266,7 +4269,7 @@ class BwTree {
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
 
-        InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
+        const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
         const KeyType *split_key_p = &new_inner_node_p->lbound;
 
         NodeID new_node_id = GetNextNodeID();
@@ -4355,7 +4358,7 @@ class BwTree {
    * using both the sep key and NodeID. These two must match, otherwise we
    * observed an inconsistent state
    */
-  bool FindSplitNextKey(const NodeSnapshot *snapshot_p,
+  bool FindSplitNextKey(NodeSnapshot *snapshot_p,
                         const KeyType *split_key_p,
                         const KeyType **next_key_p_p,
                         const NodeID insert_pid) {
@@ -4363,7 +4366,7 @@ class BwTree {
     assert(snapshot_p->has_data == true);
     assert(snapshot_p->has_metadata == true);
 
-    const KeyNodeIDMap &sep_map = \
+    KeyNodeIDMap &sep_map = \
       snapshot_p->GetLogicalInnerNode()->GetContainer();
 
     assert(sep_map.size() >= 1);
@@ -4415,7 +4418,7 @@ class BwTree {
    *
    * Return true if the merge key is found. false if merge key not found
    */
-  bool FindMergePrevNextKey(const NodeSnapshot *snapshot_p,
+  bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
                             const KeyType *merge_key_p,
                             const KeyType **prev_key_p_p,
                             const KeyType **next_key_p_p,
@@ -4427,16 +4430,19 @@ class BwTree {
     assert(snapshot_p->has_metadata == true);
 
     // This is the map that stores key to node ID Mapping
-    const KeyNodeIDMap &sep_map = \
+    KeyNodeIDMap &sep_map = \
       snapshot_p->GetLogicalInnerNode()->GetContainer();
 
     assert(sep_map.size() >= 2);
 
     // it1 should not be the key since we do not allow
     // merge node on the leftmost child
+    // FUCK YOU C++ for not having random pointer operator+
     typename KeyNodeIDMap::iterator it1 = sep_map.begin();
-    decltype(it1) it2 = it1 + 1;
-    decltype(it2) it3 = it2 + 1;
+    decltype(it1) it2 = it1;
+    it2++;
+    decltype(it2) it3 = it2;
+    it3++;
 
     while(it3 != sep_map.end()) {
       if(KeyCmpEqual(it2->first, *merge_key_p) == true) {
@@ -4516,14 +4522,14 @@ class BwTree {
     }
 
     // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
-    const LeafMergeNode *merge_node_p = \
+    const MergeNodeType *merge_node_p = \
       new MergeNodeType{*merge_key_p,
                         merge_branch_p,
                         depth,
                         node_p};
 
     // Compare and Swap!
-    bool ret = InstallNodeToReplace(node_p, merge_node_p, node_p);
+    bool ret = InstallNodeToReplace(node_id, merge_node_p, node_p);
 
     // If CAS fails we delete the node and return false
     if(ret == false) {
@@ -4551,8 +4557,8 @@ class BwTree {
 
     Traverse(&context, true);
 
-    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
-    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
     KeyValueSet &container = logical_node_p->GetContainer();
 
     if(container.find(search_key) == container.end()) {
@@ -4571,7 +4577,7 @@ class BwTree {
    * This function returns false if value already exists
    * If CAS fails this function retries until it succeeds
    */
-  bool Insert(const KeyType &key, ValueType &value) {
+  bool Insert(const KeyType &key, const ValueType &value) {
     bwt_printf("Insert called\n");
 
     while(1) {
@@ -4579,15 +4585,13 @@ class BwTree {
 
       Traverse(&context, true);
 
-      const NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
-      const LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
       KeyValueSet &container = logical_node_p->GetContainer();
 
-      // Enjoy the beauty of C++11
-      typename decltype(container)::iterator it = container.find(key);
+      typename KeyValueSet::iterator it = container.find(key);
       if(it != container.end()) {
-        typename decltype((*(it->second)))::iterator it2 = \
-          it->second.find(value);
+        auto it2 = it->second.find(value);
 
         if(it2 != it->second.end()) {
           return false;
@@ -4648,11 +4652,11 @@ class BwTree {
 
     Traverse(&context, true);
 
-    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
-    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
     KeyValueSet &container = logical_node_p->GetContainer();
 
-    typename decltype(container)::iterator it = container.find(search_key);
+    typename KeyValueSet::iterator it = container.find(search_key);
     if(it != container.end()) {
       value_list = std::move(std::vector<ValueType>{it->second.begin(),
                                                     it->second.end()});
@@ -4676,11 +4680,11 @@ class BwTree {
 
     Traverse(&context, true);
 
-    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
-    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
     KeyValueSet &container = logical_node_p->GetContainer();
 
-    typename decltype(container)::iterator it = container.find(search_key);
+    typename KeyValueSet::iterator it = container.find(search_key);
     if(it != container.end()) {
       return ValueSet{it->second};
     } else {
