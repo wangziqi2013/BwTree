@@ -424,12 +424,11 @@ class BwTree {
    *        since we know there must be an inner node
    * Inner - We are currently on an inner node, and want to go one
    *         level down
-   * Leaf - We are currently on a leaf node, and want to collect data
+   * Abort - We just saw abort flag, and will reset everything back to Init
    */
   enum class OpState {
     Init,
     Inner,
-    Leaf,
     Abort
   };
 
@@ -461,7 +460,7 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key_p) :
+    Context(const KeyType *p_search_key_p) :
       search_key_p{p_search_key_p},
       current_state{OpState::Init},
       abort_flag{false},
@@ -1436,9 +1435,9 @@ class BwTree {
     /*
      * Move Constructor - Safely nullify right hand side logical pointer
      *
-     * NOTE: DO NOT FORGET TO FREE THIS NODE'S LOGICAL NODE
+     * NOTE: DO NOT USE const qualifier with move semantics!
      */
-    NodeSnapshot(const NodeSnapshot &&p_ns) :
+    NodeSnapshot(NodeSnapshot &&p_ns) :
       node_id{p_ns.node_id},
       node_p{p_ns.node_p},
       logical_node_p{p_ns.logical_node_p},
@@ -4447,7 +4446,7 @@ class BwTree {
   std::atomic<NodeID> root_id;
   NodeID first_node_id;
   std::atomic<NodeID> next_unused_node_id;
-  std::array<std::atomic<BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
+  std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
  /*
   * Debug function definition
@@ -4520,6 +4519,21 @@ class BwTree {
    */
   void DebugUninstallNode(NodeID node_id) {
     mapping_table[node_id] = 0LU;
+  }
+
+  /*
+   * DebugGetContext() - Get a context object pointer for debugging
+   *
+   * It assumes non-leftmost, root, no lbound_p context
+   * If you need more than that just change the member of Context
+   */
+  Context *DebugGetContext(const KeyType *search_key_p,
+                           NodeSnapshot *snapshot_p) {
+    Context *context_p = new Context{search_key_p};
+
+    context_p->path_list.push_back(std::move(snapshot_p));
+
+    return context_p;
   }
 
 };

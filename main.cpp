@@ -31,6 +31,9 @@ using NodeSnapshot = typename TreeType::NodeSnapshot;
 using LogicalInnerNode = typename TreeType::LogicalInnerNode;
 using BaseNode = typename TreeType::BaseNode;
 
+using Context = typename TreeType::Context;
+using OpState = typename TreeType::OpState;
+
 template <typename Fn, typename... Args>
 void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
   std::vector<std::thread> thread_group;
@@ -213,6 +216,9 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
+  //Context *context_p = t->DebugGetContext(nullptr, snapshot_p);
+  //snapshot_p = t->GetLatestNodeSnapshot(context_p);
+
   t->CollectAllValuesOnLeaf(snapshot_p);
 
   bwt_printf("========== Test CollectAllValuesOnLeaf ==========\n");
@@ -237,6 +243,9 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
+  //context_p = t->DebugGetContext(nullptr, snapshot_p);
+  //snapshot_p = t->GetLatestNodeSnapshot(context_p);
+
   t->CollectMetadataOnLeaf(snapshot_p);
 
   for(auto &item : snapshot_p->GetLogicalLeafNode()->GetContainer()) {
@@ -259,6 +268,7 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
   return;
 }
 
+/*
 void TestNavigateLeafNode(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeLeaf(t);
 
@@ -321,6 +331,7 @@ void TestNavigateLeafNode(TreeType *t) {
 
   return;
 }
+*/
 
 void TestCollectAllSepsOnInner(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeInner(t);
@@ -373,6 +384,7 @@ void TestCollectAllSepsOnInner(TreeType *t) {
   return;
 }
 
+/*
 void TestNavigateInnerNode(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeInner(t);
 
@@ -424,6 +436,7 @@ void TestNavigateInnerNode(TreeType *t) {
     delete snapshot_p;
   }
 }
+*/
 
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
@@ -445,9 +458,9 @@ int main() {
 
   //TestNavigateInnerNode(t1);
   TestCollectAllValuesOnLeaf(t1);
-  TestNavigateLeafNode(t1);
+  //TestNavigateLeafNode(t1);
   TestCollectAllSepsOnInner(t1);
-  TestNavigateInnerNode(t1);
+  //TestNavigateInnerNode(t1);
 
   return 0;
 }
