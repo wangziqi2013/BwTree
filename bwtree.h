@@ -1886,8 +1886,13 @@ class BwTree {
    * It stops at page level, and then the top on the context stack is a
    * leaf level snapshot, with all SMOs, consolidation, and possibly
    * split/remove finished
+   *
+   * NOTE: We could choose whether to let this function collect value given
+   * the key, or not collect value. Because sometimes we just want to locate
+   * the correct page that contains a certain key, so the option is useful
    */
-  void Traverse(Context *context_p) {
+  void Traverse(Context *context_p,
+                bool collect_value) {
     while(1) {
       // NOTE: break only breaks out this switch
       switch(context_p->current_state) {
@@ -2001,7 +2006,8 @@ class BwTree {
           // We do not collect value for this call
           // since we only want to go to the right sibling
           // if there is one
-          NavigateLeafNode(context_p, false);
+          NavigateLeafNode(context_p,
+                           collect_value); // This is argument
 
           if(context_p->abort_flag == true) {
             bwt_printf("NavigateLeafNode aborts. ABORT\n");
@@ -4532,20 +4538,31 @@ class BwTree {
   /*
    * IsKeyPresent() - Check whether the key is present in the tree
    *
-   * This routine does not modify any of the tree structure, and
-   * therefore it does not need to keep any snapshot of the tree
-   * even if it might jump from one ID to another
+   * This function calls Traverse with value option in order to
+   * collect all values associated with the search key. If there is
+   * no such key in the resulting key value map, then return false
    *
-   * Based on the same reason above this routine either does not
-   * require a NodeID
+   * TODO: This function is not the optimal one since there is overhead
+   * for copying the values which is discarded. In the future we may want
+   * to revise Traverse to make it able to detect for key existence request
    */
   bool IsKeyPresent(const KeyType &search_key) {
     Context context{&search_key};
 
-    Traverse(&context);
+    Traverse(&context, true);
 
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+    const NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
+    const LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
+    KeyValueSet &container = logical_node_p->GetContainer();
 
+    if(container.find(search_key) == container.end()) {
+      return false;
+    } else {
+      return true;
+    }
+
+    assert(false);
+    return false;
   }
 
   bool Insert(const RawKeyType &raw_key, ValueType &value) {
