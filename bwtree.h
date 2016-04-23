@@ -1563,6 +1563,8 @@ class BwTree {
      * After installing a new delta node using CAS, we need to switch the
      * snapshot to the newly installed delta node. This requires invalidation
      * of cached logical node data.
+     *
+     * NOTE: This function does not change root node identity
      */
     void SwitchPhysicalPointer(const BaseNode *p_node_p) {
       node_p = p_node_p;
@@ -3708,6 +3710,10 @@ class BwTree {
    *
    * NOTE 4: We need to clear all cached data and metadata inside the logical
    * node since it is not changed to another NodeID
+   *
+   * NOTE 5: IF NODE ID DOES NOT CHANGE, DO NOT CALL THIS FUNCTION
+   * SINCE THIS FUNCTION RESETS ROOT IDENTITY
+   * Call SwitchPhysicalPointer() instead
    */
   void UpdateNodeSnapshot(NodeID node_id,
                           Context *context_p,
@@ -3722,10 +3728,19 @@ class BwTree {
     // level
     assert(node_p->IsOnLeafDeltaChain() == snapshot_p->is_leaf);
 
+    // Make sure we are not switching to itself
+    assert(snapshot_p->node_id != node_id);
+
     // We change these three
     snapshot_p->is_leftmost_child = is_leftmost_child;
     snapshot_p->node_id = node_id;
     snapshot_p->lbound_p = lbound_p;
+
+    // We only call UpdateNodeSnapshot() when we switch to split
+    // sibling in Navigate function
+    // When updating the physical pointer of a root node after posting
+    // a delta, please call SwitchPhysicalPointer() instead
+    snapshot_p->is_root = false;
 
     // Resets all cached metadata and data
     // including flags
@@ -3809,7 +3824,7 @@ class BwTree {
   /*
    * FinishPartialSMO() - Finish partial completed SMO if there is one
    *
-   * NOTE: This function defines the help-along protocol, i.e. if we find
+   * This function defines the help-along protocol, i.e. if we find
    * a SMO on top of the delta chain, we should help-along that SMO before
    * doing our own job. This might incur a recursive call of this function.
    *
@@ -4196,6 +4211,10 @@ class BwTree {
    *
    * NOTE: If consolidation fails then this function does not do anything
    * and will just continue with its own job. There is no chance of abort
+   *
+   * TODO: If strict mode is on, then whenever consolidation fails we should
+   * always abort and start from the beginning, to keep delta chain length
+   * upper bound intact
    */
   void ConsolidateNode(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4387,7 +4406,7 @@ class BwTree {
           return;
         }
       }
-    } else {
+    } else {   // If this is an inner node
       const InnerNode *inner_node_p = \
         static_cast<const InnerNode *>(node_p);
 
@@ -4401,6 +4420,11 @@ class BwTree {
 
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
+
+        // This flag is only set when
+        if(snapshot_p->is_root) {
+          bwt_printf("Posting split delta on root node\n");
+        }
 
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
         const KeyType *split_key_p = &new_inner_node_p->lbound;
@@ -4570,7 +4594,7 @@ class BwTree {
 
     // it1 should not be the key since we do not allow
     // merge node on the leftmost child
-    // FUCK YOU C++ for not having random pointer operator+
+    // FUCK YOU C++ for not having non-random iterator's operator+
     typename KeyNodeIDMap::iterator it1 = sep_map.begin();
     decltype(it1) it2 = it1;
     it2++;
