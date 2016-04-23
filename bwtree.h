@@ -152,11 +152,11 @@ class BwTree {
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
 
   // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UTHRESHOLD = 16;
-  constexpr static size_t LEAF_NODE_SIZE_UTHRESHOLD = 16;
+  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 16;
+  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
 
-  constexpr static size_t INNER_NODE_SIZE_LTHRESHOLD = 8;
-  constexpr static size_t LEAF_NODE_SIZE_LTHRESHOLD = 8;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 8;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -532,22 +532,14 @@ class BwTree {
     {}
 
     /*
-     * Move Constructor - We move value list to save space
+     * Move Constructor - DO NOT ALLOW THIS
      */
-    DataItem(DataItem &&di) :
-      key{di.key},
-      value_list{std::move(di.value_list)}
-    {}
+    DataItem(DataItem &&di) = delete;
 
     /*
-     * Move Assignment - Fast assignment
+     * Move Assignment - DO NOT ALLOW THIS
      */
-    DataItem &operator=(DataItem &&di) {
-      key = di.key;
-      value_list = std::move(value_list);
-
-      return *this;
-    }
+    DataItem &operator=(DataItem &&di) = delete;
   };
 
   /*
@@ -581,6 +573,11 @@ class BwTree {
     SepItem(const KeyType &p_key, NodeID p_node) :
       key{p_key},
       node{p_node}
+    {}
+
+    SepItem(const SepItem &si) :
+      key{si.key},
+      node{si.node}
     {}
   };
 
@@ -712,6 +709,38 @@ class BwTree {
       ubound{p_ubound},
       next_node_id{p_next_node_id}
       {}
+
+    /*
+     * GetSplitSibling() - Split the node into two halves
+     *
+     * We always split on the middle of the node; If the number
+     * of separators are not even, then the sibling will have
+     * one more key
+     *
+     * NOTE: This function allocates memory, and if it is not used
+     * e.g. by a CAS failure, then caller needs to delete it
+     *
+     * NOTE 2: We could get the split key by looking into this node's
+     * low key
+     */
+    LeafNode *GetSplitSibling() {
+      size_t node_size = data_list.size();
+      size_t split_key_index = node_size / 2;
+
+      assert(node_size >= 2);
+
+      const KeyType &split_key = data_list[split_key_index].key;
+
+      LeafNode *leaf_node_p = \
+        new LeafNode{split_key, ubound, next_node_id};
+
+      // Copy data item into the new node
+      for(int i = split_key_index;i < node_size;i++) {
+        leaf_node_p.data_list.push_back(data_list[i]);
+      }
+
+      return leaf_node_p;
+    }
   };
 
   /*
@@ -854,6 +883,31 @@ class BwTree {
       ubound{p_ubound},
       next_node_id{p_next_node_id}
     {}
+
+    /*
+     * GetSplitSibling() - Split the node into two halves
+     *
+     * This functions is similar to that in LeafNode
+     */
+    LeafNode *GetSplitSibling() {
+      size_t node_size = sep_list.size();
+      size_t split_key_index = node_size / 2;
+
+      // We enforce this to avoid empty nodes
+      assert(node_size >= 2);
+
+      const KeyType &split_key = sep_list[split_key_index].key;
+
+      InnerNode *inner_node_p = \
+        new InnerNode{split_key, ubound, next_node_id};
+
+      // Copy data item into the new node
+      for(int i = split_key_index;i < node_size;i++) {
+        inner_node_p.sep_list.push_back(sep_list[i]);
+      }
+
+      return inner_node_p;
+    }
   };
 
   /*
@@ -3788,7 +3842,8 @@ class BwTree {
           NodeId new_root_id = GetNextNodeID();
 
           // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
-          const InnerNode *inner_node_p = \
+          // NOTE: DO NOT MAKE IT CONSTANT since we will push separator into it
+          InnerNode *inner_node_p = \
             new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
           SepItem item1{GetNegInfKey(), node_id};
@@ -3940,6 +3995,9 @@ class BwTree {
       } else {
         bwt_printf("Leaf node consolidation CAS failed. NO ABORT\n");
 
+        // TODO: If we want to keep delta chain length constant then it
+        // should abort here
+
         delete leaf_node_p;
       } // if CAS succeeds / fails
     } else {
@@ -3993,6 +4051,8 @@ class BwTree {
       const LeafNode *leaf_node_p = \
         static_cast<const LeafNode *>(node_p);
 
+      // No matter what we want to do, this is necessary
+      // since we need to
       if(snapshot_p->has_data == false) {
         CollectAllValuesOnLeaf(snapshot_p);
       }
@@ -4001,13 +4061,34 @@ class BwTree {
 
       size_t node_size = leaf_node_p->data_list.size();
 
-      if(node_size < INNER_NODE_SIZE_THRESHOLD) {
-        return;
+      // Perform corresponding action based on node size
+      if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
+        bwt_printf("Node size >= leaf upper threshold. Split\n");
+
+
+      } else if(node_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+        bwt_printf("Node size <= leaf lower threshold. Remove\n");
+
+      }
+    } else {
+      const InnerNode *inner_node_p = \
+        static_cast<const InnerNode *>(node_p);
+
+      if(snapshot_p->has_data == false) {
+        CollectAllSepsOnInner(snapshot_p);
       }
 
+      assert(snapshot_p->has_data == true);
 
-    } else {
+      size_t node_size = inner_node_p->sep_list.size();
 
+      if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
+        bwt_printf("Node size >= inner upper threshold. Split\n");
+
+      } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
+        bwt_printf("Node size <= inner lower threshold. Remove\n");
+
+      }
     }
 
     return;
