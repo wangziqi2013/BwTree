@@ -429,6 +429,7 @@ class BwTree {
   enum class OpState {
     Init,
     Inner,
+    Leaf,
     Abort
   };
 
@@ -1924,6 +1925,7 @@ class BwTree {
           // NOTE: We do not traverse down in this state, just hand it
           // to Inner state and let it do all generic job
           context_p->current_state = OpState::Inner;
+          context_p->current_level++;
 
           break;
         } // case Init
@@ -1971,6 +1973,8 @@ class BwTree {
           if(context_p->abort_flag == true) {
             bwt_printf("LoadNodeID aborted. ABORT\n");
 
+            context_p->current_state = OpState::Abort;
+
             break;
           }
 
@@ -1979,12 +1983,43 @@ class BwTree {
           // base node pointer
           snapshot_p = GetLatestNodeSnapshot(context_p);
           if(snapshot_p->is_leaf == true) {
-            bwt_printf("Reached leaf page. abort_counter = %lu\n",
-                       context_p->abort_counter);
+            bwt_printf("Reached leaf page\n");
 
-            return;
+            // Then we start traversing leaf node, and deal
+            // with potential aborts
+            context_p->current_level = OpState::Leaf;
+
+            break;
           }
+
+          // go to next level
+          context_p->current_level++;
+
+          break;
         } // case Inner
+        case OpState::Leaf: {
+          // We do not collect value for this call
+          // since we only want to go to the right sibling
+          // if there is one
+          NavigateLeafNode(context_p, false);
+
+          if(context_p->abort_flag == true) {
+            bwt_printf("NavigateLeafNode aborts. ABORT\n");
+
+            context_p->current_state = OpState::Abort;
+
+            break;
+          }
+
+          bwt_printf("Found leaf node. Abort count = %lu, level = %d\n",
+                     context_p->abort_counter,
+                     context_p->current_level);
+
+          // If there is no abort then we could safely return
+          return;
+
+          break;
+        }
         case OpState::Abort: {
           std::vector<NodeSnapshot> *path_list_p = \
             &context_p->path_list;
@@ -2760,10 +2795,13 @@ class BwTree {
    * is_sibling flag to true to notify the caller that path history needs to
    * be updated
    *
-   * This function is read-only, so it does not need to validate any structure
-   * change.
+   * This function takes an extra argument to decide whether it collects any
+   * value. If collect_value is set to false, then this function only traverses
+   * the leaf node without collecting any actual value, while still being
+   * able to traverse to its left sibling and potentially abort
    */
-  void NavigateLeafNode(Context *context_p) const {
+  void NavigateLeafNode(Context *context_p,
+                        bool collect_value) {
     // This contains information for current node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const KeyType &search_key = *context_p->search_key_p;
@@ -2813,19 +2851,22 @@ class BwTree {
           assert(KeyCmpGreaterEqual(search_key, *lbound_p) && \
                  KeyCmpLess(search_key, *ubound_p));
 
-          // First bulk load data item for the search key, if exists
-          for(const DataItem &item : leaf_node_p->data_list) {
-            if(KeyCmpEqual(item.key, search_key)) {
-              logical_node_p->BulkLoadValue(item);
+          // If value is not collected then we do not play log
+          if(collect_value == true) {
+            // First bulk load data item for the search key, if exists
+            for(const DataItem &item : leaf_node_p->data_list) {
+              if(KeyCmpEqual(item.key, search_key)) {
+                logical_node_p->BulkLoadValue(item);
 
-              break;
+                break;
+              }
             }
-          }
 
-          // Then replay log
-          // NOTE: This does not have to be recursive since we only
-          // follow one path down to the bottom
-          logical_node_p->ReplayLog(log_count);
+            // Then replay log
+            // NOTE: This does not have to be recursive since we only
+            // follow one path down to the bottom
+            logical_node_p->ReplayLog(log_count);
+          }
 
           return;
         }
@@ -2833,12 +2874,14 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          // If there is a match then push the delta
-          if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
-            bwt_printf("Push insert delta\n");
+          if(collect_value == true) {
+            // If there is a match then push the delta
+            if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
+              bwt_printf("Push insert delta\n");
 
-            logical_node_p->pointer_list.push_back(node_p);
-            log_count++;
+              logical_node_p->pointer_list.push_back(node_p);
+              log_count++;
+            }
           }
 
           node_p = insert_node_p->child_node_p;
@@ -2849,11 +2892,13 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
-            bwt_printf("Push delete delta\n");
+          if(collect_value == true) {
+            if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
+              bwt_printf("Push delete delta\n");
 
-            logical_node_p->pointer_list.push_back(node_p);
-            log_count++;
+              logical_node_p->pointer_list.push_back(node_p);
+              log_count++;
+            }
           }
 
           node_p = delete_node_p->child_node_p;
@@ -2908,6 +2953,10 @@ class BwTree {
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
 
+              // It might help if we clear the stack of pointers before
+              // returning
+              // But they will eventually be deallocated so this is not a
+              // big problem
               return;
             }
 
@@ -4490,12 +4539,13 @@ class BwTree {
    * Based on the same reason above this routine either does not
    * require a NodeID
    */
-  bool IsKeyPresent(const KeyType &search_key,
-                    const BaseNode *leaf_head_node_p) const {
-    // Just to pass compilation
-    ReplayLogOnLeafByKey(search_key, nullptr, nullptr);
+  bool IsKeyPresent(const KeyType &search_key) {
+    Context context{&search_key};
 
-    return false;
+    Traverse(&context);
+
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+
   }
 
   bool Insert(const RawKeyType &raw_key, ValueType &value) {
