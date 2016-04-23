@@ -2407,12 +2407,10 @@ class BwTree {
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
-    // Even if it has data we need to clear, since we want to traverse
-    // to its sibling
+    // Even if it has data we need to keep traversing, since we want to
+    // traverse to its sibling if there is one
     if(snapshot_p->has_data == true) {
-      bwt_printf("Inner snapshot already has data. Clear()\n");
-
-      snapshot_p->ResetLogicalNode();
+      bwt_printf("Inner snapshot already has data.\n");
     }
 
     bool first_time = true;
@@ -2530,10 +2528,10 @@ class BwTree {
 
             // NOTE: IT IS POSSIBLE THAT JUMP TO NODE ID
             // ALSO LOAD INTO THE SNAPSHOT
+            // But we do not care since data will not interfere here
+            // with our search (no map insertion conflict as in leaf node)
             if(snapshot_p->has_data == true) {
-              bwt_printf("After inner jumping there is data. Clear()\n");
-
-              snapshot_p->ResetLogicalNode();
+              bwt_printf("After inner jumping there is data\n");
             }
 
             // Since we have jumped to a new NodeID, we could see a remove node
@@ -2593,10 +2591,19 @@ class BwTree {
    *
    * After this function returns, it is guaranteed that has_data and
    * has_metadata flag inside snapshot object is set to true
+   *
+   * NOTE: This function makes use of cached logical node if there is one
    */
   void CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
-    // Make sure previous result does not interfere with this round
-    snapshot_p->ResetLogicalNode();
+    // If there is cached version of value then just make use of
+    // it. The cache will be invalidated when we switch physical pointer
+    if(snapshot_p->has_data == true) {
+      bwt_printf("Fast path: Use previous cached value\n");
+
+      assert(snapshot_p->has_metadata == true);
+
+      return;
+    }
 
     LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
 
@@ -2875,6 +2882,15 @@ class BwTree {
    * value. If collect_value is set to false, then this function only traverses
    * the leaf node without collecting any actual value, while still being
    * able to traverse to its left sibling and potentially abort
+   *
+   * NOTE: If there is prior data in its logical node when calling this function
+   * then we simply turn off collect_value flag in order to make use of
+   * these values and avoid map insert conflict.
+   *
+   * NOTE 2: After jumping to a new NodeID in this function there will be similar
+   * problems since now the snapshot has been changed, and we need to check
+   * whether there is data in the map again to make sure there is no
+   * map insert conflict
    */
   void NavigateLeafNode(Context *context_p,
                         bool collect_value) {
@@ -2890,10 +2906,11 @@ class BwTree {
     // Even if it has cached data, we need to clean it since
     // we want to traverse to sibling node
     if(snapshot_p->has_data == true) {
-      bwt_printf("Leaf snapshot already has data. Clear()\n");
+      bwt_printf("Leaf snapshot already has data. Stop collecting value\n");
 
       // This voids having value conflict problem
-      snapshot_p->ResetLogicalNode();
+      // since we simply rely on previously collected data
+      collect_value = false;
     }
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -3060,9 +3077,11 @@ class BwTree {
             // NOTE: IT IS POSSIBLE THAT JUMP TO NODE ID
             // ALSO LOAD INTO THE SNAPSHOT
             if(snapshot_p->has_data == true) {
-              bwt_printf("After leaf jumping there is data. Clear()\n");
+              bwt_printf("After leaf jumping there is data. Use cached value\n");
 
-              snapshot_p->ResetLogicalNode();
+              // This avoids map key insert conflict problem
+              // since we make use of cached data
+              collect_value = false;
             }
 
             // Since we have switched to a new NodeID
@@ -3348,12 +3367,18 @@ class BwTree {
    * This function is the non-recursive wrapper of the resursive core function.
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
+   *
+   * NOTE 4: This function makes use of cached logical node if there is one
    */
   void
   CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
-    // Clear all states and saved values to avoid them interfering with
-    // this round
-    snapshot_p->ResetLogicalNode();
+    if(snapshot_p->has_data == true) {
+      bwt_printf("Fast path: There is cached value.\n");
+
+      assert(snapshot_p->has_metadata == true);
+
+      return;
+    }
 
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->logical_node_p != nullptr);
