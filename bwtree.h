@@ -3546,8 +3546,22 @@ class BwTree {
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
     FinishPartialSMO(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
     ConsolidateNode(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
     AdjustNodeSize(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
 
     return;
   }
@@ -3568,8 +3582,22 @@ class BwTree {
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
     FinishPartialSMO(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
     ConsolidateNode(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
     AdjustNodeSize(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
 
     return;
   }
@@ -4031,6 +4059,9 @@ class BwTree {
    * For leftmost children nodes and for root node (which has is_leftmost
    * flag set) we never post remove delta, the merge of which would change
    * its parent node's low key
+   *
+   * NOTE: This function will abort after installing a node remove delta,
+   * in order not to have to call LoadNodeID recursively
    */
   void AdjustNodeSize(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4065,10 +4096,66 @@ class BwTree {
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
+        LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
+        const KeyType *split_key_p = &new_leaf_node_p->lbound;
+
+        NodeID new_node_id = GetNextNodeID();
+
+        // TODO: If we add support to split base node with a delta chain
+        // then this is the length of the delta chain
+        int depth = 1;
+
+        const LeafSplitNode *split_node_p = \
+          new LeafSplitNode{*split_key_p, new_node_id, depth, node_p};
+
+        //  First install the NodeID -> split sibling mapping
+        InstallNewNode(new_node_id, new_leaf_node_p);
+        // Then CAS split delta into current node's NodeID
+        bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
+
+        if(ret == true) {
+          bwt_printf("Leaf split delta CAS succeeds\n");
+
+          snapshot_p->node_p = new_leaf_node_p;
+        } else {
+          bwt_printf("Leaf split delta CAS fails\n");
+
+          // We have two nodes to delete here
+          delete split_node_p;
+          delete new_leaf_node_p;
+
+          return;
+        }
 
       } else if(node_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+        if(snapshot_p->is_leftmost_child == true || \
+           snapshot_p->is_root == true) {
+          bwt_printf("Left most leaf node cannot be removed\n");
+
+          return;
+        }
+
         bwt_printf("Node size <= leaf lower threshold. Remove\n");
 
+        const LeafRemoveNode *remove_node_p = \
+          new LeafRemoveNode{depth, node_p};
+
+        bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
+        if(ret == true) {
+          bwt_printf("LeafRemoveNode CAS succeeds. ABORT.\n");
+
+          snapshot_p->node_p = node_p;
+
+          context_p->abort_flag = true;
+
+          return;
+        } else {
+          bwt_printf("LeafRemoveNode CAS failed\n");
+
+          delete remove_node_p;
+
+          return;
+        }
       }
     } else {
       const InnerNode *inner_node_p = \
@@ -4085,10 +4172,68 @@ class BwTree {
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
 
+        InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
+        const KeyType *split_key_p = &new_inner_node_p->lbound;
+
+        NodeID new_node_id = GetNextNodeID();
+
+        // TODO: If we add support to split base node with a delta chain
+        // then this is the length of the delta chain
+        int depth = 1;
+
+        const InnerSplitNode *split_node_p = \
+          new InnerSplitNode{*split_key_p, new_node_id, depth, node_p};
+
+        //  First install the NodeID -> split sibling mapping
+        InstallNewNode(new_node_id, new_inner_node_p);
+        // Then CAS split delta into current node's NodeID
+        bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
+
+        if(ret == true) {
+          bwt_printf("Inner split delta CAS succeeds\n");
+
+          snapshot_p->node_p = new_inner_node_p;
+        } else {
+          bwt_printf("Inner split delta CAS fails\n");
+
+          // We have two nodes to delete here
+          delete split_node_p;
+          delete new_inner_node_p;
+
+          return;
+        } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
+        // We could not remove leftmost node
+        if(snapshot_p->is_leftmost_child == true || \
+           snapshot_p->is_root == true) {
+          bwt_printf("Left most inner node cannot be removed\n");
+
+          return;
+        }
+
         bwt_printf("Node size <= inner lower threshold. Remove\n");
 
-      }
+        const InnerRemoveNode *remove_node_p = \
+          new InnerRemoveNode{depth, node_p};
+
+        bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
+        if(ret == true) {
+          bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
+
+          snapshot_p->node_p = node_p;
+
+          // We abort after installing a node remove delta
+          context_p->abort_flag = true;
+
+          return;
+        } else {
+          bwt_printf("LeafRemoveNode CAS failed\n");
+
+          delete remove_node_p;
+
+          return;
+        }
+      } // if split/remove
     }
 
     return;
