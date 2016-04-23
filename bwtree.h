@@ -1529,6 +1529,23 @@ class BwTree {
     }
 
     /*
+     * SwitchPhysicalPointer() - Changes physical pointer, and invalidate
+     *                           cached data & metadata of logical node
+     *
+     * After installing a new delta node using CAS, we need to switch the
+     * snapshot to the newly installed delta node. This requires invalidation
+     * of cached logical node data.
+     */
+    void SwitchPhysicalPointer(const BaseNode *p_node_p) {
+      node_p = p_node_p;
+
+      // Since physical pointer has changed, we invalidate it here
+      ResetLogicalNode();
+
+      return;
+    }
+
+    /*
      * GetLogicalLeafNode() - Return the logical leaf node
      *
      * We use this as a wrapper to save a type casting
@@ -1700,13 +1717,13 @@ class BwTree {
     assert(first_node_id == 1UL);
 
     SepItem neg_si {GetNegInfKey(), first_node_id};
-    SepItem pos_si {GetPosInfKey(), INVALID_NODE_ID};
+    //SepItem pos_si {GetPosInfKey(), INVALID_NODE_ID};
 
     InnerNode *root_node_p = \
       new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
     root_node_p->sep_list.push_back(neg_si);
-    root_node_p->sep_list.push_back(pos_si);
+    //root_node_p->sep_list.push_back(pos_si);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -1965,7 +1982,9 @@ class BwTree {
           // If the sep key equals the low key of current node then we
           // know it definitely is the left most child since lbound is always
           // tight
-          if(KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
+          // NOTE: For root node, current_lbound_p is nullptr
+          if(current_lbound_p == nullptr ||
+             KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
             is_leftmost_child = true;
           }
 
@@ -2350,6 +2369,25 @@ class BwTree {
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
+
+    // Fast path: If we know data already exists then directly make
+    // use of them
+    if(snapshot_p->has_data == true) {
+      bwt_printf("Fast path: Make use of cached data in snapshot\n");
+
+      auto &container = snapshot_p->GetLogicalInnerNode()->GetContainer();
+      for(auto it = container.rbegin();
+          it != container.rend();
+          it++) {
+        // The first sep that is less than or equal to search key
+        // from right to left
+        if(KeyCmpGreaterEqual(search_key, it->first) == true) {
+          *lbound_p_p = &it->first;
+
+          return it->second;
+        }
+      }
+    }
 
     bool first_time = true;
 
@@ -2816,7 +2854,14 @@ class BwTree {
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->logical_node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
-    assert(snapshot_p->has_data == false);
+
+    // Fast path: If there is already data cached
+    // then we just make use of it
+    if(snapshot_p->has_data == true) {
+      bwt_printf("Fast path: Already has data\n");
+
+      return;
+    }
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -3557,7 +3602,8 @@ class BwTree {
     NodeSnapshot snapshot{is_leaf};
 
     snapshot.node_id = node_id;
-    snapshot.node_p = node_p;
+    // This makes sure the cached version of logical node is removed
+    snapshot.SwitchPhysicalPointer(node_p);
 
     // This is useful for finding left sibling
     snapshot.lbound_p = lbound_p;
@@ -3608,13 +3654,13 @@ class BwTree {
 
     // We change these three
     snapshot_p->is_leftmost_child = is_leftmost_child;
-    snapshot_p->node_p = node_p;
     snapshot_p->node_id = node_id;
     snapshot_p->lbound_p = lbound_p;
 
     // Resets all cached metadata and data
     // including flags
-    snapshot_p->ResetLogicalNode();
+    // and also replace physical pointer
+    snapshot_p->SwitchPhysicalPointer(node_p);
 
     return;
   }
@@ -3809,7 +3855,7 @@ class BwTree {
                type == NodeType::LeafMergeType);
 
         // Update the new merge node back to snapshot
-        snapshot_p->node_p = node_p;
+        snapshot_p->SwitchPhysicalPointer(node_p);
 
         // FALL THROUGH TO MERGE
       } // case Inner/LeafRemoveType
@@ -3922,7 +3968,7 @@ class BwTree {
         }
 
         // Update in parent snapshot
-        parent_snapshot_p->node_p = delete_node_p;
+        parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
 
         break;
       } // case Inner/LeafMergeNode
@@ -4042,7 +4088,8 @@ class BwTree {
             return;
           } // if CAS succeeds/fails
 
-          parent_snapshot_p->node_p = insert_node_p;
+          // Invalidate cached version of logical node
+          parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
         } // if split root / else not split root
 
         break;
@@ -4110,7 +4157,7 @@ class BwTree {
         bwt_printf("Leaf node consolidation CAS succeeds\n");
 
         // Update current snapshot using our best knowledge
-        snapshot_p->node_p = leaf_node_p;
+        snapshot_p->SwitchPhysicalPointer(leaf_node_p);
 
         // TODO: PUT OLD NODE CHAIN INTO EPOCH
       } else {
@@ -4129,7 +4176,7 @@ class BwTree {
       if(ret == true) {
         bwt_printf("Inner node consolidation CAS succeeds\n");
 
-        snapshot_p->node_p = inner_node_p;
+        snapshot_p->SwitchPhysicalPointer(inner_node_p);
 
         // TODO: PUT OLD NODE CHAIN INTO EPOCH
       } else {
@@ -4177,6 +4224,8 @@ class BwTree {
 
       // No matter what we want to do, this is necessary
       // since we need to
+      // NOTE: This causes problem for later uses since it
+      // fills the node with actual value
       if(snapshot_p->has_data == false) {
         CollectAllValuesOnLeaf(snapshot_p);
       }
@@ -4209,7 +4258,7 @@ class BwTree {
         if(ret == true) {
           bwt_printf("Leaf split delta CAS succeeds\n");
 
-          snapshot_p->node_p = new_leaf_node_p;
+          snapshot_p->SwitchPhysicalPointer(new_leaf_node_p);
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
@@ -4241,7 +4290,7 @@ class BwTree {
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT.\n");
 
-          snapshot_p->node_p = node_p;
+          snapshot_p->SwitchPhysicalPointer(node_p);
 
           context_p->abort_flag = true;
 
@@ -4289,7 +4338,7 @@ class BwTree {
         if(ret == true) {
           bwt_printf("Inner split delta CAS succeeds\n");
 
-          snapshot_p->node_p = new_inner_node_p;
+          snapshot_p->SwitchPhysicalPointer(new_inner_node_p);
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
@@ -4321,7 +4370,7 @@ class BwTree {
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
 
-          snapshot_p->node_p = node_p;
+          snapshot_p->SwitchPhysicalPointer(node_p);
 
           // We abort after installing a node remove delta
           context_p->abort_flag = true;
@@ -4624,7 +4673,7 @@ class BwTree {
 
         // This will actually not be used anymore, so maybe
         // could save this assignment
-        snapshot_p->node_p = insert_node_p;
+        snapshot_p->SwitchPhysicalPointer(insert_node_p);
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
