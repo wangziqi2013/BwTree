@@ -1881,15 +1881,21 @@ class BwTree {
    * This function is implemented as a state machine that allows a thread
    * to jump back to Init state when necessary (probably a CAS failed and
    * it does not want to resolve it from bottom up)
+   *
+   * It stops at page level, and then the top on the context stack is a
+   * leaf level snapshot, with all SMOs, consolidation, and possibly
+   * split/remove finished
    */
   void Traverse(Context *context_p) {
     while(1) {
+      // NOTE: break only breaks out this switch
       switch(context_p->current_state) {
         case OpState::Init: {
           assert(context_p->path_list.size() == 0);
           assert(context_p->abort_flag == false);
           assert(context_p->current_level == 0);
 
+          // This is the serialization point for reading/writing root node
           NodeID start_node_id = root_id.load();
 
           // We need to call this even for root node since there could
@@ -1922,17 +1928,52 @@ class BwTree {
           break;
         } // case Init
         case OpState::Inner: {
-          NodeID child_node_id = NavigateInnerNode(context_p);
+          // For inner nodes, when traversing down we should keep track of the
+          // low key for the NodeID returned, and whether it is the left most
+          // child of the parent node
+          const KeyType *lbound_p = nullptr;
+
+          NodeID child_node_id = \
+            NavigateInnerNode(context_p, &lbound_p);
 
           // Navigate could abort since it goes to another NodeID
           if(context_p->abort_flag == true) {
+            // This is defined in Navigate function
+            assert(child_node_id == INVALID_NODE_ID);
+
             context_p.current_state = OpState::Abort;
 
             break;
           }
+
+          //LoadNodeID(child_node_id,
+          //           context_p,)
         } // case Inner
+        case OpState::Abort: {
+          std::vector<NodeSnapshot> *path_list_p = \
+            &context_p->path_list;
+
+          // This calls destructor for all NodeSnapshot object, and
+          // will release memory for logical node object
+          path_list_p->clear();
+
+          context_p->abort_counter++;
+          context_p->current_level = 0;
+          context_p->current_state = OpState::Init;
+          context_p->abort_flag = false;
+
+          break;
+        } // case Abort
+        default: {
+          bwt_printf("ERROR: Unknown State: %d\n",
+                     context_p->current_state);
+          assert(false);
+          break;
+        }
       } // switch current_state
     } // while(1)
+
+    return;
   }
 
   /*
@@ -2023,10 +2064,14 @@ class BwTree {
    *
    * NOTE 2: This function will hit assertion failure if the key
    * range is not correct OR the node ID is invalid
+   *
+   * NOTE 3: This function takes a fourth argument as return value
+   * to record the separator key associated with the NodeID
    */
   NodeID LocateSeparatorByKey(const KeyType &search_key,
                               const InnerNode *inner_node_p,
-                              const KeyType *ubound_p) const {
+                              const KeyType *ubound_p,
+                              const KeyType **lbound_p_p) const {
     // If the upper bound is not set because we have not met a
     // split delta node, then just set to the current upper bound
     if(ubound_p == nullptr) {
@@ -2050,6 +2095,9 @@ class BwTree {
     while(iter2 != sep_list_p->end()) {
       if(KeyCmpGreaterEqual(search_key, iter1->key) && \
          KeyCmpLess(search_key, iter2->key)) {
+        // We set separator key before returning
+        *lbound_p_p = &iter1->key;
+
         return iter1->node;
       }
 
@@ -2064,9 +2112,13 @@ class BwTree {
     // If search key >= upper bound (natural or artificial) then
     // we have hit the wrong inner node
     assert(KeyCmpLess(search_key, *ubound_p));
+
     // Search key must be greater than or equal to the lower bound
     // which is assumed to be a constant associated with a NodeID
     assert(KeyCmpGreaterEqual(search_key, inner_node_p->lbound));
+
+    // In this corner case, iter1 is the correct sep/NodeID pair
+    *lbound_p_p = &iter1->key;
 
     return iter1->node;
   }
@@ -2201,11 +2253,16 @@ class BwTree {
    * a half split state. If this happens, then the flag inside snapshot_p
    * is set to true, and also the corresponding NodeId and BaseNode *
    * will be updated to reflect the newest sibling ID and pointer.
-   * After returnrning of this function please remember to check the flag
+   * After returning of this function please remember to check the flag
    * and update path history. (Such jump may happen multiple times, so
-   * do not make any assumpion about how jump is performed)
+   * do not make any assumption about how jump is performed)
+   *
+   * NOTE 2: This function is different from Navigate leaf version because it
+   * takes an extra argument for remembering the separator key associated
+   * with the NodeID.
    */
-  NodeID NavigateInnerNode(Context *context_p) const {
+  NodeID NavigateInnerNode(Context *context_p,
+                           const KeyType **lbound_p_p) const {
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -2234,7 +2291,10 @@ class BwTree {
             static_cast<const InnerNode *>(node_p);
 
           NodeID target_id = \
-            LocateSeparatorByKey(search_key, inner_node_p, ubound_p);
+            LocateSeparatorByKey(search_key,
+                                 inner_node_p,
+                                 ubound_p,
+                                 lbound_p_p); // This records the sep
 
           bwt_printf("Found an inner node ID = %lu\n", target_id);
 
@@ -2258,6 +2318,9 @@ class BwTree {
              KeyCmpLess(search_key, insert_high_key)) {
             bwt_printf("Find target ID = %lu in insert delta\n", target_id);
 
+            // Assign the separator key that brings us here
+            *lbound_p_p = &insert_low_key;
+
             return target_id;
           }
 
@@ -2280,6 +2343,10 @@ class BwTree {
           if(KeyCmpGreaterEqual(search_key, delete_low_key) && \
              KeyCmpLess(search_key, delete_high_key)) {
             bwt_printf("Find target ID = %lu in delete delta\n", target_id);
+
+            // For delete node, if there is a match then it must be
+            // the prev separator key for deleted key
+            *lbound_p_p = &delete_low_key;
 
             return target_id;
           }
@@ -2311,6 +2378,9 @@ class BwTree {
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
 
+              // Before returning an invalid node ID, set it to NULL
+              *lbound_p_p = nullptr;
+
               return INVALID_NODE_ID;
             }
 
@@ -2339,6 +2409,9 @@ class BwTree {
 
           const KeyType &merge_key = merge_node_p->merge_key;
 
+          // Here since we will only take one branch, so
+          // high key does not need to be updated
+          // Since we still could not know the high key
           if(KeyCmpGreaterEqual(search_key, merge_key)) {
             node_p = merge_node_p->right_merge_p;
           } else {
