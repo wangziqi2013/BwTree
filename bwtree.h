@@ -1946,8 +1946,44 @@ class BwTree {
             break;
           }
 
-          //LoadNodeID(child_node_id,
-          //           context_p,)
+          bool is_leftmost_child = false;
+
+          // This returns the current inner node that we are traversing into
+          // There must be at least one at this stage
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
+          // This is the low key of current inner node
+          const KeyType *current_lbound_p = snapshot_p->lbound_p;
+
+          // If the sep key equals the low key of current node then we
+          // know it definitely is the left most child since lbound is always
+          // tight
+          if(KeyCmpEqual(current_lbound_p, lbound_p) == true) {
+            is_leftmost_child = true;
+          }
+
+          // This might load a leaf child
+          LoadNodeID(child_node_id,
+                     context_p,
+                     lbound_p,
+                     is_leftmost_child);
+
+          if(context_p->abort_flag == true) {
+            bwt_printf("LoadNodeID aborted. ABORT\n");
+
+            break;
+          }
+
+          // If we have reached a leaf node, then just return, and
+          // the current context object contains the leaf node ID and
+          // base node pointer
+          snapshot_p = GetLatestNodeSnapshot(context_p);
+          if(snapshot_p->is_leaf == true) {
+            bwt_printf("Reached leaf page. abort_counter = %lu\n",
+                       context_p->abort_counter);
+
+            return;
+          }
         } // case Inner
         case OpState::Abort: {
           std::vector<NodeSnapshot> *path_list_p = \
