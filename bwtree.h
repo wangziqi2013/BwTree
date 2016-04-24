@@ -24,8 +24,11 @@
 #include <map>
 #include <stack>
 
+// Used for debugging
+#include <mutex>
+
 #define BWTREE_DEBUG
-//#define INTERACTIVE_DEBUG
+#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -38,7 +41,7 @@ namespace index {
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
       printf("assert, %-24s, line %d \033[0m", __FUNCTION__, __LINE__); \
-      idb.start();                                                      \
+      idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
   } while (0);
@@ -49,7 +52,7 @@ namespace index {
       debug_stop_mutex.lock();                                          \
       printf("assert, %-24s, line %d \033[0m", __FUNCTION__, __LINE__); \
       idb.key_list.push_back(&key);                                     \
-      idb.start();                                                      \
+      idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
   } while (0);
@@ -91,8 +94,8 @@ static void dummy(const char*, ...) {}
 // In multi-threaded testing, if we want to halt all threads when an error
 // happens
 // then we lock this mutex
-// Since every other thread will try to lock this at the beginning of
-// findLeafPage() which is called for every operation, they will all stop
+// Since every other thread will try to lock this before SMO
+// it guarantees no SMO would happen before everybody stops
 static std::mutex debug_stop_mutex;
 #endif
 
@@ -107,7 +110,6 @@ template <typename RawKeyType,
           typename ValueType,
           typename KeyComparator = std::less<RawKeyType>,
           typename KeyEqualityChecker = std::equal_to<RawKeyType>,
-          typename ValueComparator = std::less<ValueType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
@@ -1726,7 +1728,8 @@ class BwTree {
       value_eq_obj{p_value_eq_obj},
       value_hash_obj{p_value_hash_obj},
       key_dup{p_key_dup},
-      next_unused_node_id{0} {
+      next_unused_node_id{0},
+      idb{this} {
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
 
@@ -1857,6 +1860,13 @@ class BwTree {
     // Make sure node id is valid and does not exceed maximum
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
+
+    // If idb is activated, then all operation will be blocked before
+    // they could call CAS and change the key
+    #ifdef INTERACTIVE_DEBUG
+    debug_stop_mutex.lock();
+    debug_stop_mutex.unlock();
+    #endif
 
     bool ret = mapping_table[node_id].compare_exchange_strong(prev_p, node_p);
 
@@ -2965,8 +2975,10 @@ class BwTree {
 
           // Even if we have seen merge and split this always hold
           // since merge and split would direct to the correct page by sep key
-          assert(KeyCmpGreaterEqual(search_key, *lbound_p) && \
-                 KeyCmpLess(search_key, *ubound_p));
+          idb_assert_key(search_key,
+                         (KeyCmpGreaterEqual(search_key, *lbound_p) && \
+                         KeyCmpLess(search_key, *ubound_p))
+                         );
 
           // If value is not collected then we do not play log
           if(collect_value == true) {
@@ -4954,6 +4966,8 @@ class BwTree {
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
+  InteractiveDebugger idb;
+
  /*
   * Debug function definition
   */
@@ -5058,9 +5072,9 @@ class BwTree {
     // This always points to the current top node of
     // delta chain which is exactly the node pointer
     // for current_pid
-    const BaseNode* top_node_p;
+    const BaseNode *top_node_p;
 
-    const BaseNode* current_node_p;
+    const BaseNode *current_node_p;
     NodeType current_type;
 
     // We use unique, order-preserving int as identity for
@@ -5071,12 +5085,15 @@ class BwTree {
     // This stores mapping from key to value
     // These values are irrelevant to actual values
     // except that they preserve order
-    std::map<KeyType, uint64_t, KeyComparator> key_map;
-    std::map<ValueType, uint64_t, ValueComparator> value_map;
+    std::map<KeyType, uint64_t, WrappedKeyComparator> key_map;
+    std::unordered_map<ValueType,
+                       uint64_t,
+                       ValueHashFunc,
+                       ValueEqualityChecker> value_map;
 
     // Stacks to record history position and used for backtracking
-    std::stack<BaseNode *> node_p_stack;
-    std::stack<BaseNode *> top_node_p_stack;
+    std::stack<const BaseNode *> node_p_stack;
+    std::stack<const BaseNode *> top_node_p_stack;
     std::stack<NodeID> node_id_stack;
     std::stack<bool> need_switch_stack;
 
@@ -5101,7 +5118,7 @@ class BwTree {
         return std::string("key-") + std::to_string(id);
       }
 
-      // 0 is -inf 1 is +inf
+      // 0 is -inf, max is +inf
       if (key_map[key] == 0) {
         return "-Inf";
       } else if (key_map[key] == key_map.size() - 1) {
@@ -5263,8 +5280,11 @@ class BwTree {
       } else if (s == "node-pointer") {
         std::cout << current_node_p << std::endl;
       } else if (s == "type") {
-        std::cout << current_type << " (" << NodeTypeToString(current_type)
-                  << ")" << std::endl;
+        std::cout << static_cast<int>(current_type)
+                  << " ("
+                  << NodeTypeToString(current_type)
+                  << ")"
+                  << std::endl;
       } else {
         std::cout << "Unknown print argument: " << s << std::endl;
       }
@@ -5418,8 +5438,8 @@ class BwTree {
       std::cout << "Number of separators: " << inner_node_p->sep_list.size()
                 << std::endl;
 
-      for (auto it : inner_node_p->sep_list) {
-        std::cout << "[" << GetKeyID(it.first) << ", " << it.second << "]"
+      for (SepItem it : inner_node_p->sep_list) {
+        std::cout << "[" << GetKeyID(it.key) << ", " << it.node << "]"
                   << ", ";
       }
 
@@ -5466,7 +5486,7 @@ class BwTree {
     void ProcessPrintLeaf() {
       if (current_type != NodeType::LeafType) {
         std::cout << "Type ("
-                  << PageTypeToString(current_type)
+                  << NodeTypeToString(current_type)
                   << ") does not have leaf array"
                   << std::endl;
 
@@ -5481,13 +5501,13 @@ class BwTree {
                 << std::endl;
 
       // Iterate through keys
-      for (auto &it : leaf_node_p->data_list) {
-        std::cout << GetKeyID(it.first)
+      for (const DataItem &it : leaf_node_p->data_list) {
+        std::cout << GetKeyID(it.key)
                   << ": [";
 
         // Print all values in one line, separated by comma
-        for (auto it2 = it->second.begin(); it2 != it->second.end(); it2++) {
-          std::cout << GetValueID(*it2) << ", ";
+        for (auto &it2 : it.value_list) {
+          std::cout << GetValueID(it2) << ", ";
         }
 
         std::cout << "], " << std::endl;
@@ -5501,7 +5521,7 @@ class BwTree {
      */
     void ProcessPrintDelta() {
       std::cout << "Node type: "
-                << current_type
+                << static_cast<int>(current_type)
                 << " ("
                 << NodeTypeToString(current_type) << ")"
                 << std::endl;
@@ -5704,7 +5724,7 @@ class BwTree {
 
     void Start() {
       // We could not start with empty root node
-      assert(prepareNodeByID(tree->root_id.load(), true) == true);
+      assert(PrepareNodeByID(tree->root_id.load(), true) == true);
       SortKeyMap();
 
       std::cout << "********* Interactive Debugger *********\n";
@@ -5737,8 +5757,11 @@ class BwTree {
           // print lower and upper bound for leaf and inenr node
           ProcessPrintBound();
         } else if (opcode == "type") {
-          std::cout << current_type << " (" << NodeTypeToString(current_type)
-                    << ")" << std::endl;
+          std::cout << static_cast<int>(current_type)
+                    << " ("
+                    << NodeTypeToString(current_type)
+                    << ")"
+                    << std::endl;
         } else if (opcode == "goto-child") {
           // Goto child node pointed to by a physical pointer
           // in delta nodes
