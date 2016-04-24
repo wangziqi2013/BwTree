@@ -77,7 +77,7 @@ namespace index {
 
 #define bwt_printf(fmt, ...)                              \
   do {                                                    \
-    printf("%-24s(%.8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
+    printf("%-24s(%8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
     fflush(stdout);                                       \
   } while (0);
 
@@ -1958,6 +1958,7 @@ class BwTree {
     // We must start from a clean state
     assert(context_p->path_list.size() == 0);
 
+    // This will use lock
     #ifdef INTERACTIVE_DEBUG
     idb.AddKey(context_p->search_key);
     #endif
@@ -5126,6 +5127,8 @@ class BwTree {
     // Also used as a buffer to hold PID
     std::vector<NodeID> node_id_list;
 
+    std::mutex add_key_mutex;
+
     /*
      * AddKey() - Record the key in its map such that we could sort them
      *
@@ -5133,7 +5136,9 @@ class BwTree {
      * call Traverse()
      */
     void AddKey(const KeyType &key) {
+      add_key_mutex.lock();
       key_map[key] = 0;
+      add_key_mutex.unlock();
 
       return;
     }
@@ -5840,7 +5845,7 @@ class BwTree {
           } else {
             std::cout << GetKeyID(key_list[key_index]) << std::endl;
           }
-        } else if (opcode == "get-pid") {
+        } else if (opcode == "get-id") {
           int node_id_index;
           std::cin >> node_id_index;
 
@@ -5850,6 +5855,8 @@ class BwTree {
             std::cout << "pid_list[" << node_id_index
                       << "] = " << node_id_list[node_id_index] << std::endl;
           }
+        } else if(opcode == "get-thread-id") {
+
         } else {
           std::cout << "Unknown command: " << opcode << std::endl;
         }
