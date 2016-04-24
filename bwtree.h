@@ -1975,8 +1975,9 @@ class BwTree {
             break;
           }
 
+          // Make sure this flag is set
           NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-          snapshot_p->SetRootFlag();
+          assert(snapshot_p->is_root == true);
 
           bwt_printf("Successfully loading root node ID\n");
 
@@ -3714,6 +3715,9 @@ class BwTree {
    * NOTE 5: IF NODE ID DOES NOT CHANGE, DO NOT CALL THIS FUNCTION
    * SINCE THIS FUNCTION RESETS ROOT IDENTITY
    * Call SwitchPhysicalPointer() instead
+   *
+   * TODO: In the future add an option to make it turn off self-checking
+   * (i.e. checking whether switching to itself) whenever requested
    */
   void UpdateNodeSnapshot(NodeID node_id,
                           Context *context_p,
@@ -3755,6 +3759,10 @@ class BwTree {
    *
    * If we just want to modify existing snapshot object in the stack, we should
    * call JumpToNodeID() instead
+   *
+   * NOTE: If this function is called when we are still in Init mode, then
+   * root flag is set as a side-effect, since we know now we are definitely
+   * loading the ID for root node
    */
   void LoadNodeID(NodeID node_id,
                   Context *context_p,
@@ -3764,6 +3772,15 @@ class BwTree {
 
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
+
+    // If we are in init state, then set root flag
+    if(context_p->current_state == OpState::Init) {
+      bwt_printf("Loading NodeID for root; set root flag\n");
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+      snapshot_p->SetRootFlag();
+    }
+
     FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
@@ -4076,25 +4093,24 @@ class BwTree {
         bwt_printf("Helping along split node\n");
 
         // We need to read these three from split delta node
-        int depth = 0;
         const KeyType *split_key_p = nullptr;
         const KeyType *next_key_p = nullptr;
         NodeID split_node_id = INVALID_NODE_ID;
 
+        // NOTE: depth should not be read here, since we
+        // need to know the depth on its parent node
         if(type == NodeType::InnerSplitType) {
           const InnerSplitNode *split_node_p = \
             static_cast<const InnerSplitNode *>(node_p);
 
           split_key_p = &split_node_p->split_key;
           split_node_id = split_node_p->split_sibling;
-          depth = split_node_p->depth + 1;
         } else {
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(node_p);
 
           split_key_p = &split_node_p->split_key;
           split_node_id = split_node_p->split_sibling;
-          depth = split_node_p->depth + 1;
         }
 
         assert(context_p->path_list.size() > 0);
@@ -4138,6 +4154,10 @@ class BwTree {
           // NOTE: We do not have to update the snapshot to reflect newly assigned
           // root node
         } else {
+          /***********************************************************
+           * Index term insert for non-root nodes
+           ***********************************************************/
+
           // First consolidate parent node and find the right sep
           NodeSnapshot *parent_snapshot_p = \
             GetLatestParentNodeSnapshot(context_p);
@@ -4164,6 +4184,19 @@ class BwTree {
             break;
           }
 
+          // Determine the depth on parent delta chain
+          // If the parent node has delta node, then derive
+          // depth from delta node
+          int depth = 0;
+          if(parent_snapshot_p->node_p->IsDeltaNode()) {
+            const DeltaNode *delta_node_p = \
+              static_cast<const DeltaNode *>(parent_snapshot_p->node_p);
+
+            depth = delta_node_p->depth + 1;
+          } else {
+            depth = 1;
+          }
+
           const InnerInsertNode *insert_node_p = \
             new InnerInsertNode{*split_key_p,
                                 *next_key_p,
@@ -4177,6 +4210,9 @@ class BwTree {
                                           parent_snapshot_p->node_p);
           if(ret == true) {
             bwt_printf("Index term insert delta CAS succeeds\n");
+
+            // Invalidate cached version of logical node
+            parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
           } else {
             bwt_printf("Index term insert delta CAS failed. ABORT\n");
 
@@ -4186,9 +4222,6 @@ class BwTree {
 
             return;
           } // if CAS succeeds/fails
-
-          // Invalidate cached version of logical node
-          parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
         } // if split root / else not split root
 
         break;
@@ -4233,11 +4266,6 @@ class BwTree {
 
     // If depth does not exceeds threshold then just return
     const int depth = delta_node_p->depth;
-
-    if(snapshot_p->is_root == true) {
-      bwt_printf("Root depth = %d\n", depth);
-    }
-
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
       return;
     }
@@ -4316,6 +4344,8 @@ class BwTree {
    *
    * NOTE: This function will abort after installing a node remove delta,
    * in order not to have to call LoadNodeID recursively
+   *
+   * TODO: In the future we might want to change this
    */
   void AdjustNodeSize(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4758,14 +4788,18 @@ class BwTree {
     while(1) {
       Context context{&key};
 
+      // Collect values with node navigation
       Traverse(&context, true);
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
       LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
       KeyValueSet &container = logical_node_p->GetContainer();
 
+      // For insertion for should iterate through existing values first
+      // to make sure the key-value pair does not exist
       typename KeyValueSet::iterator it = container.find(key);
       if(it != container.end()) {
+        // Look for value in consolidated leaf with the given key
         auto it2 = it->second.find(value);
 
         if(it2 != it->second.end()) {
