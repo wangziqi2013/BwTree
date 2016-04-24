@@ -5127,7 +5127,7 @@ class BwTree {
     // Also used as a buffer to hold PID
     std::vector<NodeID> node_id_list;
 
-    std::mutex add_key_mutex;
+    std::mutex key_map_mutex;
 
     /*
      * AddKey() - Record the key in its map such that we could sort them
@@ -5136,9 +5136,11 @@ class BwTree {
      * call Traverse()
      */
     void AddKey(const KeyType &key) {
-      add_key_mutex.lock();
+      key_map_mutex.lock();
+
       key_map[key] = 0;
-      add_key_mutex.unlock();
+
+      key_map_mutex.unlock();
 
       return;
     }
@@ -5761,10 +5763,15 @@ class BwTree {
      */
     void SortKeyMap() {
       uint64_t counter = 0;
+
+      key_map_mutex.lock();
+
       for (auto it = key_map.begin(); it != key_map.end(); it++) {
         // -inf = 0; + inf = key_map.size() - 1
         it->second = counter++;
       }
+
+      key_map_mutex.unlock();
 
       return;
     }
@@ -5856,7 +5863,7 @@ class BwTree {
                       << "] = " << node_id_list[node_id_index] << std::endl;
           }
         } else if(opcode == "get-thread-id") {
-
+          printf("%8lX\n", std::hash<std::thread::id>()(std::this_thread::get_id()));
         } else {
           std::cout << "Unknown command: " << opcode << std::endl;
         }

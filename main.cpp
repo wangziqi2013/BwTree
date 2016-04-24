@@ -1,6 +1,6 @@
 
 #include "bwtree.h"
-#include <thread>
+
 
 using namespace peloton::index;
 
@@ -492,7 +492,7 @@ int main() {
   //TestNavigateInnerNode(t1);
 
   //InsertTest(t1);
-  LaunchParallelTestID(4, InsertTest, t1);
+  LaunchParallelTestID(40, InsertTest, t1);
   GetValueTest(t1);
 
   return 0;
