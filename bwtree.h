@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include <map>
 #include <stack>
+#include <thread>
 
 // Used for debugging
 #include <mutex>
@@ -65,7 +66,7 @@ namespace index {
     assert(cond);        \
   } while (0);
 
-#define idb_assert_key(key, cond) \
+#define idb_assert_key(key, id, cond) \
   do {                            \
     assert(cond);                 \
   } while (0);
@@ -76,7 +77,7 @@ namespace index {
 
 #define bwt_printf(fmt, ...)                              \
   do {                                                    \
-    printf("%-24s(): " fmt, __FUNCTION__, ##__VA_ARGS__); \
+    printf("%-16s(%lu): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
     fflush(stdout);                                       \
   } while (0);
 
@@ -2458,7 +2459,8 @@ class BwTree {
                                  ubound_p,
                                  lbound_p_p); // This records the sep
 
-          bwt_printf("Found an inner node ID = %lu\n", target_id);
+          bwt_printf("Found child in inner node; child ID = %lu\n",
+                     target_id);
 
           return target_id;
         } // case InnerType
@@ -3213,7 +3215,7 @@ class BwTree {
               // these key since they have been now stored in another leaf
               if(ubound_p != nullptr && \
                  KeyCmpGreaterEqual(data_item.key, *ubound_p)) {
-                bwt_printf("Obsolete key on Leaf Base Node\n");
+                //bwt_printf("Obsolete key on Leaf Base Node\n");
 
                 continue;
               }
@@ -3272,7 +3274,7 @@ class BwTree {
             if(ubound_p != nullptr && \
                KeyCmpGreaterEqual(insert_node_p->insert_key,
                                   *ubound_p)) {
-              bwt_printf("Insert key not in range (>= high key)\n");
+              //bwt_printf("Insert key not in range (>= high key)\n");
             } else {
               logical_node_p->pointer_list.push_back(node_p);
 
@@ -3295,7 +3297,7 @@ class BwTree {
             if(ubound_p != nullptr && \
                KeyCmpGreaterEqual(delete_node_p->delete_key,
                                   *ubound_p)) {
-              bwt_printf("Delete key not in range (>= high key)\n");
+              //bwt_printf("Delete key not in range (>= high key)\n");
             } else {
               logical_node_p->pointer_list.push_back(node_p);
 
@@ -3346,7 +3348,7 @@ class BwTree {
           break;
         } // case LeafSplitType
         case NodeType::LeafMergeType: {
-          bwt_printf("Observe LeafMergeNode; recursively collect nodes\n");
+          //bwt_printf("Observe LeafMergeNode; recursively collect nodes\n");
 
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(node_p);
@@ -4113,7 +4115,7 @@ class BwTree {
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
-        bwt_printf("Helping along split node\n");
+        bwt_printf("Helping along split node (ID = %lu)\n", node_id);
 
         // We need to read these three from split delta node
         const KeyType *split_key_p = nullptr;
@@ -4232,12 +4234,16 @@ class BwTree {
                                           insert_node_p,
                                           parent_snapshot_p->node_p);
           if(ret == true) {
-            bwt_printf("Index term insert delta CAS succeeds\n");
+            bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
+                       node_id,
+                       split_node_id);
 
             // Invalidate cached version of logical node
             parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
           } else {
-            bwt_printf("Index term insert delta CAS failed. ABORT\n");
+            bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. ABORT\n",
+                       node_id,
+                       split_node_id);
 
             // Set abort, and remove the newly created node
             context_p->abort_flag = true;
@@ -4319,7 +4325,8 @@ class BwTree {
       // CAS leaf node
       bool ret = InstallNodeToReplace(node_id, leaf_node_p, node_p);
       if(ret == true) {
-        bwt_printf("Leaf node consolidation CAS succeeds\n");
+        bwt_printf("Leaf node consolidation (ID %lu) CAS succeeds\n",
+                   node_id);
 
         // Update current snapshot using our best knowledge
         snapshot_p->SwitchPhysicalPointer(leaf_node_p);
@@ -4339,7 +4346,8 @@ class BwTree {
 
       bool ret = InstallNodeToReplace(node_id, inner_node_p, node_p);
       if(ret == true) {
-        bwt_printf("Inner node consolidation CAS succeeds\n");
+        bwt_printf("Inner node consolidation (ID %lu) CAS succeeds\n",
+                   node_id);
 
         snapshot_p->SwitchPhysicalPointer(inner_node_p);
 
@@ -4423,10 +4431,19 @@ class BwTree {
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
         if(ret == true) {
-          bwt_printf("Leaf split delta CAS succeeds\n");
+          bwt_printf("Leaf split delta (from %lu to %lu) CAS succeeds. ABORT\n",
+                     node_id,
+                     new_node_id);
 
           // NOTE: WE SHOULD SWITCH TO SPLIT NODE
           snapshot_p->SwitchPhysicalPointer(split_node_p);
+
+          // TODO: WE ABORT HERE TO AVOID THIS THREAD POSTING ANYTHING
+          // ON TOP OF IT WITHOUT HELPING ALONG AND ALSO BLOCKING OTHER
+          // THREAD TO HELP ALONG
+          context_p->abort_flag = true;
+
+          return;
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
@@ -4509,9 +4526,16 @@ class BwTree {
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
         if(ret == true) {
-          bwt_printf("Inner split delta CAS succeeds\n");
+          bwt_printf("Inner split delta (from %lu to %lu) CAS succeeds. ABORT\n",
+                     node_id,
+                     new_node_id);
 
           snapshot_p->SwitchPhysicalPointer(split_node_p);
+
+          // Same reason as in leaf node
+          context_p->abort_flag = true;
+
+          return;
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
@@ -5121,23 +5145,26 @@ class BwTree {
      * have been collected
      */
     std::string GetKeyID(const KeyType& key) {
+      // We append this to every value
+      std::string type_str = \
+        "(type " + std::to_string(static_cast<int>(key.type)) + ")";
+
       auto it = key_map.find(key);
       if (it == key_map.end()) {
         uint64_t id = next_key_id++;
         key_map[key] = id;
 
-        return std::string("key-") + std::to_string(id) + \
-               "(type " + std::to_string(static_cast<int>(key.type)) + ")";
+        // This value is usually not used
+        return std::string("key-") + std::to_string(id) + type_str;
       }
 
       // 0 is -inf, max is +inf
       if (key_map[key] == 0) {
-        return "-Inf";
+        return "-Inf" + type_str;
       } else if (key_map[key] == key_map.size() - 1) {
-        return "+Inf";
+        return "+Inf" + type_str;
       } else {
-        return std::string("key-") + std::to_string(key_map[key]) + \
-               "(type " + std::to_string(static_cast<int>(key.type)) + ")";
+        return std::string("key-") + std::to_string(key_map[key]) + type_str;
       }
 
       assert(false);
