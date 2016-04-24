@@ -155,8 +155,8 @@ class BwTree {
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 16;
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 8;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 7;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 7;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -4223,6 +4223,7 @@ class BwTree {
     NodeID node_id = snapshot_p->node_id;
 
     // We could only perform consolidation on delta node
+    // because we want to see depth field
     if(node_p->IsDeltaNode() == false) {
       return;
     }
@@ -4232,11 +4233,21 @@ class BwTree {
 
     // If depth does not exceeds threshold then just return
     const int depth = delta_node_p->depth;
+
+    if(snapshot_p->is_root == true) {
+      bwt_printf("Root depth = %d\n", depth);
+    }
+
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
       return;
     }
 
     // After this pointer we decide to consolidate node
+
+    // This is for debugging
+    if(snapshot_p->is_root == true) {
+      bwt_printf("Consolidate root node\n");
+    }
 
     if(snapshot_p->has_data == false) {
       if(snapshot_p->is_leaf) {
@@ -4361,7 +4372,8 @@ class BwTree {
         if(ret == true) {
           bwt_printf("Leaf split delta CAS succeeds\n");
 
-          snapshot_p->SwitchPhysicalPointer(new_leaf_node_p);
+          // NOTE: WE SHOULD SWITCH TO SPLIT NODE
+          snapshot_p->SwitchPhysicalPointer(split_node_p);
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
@@ -4446,7 +4458,7 @@ class BwTree {
         if(ret == true) {
           bwt_printf("Inner split delta CAS succeeds\n");
 
-          snapshot_p->SwitchPhysicalPointer(new_inner_node_p);
+          snapshot_p->SwitchPhysicalPointer(split_node_p);
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
@@ -4788,12 +4800,17 @@ class BwTree {
         // This will actually not be used anymore, so maybe
         // could save this assignment
         snapshot_p->SwitchPhysicalPointer(insert_node_p);
+
+        // If install is a success then just break from the loop
+        // and return
+        break;
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
         delete insert_node_p;
       }
 
+      // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert delta from the root\n");
     }
 
