@@ -46,12 +46,13 @@ namespace index {
     }                                                                   \
   } while (0);
 
-#define idb_assert_key(key, cond)                                       \
+#define idb_assert_key(node_id, key, cond)                              \
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
       printf("assert, %-24s, line %d \033[0m", __FUNCTION__, __LINE__); \
-      idb.key_list.push_back(&key);                                     \
+      idb.key_list.push_back(key);                                      \
+      idb.node_id_list.push_back(node_id);                              \
       idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
@@ -252,7 +253,39 @@ class BwTree {
   class WrappedKeyComparator {
    public:
     bool operator()(const KeyType &key1, const KeyType &key2) {
-      return KeyComparator{}(key1.key, key2.key);
+      static KeyComparator key_less_obj{};
+
+      // As long as the second operand is not -Inf then
+      // we return true
+      if(key1.IsNegInf()) {
+        if(key2.IsNegInf()) {
+          return false;
+        }
+
+        return true;
+      }
+
+      // We already know key1 would not be negInf
+      if(key2.IsNegInf()) {
+        return false;
+      }
+
+      // As long as second operand is not
+      if(key2.IsPosInf()) {
+        if(key1.IsPosInf()) {
+          return false;
+        }
+
+        return true;
+      }
+
+      // We already know key2.type is not posInf
+      if(key1.IsPosInf()) {
+        return false;
+      }
+
+      // Then we need to compare real key
+      return key_less_obj(key1.key, key2.key);
     }
   };
 
@@ -316,42 +349,14 @@ class BwTree {
    *
    * If key1 < key2 return true
    * If key1 >= key2 return false
-   * If comparison not defined assertion would fail
+   *
+   * NOTE: All comparisons are defined, since +/- Inf themselves
+   * could be used as separator/high key
    */
   bool KeyCmpLess(const KeyType &key1, const KeyType &key2) const {
-    // As long as the second operand is not -Inf then
-    // we return true
-    if(key1.IsNegInf()) {
-      if(key2.IsNegInf()) {
-        bwt_printf("ERROR: Compare negInf and negInf\n");
-        assert(false);
-      }
+    WrappedKeyComparator key_less_obj{};
 
-      return true;
-    }
-
-    // We already know key1 would not be negInf
-    if(key2.IsNegInf()) {
-      return false;
-    }
-
-    // As long as second operand is not
-    if(key2.IsPosInf()) {
-      if(key1.IsPosInf()) {
-        bwt_printf("ERROR: Compare posInf and posInf\n");
-        assert(false);
-      }
-
-      return true;
-    }
-
-    // We already know key2.type is not posInf
-    if(key1.IsPosInf()) {
-      return false;
-    }
-
-    // Then we need to compare real key
-    return key_cmp_obj(key1.key, key2.key);
+    return key_less_obj(key1, key2);
   }
 
   /*
@@ -365,29 +370,17 @@ class BwTree {
    * two are implemented using > and < respectively
    */
   bool KeyCmpEqual(const KeyType &key1, const KeyType &key2) const {
-    bool key1_inf = key1.IsPosInf() || key1.IsNegInf();
-    bool key2_inf = key2.IsPosInf() || key2.IsNegInf();
-
     // This is special treatment since we are using -Inf
     // as the low key for parent node, so there would be
     // comparison related with it in order to decide
     // whether the child is a left most one
     if(key1.IsNegInf() && key2.IsNegInf()) {
       return true;
-    }
-
-    // We only forbid this
-    if(key1_inf && key2_inf) {
-      bwt_printf("ERROR: Equality comparison involving Inf\n");
-      bwt_printf("       [key1.type, key2.type] = [%d, %d]\n",
-                 key1.type, key2.type);
-
-      assert(false);
-    }
-
-    // We will use this when dealing with the leftmost node's low key
-    // and right most node's high key
-    if(key1_inf || key2_inf) {
+    } else if(key1.IsPosInf() && key2.IsPosInf()) {
+      return true;
+    } else if(key1.IsNegInf() && key2.IsPosInf()) {
+      return false;
+    } else if(key1.IsPosInf() && key2.IsNegInf()) {
       return false;
     }
 
@@ -462,7 +455,8 @@ class BwTree {
    * so we forbid copy construction and assignment and move
    */
   struct Context {
-    const KeyType *search_key_p;
+    // This is cannot be changed once initialized
+    const KeyType search_key;
     OpState current_state;
 
     // Whether to abort current traversal, and start a new one
@@ -482,8 +476,8 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType *p_search_key_p) :
-      search_key_p{p_search_key_p},
+    Context(const KeyType p_search_key) :
+      search_key{p_search_key},
       current_state{OpState::Init},
       abort_flag{false},
       path_list{},
@@ -1963,6 +1957,10 @@ class BwTree {
     // We must start from a clean state
     assert(context_p->path_list.size() == 0);
 
+    #ifdef INTERACTIVE_DEBUG
+    idb.AddKey(context_p->search_key);
+    #endif
+
     // This is the low key (i.e. "virtual sep key")
     // for root node
     // NOTE: This should be put inside the scope in case it is
@@ -2425,7 +2423,7 @@ class BwTree {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // This search key will not be changed during navigation
-    const KeyType &search_key = *context_p->search_key_p;
+    const KeyType &search_key = context_p->search_key;
 
     // Make sure the structure is valid
     assert(snapshot_p->is_leaf == false);
@@ -2921,7 +2919,7 @@ class BwTree {
                         bool collect_value) {
     // This contains information for current node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    const KeyType &search_key = *context_p->search_key_p;
+    const KeyType &search_key = context_p->search_key;
 
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->node_p != nullptr);
@@ -2975,7 +2973,8 @@ class BwTree {
 
           // Even if we have seen merge and split this always hold
           // since merge and split would direct to the correct page by sep key
-          idb_assert_key(search_key,
+          idb_assert_key(snapshot_p->node_id,
+                         search_key,
                          (KeyCmpGreaterEqual(search_key, *lbound_p) && \
                          KeyCmpLess(search_key, *ubound_p))
                          );
@@ -4810,7 +4809,7 @@ class BwTree {
     bwt_printf("Insert called\n");
 
     while(1) {
-      Context context{&key};
+      Context context{key};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -4914,7 +4913,7 @@ class BwTree {
    * not construct a vector
    */
   ValueSet GetValue(const KeyType &search_key) {
-    Context context{&search_key};
+    Context context{search_key};
 
     Traverse(&context, true);
 
@@ -5047,9 +5046,9 @@ class BwTree {
    * It assumes non-leftmost, root, no lbound_p context
    * If you need more than that just change the member of Context
    */
-  Context *DebugGetContext(const KeyType *search_key_p,
+  Context *DebugGetContext(const KeyType &search_key,
                            NodeSnapshot *snapshot_p) {
-    Context *context_p = new Context{search_key_p};
+    Context *context_p = new Context{search_key};
 
     context_p->path_list.push_back(std::move(snapshot_p));
 
@@ -5098,10 +5097,22 @@ class BwTree {
     std::stack<bool> need_switch_stack;
 
     // Used as a buffer to hold keys
-    std::vector<const KeyType *> key_list;
+    std::vector<KeyType> key_list;
 
     // Also used as a buffer to hold PID
     std::vector<NodeID> node_id_list;
+
+    /*
+     * AddKey() - Record the key in its map such that we could sort them
+     *
+     * This should be called in Traverse() since all function must
+     * call Traverse()
+     */
+    void AddKey(const KeyType &key) {
+      key_map[key] = 0;
+
+      return;
+    }
 
     /*
      * GetKeyID() - Return a unique ID for each unique key
@@ -5115,7 +5126,8 @@ class BwTree {
         uint64_t id = next_key_id++;
         key_map[key] = id;
 
-        return std::string("key-") + std::to_string(id);
+        return std::string("key-") + std::to_string(id) + \
+               "(type " + std::to_string(static_cast<int>(key.type)) + ")";
       }
 
       // 0 is -inf, max is +inf
@@ -5124,7 +5136,8 @@ class BwTree {
       } else if (key_map[key] == key_map.size() - 1) {
         return "+Inf";
       } else {
-        return std::string("key-") + std::to_string(key_map[key]);
+        return std::string("key-") + std::to_string(key_map[key]) + \
+               "(type " + std::to_string(static_cast<int>(key.type)) + ")";
       }
 
       assert(false);
@@ -5699,6 +5712,8 @@ class BwTree {
 
     /*
      * InitKeyMap() - Initialize representation for +/-Inf key
+     *
+     * This function only makes sure that +/-Inf are in the map
      */
     void InitKeyMap() {
       GetKeyID(tree->GetNegInfKey());
@@ -5796,7 +5811,7 @@ class BwTree {
           if (key_index < 0 || key_index >= key_list.size()) {
             std::cout << "Key index " << key_index << " invalid!" << std::endl;
           } else {
-            std::cout << GetKeyID(*key_list[key_index]) << std::endl;
+            std::cout << GetKeyID(key_list[key_index]) << std::endl;
           }
         } else if (opcode == "get-pid") {
           int node_id_index;
