@@ -438,29 +438,30 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-void InsertTest(TreeType *t) {
-  for(int i = 0;i < 100;i++) {
+void InsertTest(uint64_t thread_id, TreeType *t) {
+  for(int i = thread_id * 65;i < (thread_id + 1) * 65;i++) {
     t->Insert(i, 1.11L * i);
     t->Insert(i, 1.111L * i);
     t->Insert(i, 1.1111L * i);
     t->Insert(i, 1.11111L * i);
   }
-  /*
-  t->Insert(1, 1.11);
-  t->Insert(2, 2.22);
-  t->Insert(3, 3.33);
-  t->Insert(4, 4.44);
-  t->Insert(5, 5.55);
-  t->Insert(1, 1.111);
-  t->Insert(1, 1.1111);
-  */
 
-  for(int i = 0;i < 103;i++) {
+  return;
+}
+
+void GetValueTest(TreeType *t) {
+  bwt_printf("GetValueTest()\n");
+
+  for(int i = 0;i < 257;i ++) {
     auto value_set = t->GetValue(i);
 
+    printf("i = %d\n    Values = ", i);
+
     for(auto it : value_set) {
-      printf("Values = %lf\n", it);
+      printf("%lf ", it);
     }
+
+    putchar('\n');
   }
 
   return;
@@ -485,12 +486,14 @@ int main() {
   //CollectNewNodeSinceLastSnapshotTest(t1);
 
   //TestNavigateInnerNode(t1);
-  TestCollectAllValuesOnLeaf(t1);
+  //TestCollectAllValuesOnLeaf(t1);
   //TestNavigateLeafNode(t1);
-  TestCollectAllSepsOnInner(t1);
+  //TestCollectAllSepsOnInner(t1);
   //TestNavigateInnerNode(t1);
 
-  InsertTest(t1);
+  //InsertTest(t1);
+  LaunchParallelTestID(4, InsertTest, t1);
+  GetValueTest(t1);
 
   return 0;
 }
