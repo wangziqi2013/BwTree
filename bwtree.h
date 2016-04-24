@@ -41,7 +41,7 @@ namespace index {
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
-      printf("assert, %-24s, line %d \033[0m", __FUNCTION__, __LINE__); \
+      printf("assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
       idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
@@ -51,7 +51,7 @@ namespace index {
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
-      printf("assert, %-24s, line %d \033[0m", __FUNCTION__, __LINE__); \
+      printf("assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
       idb.key_list.push_back(key);                                      \
       idb.node_id_list.push_back(node_id);                              \
       idb.Start();                                                      \
@@ -77,7 +77,7 @@ namespace index {
 
 #define bwt_printf(fmt, ...)                              \
   do {                                                    \
-    printf("%-16s(%lu): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
+    printf("%-24s(%.8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
     fflush(stdout);                                       \
   } while (0);
 
