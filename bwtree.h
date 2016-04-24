@@ -22,6 +22,7 @@
 #include <set>
 #include <unordered_set>
 #include <map>
+#include <stack>
 
 #define BWTREE_DEBUG
 //#define INTERACTIVE_DEBUG
@@ -106,6 +107,7 @@ template <typename RawKeyType,
           typename ValueType,
           typename KeyComparator = std::less<RawKeyType>,
           typename KeyEqualityChecker = std::equal_to<RawKeyType>,
+          typename ValueComparator = std::less<ValueType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
@@ -684,6 +686,16 @@ class BwTree {
               type == NodeType::LeafSplitType || \
               type == NodeType::LeafMergeType || \
               type == NodeType::LeafRemoveType);
+    }
+
+    /*
+     * CastTo() - Get a derived node type
+     *
+     * NOTE: Template argument is Node type, not pointer type
+     */
+    template<typename TargetType>
+    TargetType *CastTo() {
+      return static_cast<TargetType *>(this);
     }
   };
 
@@ -5030,6 +5042,770 @@ class BwTree {
     return context_p;
   }
 
+  /*
+   * Interactive Debugger
+   */
+
+  /*
+   * class InteractiveDebugger - Allows us to explore the tree interactively
+   */
+  class InteractiveDebugger {
+   public:
+    BwTree* tree;
+
+    NodeID current_node_id;
+
+    // This always points to the current top node of
+    // delta chain which is exactly the node pointer
+    // for current_pid
+    const BaseNode* top_node_p;
+
+    const BaseNode* current_node_p;
+    NodeType current_type;
+
+    // We use unique, order-preserving int as identity for
+    // opaque key and value types
+    uint64_t next_key_id;
+    uint64_t next_value_id;
+
+    // This stores mapping from key to value
+    // These values are irrelevant to actual values
+    // except that they preserve order
+    std::map<KeyType, uint64_t, KeyComparator> key_map;
+    std::map<ValueType, uint64_t, ValueComparator> value_map;
+
+    // Stacks to record history position and used for backtracking
+    std::stack<BaseNode *> node_p_stack;
+    std::stack<BaseNode *> top_node_p_stack;
+    std::stack<NodeID> node_id_stack;
+    std::stack<bool> need_switch_stack;
+
+    // Used as a buffer to hold keys
+    std::vector<const KeyType *> key_list;
+
+    // Also used as a buffer to hold PID
+    std::vector<NodeID> node_id_list;
+
+    /*
+     * GetKeyID() - Return a unique ID for each unique key
+     *
+     * The ID is just tentative, and they will be sorted once all keys
+     * have been collected
+     */
+    std::string GetKeyID(const KeyType& key) {
+      auto it = key_map.find(key);
+      if (it == key_map.end()) {
+        uint64_t id = next_key_id++;
+        key_map[key] = id;
+
+        return std::string("key-") + std::to_string(id);
+      }
+
+      // 0 is -inf 1 is +inf
+      if (key_map[key] == 0) {
+        return "-Inf";
+      } else if (key_map[key] == key_map.size() - 1) {
+        return "+Inf";
+      } else {
+        return std::string("key-") + std::to_string(key_map[key]);
+      }
+
+      assert(false);
+      return "";
+    }
+
+    /*
+     * GetValueID() - Get a unique ID for each unique value
+     */
+    std::string GetValueID(const ValueType& value) {
+      // If the value has not yet been recorded, allocate
+      // an ID for it, and return the new ID
+      auto it = value_map.find(value);
+      if (it == value_map.end()) {
+        uint64_t id = next_value_id++;
+        value_map[value] = id;
+
+        return std::string("val-") + std::to_string(id);
+      }
+
+      return std::string("val-") + std::to_string(value_map[value]);
+    }
+
+    /*
+     * PrintPrompt() - Print the debugger prompt
+     */
+    void PrintPrompt() {
+      std::cout << "[(" << NodeTypeToString(current_type)
+                << ") NodeID=" << current_node_id << "]>> ";
+
+      return;
+    }
+
+    /*
+     * PrepareNode() - Save current information for switching to new node
+     *
+     * This function does not deal with any NodeID change
+     */
+    void PrepareNode(const BaseNode *node_p,
+                     bool need_switch = false) {
+      // Node pointer must be valid
+      assert(node_p != nullptr);
+
+      node_p_stack.push(current_node_p);
+
+      current_node_p = node_p;
+      current_type = node_p->GetType();
+
+      need_switch_stack.push(need_switch);
+
+      return;
+    }
+
+    /*
+     * PrepareNodeByID() - Change NodeID to a new one, and switch node
+     *
+     * NOTE: If the node ID is invalid, this function will return false
+     * This would happen if we are on the last node
+     */
+    bool PrepareNodeByID(NodeID node_id,
+                         bool init_flag = false) {
+      // If NodeId is invalid just return false
+      if(node_id == INVALID_NODE_ID) {
+        return false;
+      }
+
+      // If We are loading root node
+      if(init_flag == true) {
+        current_node_id = node_id;
+        current_node_p = tree->GetNode(node_id);
+
+        // The top pointer of a delta chain
+        top_node_p = current_node_p;
+        current_type = current_node_p->GetType();
+
+        return true;
+      } else {
+        // Save the root of delta chain and the corresponding NodeID
+        node_id_stack.push(current_node_id);
+        top_node_p_stack.push(top_node_p);
+
+        // Also need to check for each element's identity somewhere else
+        assert(node_id_stack.size() == top_node_p_stack.size());
+
+        current_node_id = node_id;
+
+        // It calls push for node_stack and renew the type
+        // We also need to switch in this case
+        PrepareNode(tree->GetNode(node_id), true);
+
+        // We only change this node when PID changes
+        // NOTE: This must be called after PrepareNode() since
+        // only after that current_node_p is updated
+        top_node_p = current_node_p;
+
+        return true;
+      }
+
+      assert(false);
+      return false;
+    }
+
+    /*
+     * NodeTypeToString() - Convert NodeType enum variable to a string
+     */
+    std::string NodeTypeToString(NodeType type) {
+      switch(type) {
+        case NodeType::LeafType:
+          return "Leaf";
+        case NodeType::InnerType:
+          return "Inner";
+        case NodeType::LeafInsertType:
+          return "Leaf Insert";
+        case NodeType::LeafDeleteType:
+          return "Leaf Delete";
+        case NodeType::LeafSplitType:
+          return "Leaf Split";
+        case NodeType::LeafRemoveType:
+          return "Leaf Remove";
+        case NodeType::LeafMergeType:
+          return "LeafMerge";
+        case NodeType::InnerInsertType:
+          return "Inner Insert";
+        case NodeType::InnerDeleteType:
+          return "Inner Delete";
+        case NodeType::InnerSplitType:
+          return "Inner Split";
+        case NodeType::InnerRemoveType:
+          return "Inner Remove";
+        case NodeType::InnerMergeType:
+          return "InnerMerge";
+        default:
+          return "Unknown Type (Error!)";
+      }
+
+      assert(false);
+      return "";
+    }
+
+    /*
+     * ProcessPrint() - Process print command
+     *
+     * print node-pointer - Prints current pointer address
+     * print type - Prints current type
+     */
+    void ProcessPrint() {
+      std::string s;
+      std::cin >> s;
+
+      if (s == "") {
+        std::cout << "Nothing to print!" << std::endl;
+        return;
+      } else if (s == "node-pointer") {
+        std::cout << current_node_p << std::endl;
+      } else if (s == "type") {
+        std::cout << current_type << " (" << NodeTypeToString(current_type)
+                  << ")" << std::endl;
+      } else {
+        std::cout << "Unknown print argument: " << s << std::endl;
+      }
+
+      return;
+    }
+
+    /*
+     * ProcessGotoChild() - Go to the child node of a delta node
+     *
+     * This does not work for inner and leaf nodes
+     */
+    void ProcessGotoChild() {
+      switch (current_node_p->type) {
+        case NodeType::LeafInsertType:
+        case NodeType::LeafDeleteType:
+        case NodeType::LeafSplitType:
+        case NodeType::LeafRemoveType:
+        case NodeType::LeafMergeType:
+        case NodeType::InnerInsertType:
+        case NodeType::InnerDeleteType:
+        case NodeType::InnerSplitType:
+        case NodeType::InnerRemoveType:
+        case NodeType::InnerMergeType: {
+          const DeltaNode *delta_node_p = \
+            static_cast<const DeltaNode *>(current_node_p);
+
+          // Make this current node, do not refresh PID
+          PrepareNode(delta_node_p->child_node_p);
+          break;
+        }
+        case NodeType::LeafType:
+        case NodeType::InnerType:
+          std::cout << "Type (" << NodeTypeToString(current_type)
+                    << ") does not have child node" << std::endl;
+          break;
+      }
+
+      return;
+    }
+
+    /*
+     * ProcessGotoSplitSibling() - Go to split sibling of a split delta node
+     */
+    void ProcessGotoSplitSibling() {
+      NodeID sibling_node_id = INVALID_NODE_ID;
+
+      if(current_type == NodeType::InnerSplitType) {
+        const InnerSplitNode *split_node_p = \
+          static_cast<const InnerSplitNode *>(current_node_p);
+
+        sibling_node_id = split_node_p->split_sibling;
+      } else if(current_type == NodeType::LeafSplitType) {
+        const LeafSplitNode *split_node_p = \
+          static_cast<const LeafSplitNode *>(current_node_p);
+
+        sibling_node_id = split_node_p->split_sibling;
+      } else {
+        std::cout << "Type (" << NodeTypeToString(current_type)
+                  << ") does not have split sibling" << std::endl;
+        return;
+      }
+
+      // This should not happen, but just in case
+      if(sibling_node_id == INVALID_NODE_ID) {
+        std::cout << "NodeID is INVALID_NODE_ID";
+
+        return;
+      }
+
+      PrepareNodeByID(sibling_node_id);
+
+      return;
+    }
+
+    /*
+     * ProcessGotoSibling() - Goto sibling node (only for leaf nodes)
+     */
+    void ProcessGotoSibling() {
+      NodeID next_node_id = INVALID_NODE_ID;
+
+      if(current_type == NodeType::InnerType) {
+        const InnerNode *inner_node_p = \
+          static_cast<const InnerNode *>(current_node_p);
+
+        next_node_id = inner_node_p->next_node_id;
+      } else if(current_type == NodeType::LeafType) {
+        const LeafNode *leaf_node_p = \
+          static_cast<const LeafNode *>(current_node_p);
+
+        next_node_id = leaf_node_p->next_node_id;
+      } else {
+        std::cout << "Type (" << NodeTypeToString(current_type)
+                  << ") does not have sibling node" << std::endl;
+        return;
+      }
+
+      // This should not happen, but just in case
+      if(next_node_id == INVALID_NODE_ID) {
+        std::cout << "NodeID is INVALID_NODE_ID";
+
+        return;
+      }
+
+      PrepareNodeByID(next_node_id);
+
+      return;
+    }
+
+    /*
+     * ProcessGotoMergeSibling() - Go to the right branch of a merge node
+     */
+    void ProcessGotoMergeSibling() {
+      const BaseNode *node_p = nullptr;
+
+      if(current_type == NodeType::InnerMergeType) {
+        const InnerMergeNode *merge_node_p = \
+          static_cast<const InnerMergeNode *>(current_node_p);
+
+        node_p = merge_node_p->right_merge_p;
+      } else if(current_type == NodeType::LeafMergeType) {
+        const LeafMergeNode *merge_node_p = \
+          static_cast<const LeafMergeNode *>(current_node_p);
+
+        node_p = merge_node_p->right_merge_p;
+      } else {
+        std::cout << "Type (" << NodeTypeToString(current_type)
+                  << ") does not have merge sibling" << std::endl;
+        return;
+      }
+
+      // Physical pointer in merge delta (PID in split delta)
+      PrepareNode(node_p);
+
+      return;
+    }
+
+    /*
+     * ProcessPrintSep() - Print separator for inner node
+     */
+    void ProcessPrintSep() {
+      if (current_type != NodeType::InnerType) {
+        std::cout << "Type (" << NodeTypeToString(current_type)
+                  << ") does not have separator array" << std::endl;
+        return;
+      }
+
+      const InnerNode *inner_node_p = \
+        static_cast<const InnerNode *>(current_node_p);
+
+      std::cout << "Number of separators: " << inner_node_p->sep_list.size()
+                << std::endl;
+
+      for (auto it : inner_node_p->sep_list) {
+        std::cout << "[" << GetKeyID(it.first) << ", " << it.second << "]"
+                  << ", ";
+      }
+
+      std::cout << std::endl;
+
+      return;
+    }
+
+    /*
+     * ProcessPrintBound() - Process high key and low key printing
+     */
+    void ProcessPrintBound() {
+      if(current_type == NodeType::InnerType) {
+        const InnerNode *inner_node_p = \
+          static_cast<const InnerNode *>(current_node_p);
+
+        std::cout << "Lower, Upper: "
+                  << GetKeyID(inner_node_p->lbound)
+                  << ", "
+                  << GetKeyID(inner_node_p->ubound)
+                  << std::endl;
+      } else if(current_type == NodeType::LeafType) {
+        const LeafNode *leaf_node_p = \
+          static_cast<const LeafNode *>(current_node_p);
+
+        std::cout << "Lower, Upper: "
+                  << GetKeyID(leaf_node_p->lbound)
+                  << ", "
+                  << GetKeyID(leaf_node_p->ubound)
+                  << std::endl;
+      } else {
+        std::cout << "Type ("
+                  << NodeTypeToString(current_type)
+                  << ") does not have bound key"
+                  << std::endl;
+      }
+
+      return;
+    }
+
+    /*
+     * ProcessPrintLeaf() - Print content of leaf page
+     */
+    void ProcessPrintLeaf() {
+      if (current_type != NodeType::LeafType) {
+        std::cout << "Type ("
+                  << PageTypeToString(current_type)
+                  << ") does not have leaf array"
+                  << std::endl;
+
+        return;
+      }
+
+      const LeafNode *leaf_node_p = \
+        static_cast<const LeafNode *>(current_node_p);
+
+      std::cout << "Node size: "
+                << leaf_node_p->data_list.size()
+                << std::endl;
+
+      // Iterate through keys
+      for (auto &it : leaf_node_p->data_list) {
+        std::cout << GetKeyID(it.first)
+                  << ": [";
+
+        // Print all values in one line, separated by comma
+        for (auto it2 = it->second.begin(); it2 != it->second.end(); it2++) {
+          std::cout << GetValueID(*it2) << ", ";
+        }
+
+        std::cout << "], " << std::endl;
+      }
+
+      return;
+    }
+
+    /*
+     * ProcessPrintDelta() - Print delta node contents
+     */
+    void ProcessPrintDelta() {
+      std::cout << "Node type: "
+                << current_type
+                << " ("
+                << NodeTypeToString(current_type) << ")"
+                << std::endl;
+
+      // We need to print out depth for debugging
+      std::cout << "Delta depth: "
+                << static_cast<const DeltaNode *>(current_node_p)->depth
+                << std::endl;
+
+      switch (current_type) {
+        case NodeType::LeafType:
+        case NodeType::InnerType:
+        case NodeType::LeafRemoveType:
+        case NodeType::InnerRemoveType: {
+          std::cout << "Type ("
+                    << NodeTypeToString(current_type)
+                    << ") does not have record"
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::LeafSplitType: {
+          const LeafSplitNode *split_node_p = \
+            static_cast<const LeafSplitNode *>(current_node_p);
+
+          std::cout << "Separator key: "
+                    << GetKeyID(split_node_p->split_key)
+                    << std::endl;
+
+          std::cout << "Sibling NodeID: "
+                    << split_node_p->split_sibling
+                    << std::endl;
+          break;
+        }
+        case NodeType::InnerSplitType: {
+          const InnerSplitNode *split_node_p = \
+            static_cast<const InnerSplitNode *>(current_node_p);
+
+          std::cout << "Separator key: "
+                    << GetKeyID(split_node_p->split_key)
+                    << std::endl;
+
+          std::cout << "Sibling NodeID: "
+                    << split_node_p->split_sibling
+                    << std::endl;
+          break;
+        }
+        case NodeType::LeafMergeType: {
+          const LeafMergeNode *merge_node_p = \
+            static_cast<const LeafMergeNode *>(current_node_p);
+
+          std::cout << "Separator key: "
+                    << GetKeyID(merge_node_p->merge_key)
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::InnerMergeType: {
+          const InnerMergeNode *merge_node_p = \
+            static_cast<const InnerMergeNode *>(current_node_p);
+
+          std::cout << "Separator key: "
+                    << GetKeyID(merge_node_p->merge_key)
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::LeafInsertType: {
+          const LeafInsertNode *insert_node_p = \
+            static_cast<const LeafInsertNode *>(current_node_p);
+
+          std::cout << "key, value = ["
+                    << GetKeyID(insert_node_p->insert_key)
+                    << ", "
+                    << GetValueID(insert_node_p->value)
+                    << "]"
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::LeafDeleteType: {
+          const LeafDeleteNode *delete_node_p = \
+            static_cast<const LeafDeleteNode*>(current_node_p);
+
+          std::cout << "key, value = ["
+                    << GetKeyID(delete_node_p->delete_key)
+                    << ", "
+                    << GetValueID(delete_node_p->value)
+                    << "]"
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::InnerInsertType: {
+          const InnerInsertNode *insert_node_p = \
+              static_cast<const InnerInsertNode *>(current_node_p);
+
+          std::cout << "New split sep: "
+                    << GetKeyID(insert_node_p->insert_key)
+                    << std::endl;
+
+          std::cout << "Next split sep: "
+                    << GetKeyID(insert_node_p->next_key)
+                    << std::endl;
+
+          std::cout << "New child PID: "
+                    << insert_node_p->new_node_id
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::InnerDeleteType: {
+          const InnerDeleteNode *delete_node_p =
+              static_cast<const InnerDeleteNode *>(current_node_p);
+
+          std::cout << "Deleted key: "
+                    << GetKeyID(delete_node_p->delete_key)
+                    << std::endl;
+
+          std::cout << "Low key: "
+                    << GetKeyID(delete_node_p->prev_key)
+                    << std::endl;
+
+          std::cout << "High key: "
+                    << GetKeyID(delete_node_p->next_key)
+                    << std::endl;
+
+          break;
+        }
+        default:
+          std::cout << "Node a delta node type: "
+                    << NodeTypeToString(current_type)
+                    << std::endl;
+
+          assert(false);
+          break;
+      }
+
+      return;
+    }
+
+    /*
+     * ProcessBack() - Process go back command
+     */
+    void ProcessBack() {
+      assert(node_id_stack.size() == top_node_p_stack.size());
+
+      if (node_p_stack.size() == 0) {
+        std::cout << "Already at root. Cannot go back" << std::endl;
+        return;
+      }
+
+      // We know we are on top of a PID delta chain
+      if (need_switch_stack.top() == true) {
+        std::cout << "Return to previous PID: "
+                  << node_id_stack.top()
+                  << std::endl;
+
+        top_node_p = top_node_p_stack.top();
+        top_node_p_stack.pop();
+
+        current_node_id = node_id_stack.top();
+        node_id_stack.pop();
+      }
+
+      need_switch_stack.pop();
+
+      current_node_p = node_p_stack.top();
+      node_p_stack.pop();
+
+      current_type = current_node_p->type;
+
+      return;
+    }
+
+    /*
+     * InitKeyMap() - Initialize representation for +/-Inf key
+     */
+    void InitKeyMap() {
+      GetKeyID(tree->GetNegInfKey());
+      GetKeyID(tree->GetPosInfKey());
+
+      return;
+    }
+
+    /*
+     * SortKeyMap() - Sort all keys so that key ID reflects key order
+     *
+     * Assign order-preserve identifier to keys
+     */
+    void SortKeyMap() {
+      uint64_t counter = 0;
+      for (auto it = key_map.begin(); it != key_map.end(); it++) {
+        // -inf = 0; + inf = key_map.size() - 1
+        it->second = counter++;
+      }
+
+      return;
+    }
+
+    void Start() {
+      // We could not start with empty root node
+      assert(prepareNodeByID(tree->root_id.load(), true) == true);
+      SortKeyMap();
+
+      std::cout << "********* Interactive Debugger *********\n";
+
+      while (1) {
+        PrintPrompt();
+
+        std::string opcode;
+        std::cin >> opcode;
+
+        // If read EOF then resume BWTree execution
+        if (!std::cin) {
+          return;
+        }
+
+        // Ctrl-D (EOF)  will resume execution
+        if (opcode == "exit") {
+          exit(0);
+        } else if (opcode == "continue") {
+          break;
+        } else if (opcode == "print") {
+          ProcessPrint();
+        } else if (opcode == "print-sep") {
+          // print sep-PID pairs for inner node
+          ProcessPrintSep();
+        } else if (opcode == "print-leaf") {
+          // print key-value_list pairs for leaf node
+          ProcessPrintLeaf();
+        } else if (opcode == "print-bound") {
+          // print lower and upper bound for leaf and inenr node
+          ProcessPrintBound();
+        } else if (opcode == "type") {
+          std::cout << current_type << " (" << NodeTypeToString(current_type)
+                    << ")" << std::endl;
+        } else if (opcode == "goto-child") {
+          // Goto child node pointed to by a physical pointer
+          // in delta nodes
+          ProcessGotoChild();
+        } else if (opcode == "goto-split-sibling") {
+          ProcessGotoSplitSibling();
+        } else if (opcode == "goto-sibling") {
+          ProcessGotoSibling();
+        } else if (opcode == "goto-merge-sibling") {
+          ProcessGotoMergeSibling();
+        } else if (opcode == "print-delta") {
+          // For delta nodes, print the content
+          ProcessPrintDelta();
+        } else if (opcode == "back") {
+          // Go back to the previous position
+          // (switch between PID and PID root and current node
+          // is done using stacks)
+          ProcessBack();
+        } else if (opcode == "goto-id") {
+          // Goto the first page pointed to by a PID
+          NodeID target_node_id;
+
+          std::cin >> target_node_id;
+          PrepareNodeByID(target_node_id);
+        } else if (opcode == "get-key-id") {
+          // We push the target key into key_list
+          // when we hit the assertion, and then invoke the debugger
+          // then we could use its index to see the relative position of the key
+          int key_index;
+          std::cin >> key_index;
+
+          if (key_index < 0 || key_index >= key_list.size()) {
+            std::cout << "Key index " << key_index << " invalid!" << std::endl;
+          } else {
+            std::cout << GetKeyID(*key_list[key_index]) << std::endl;
+          }
+        } else if (opcode == "get-pid") {
+          int node_id_index;
+          std::cin >> node_id_index;
+
+          if (node_id_index < 0 || node_id_index >= node_id_list.size()) {
+            std::cout << "PID index " << node_id_index << " invalid!" << std::endl;
+          } else {
+            std::cout << "pid_list[" << node_id_index
+                      << "] = " << node_id_list[node_id_index] << std::endl;
+          }
+        } else {
+          std::cout << "Unknown command: " << opcode << std::endl;
+        }
+      }
+
+      return;
+    }
+
+    InteractiveDebugger(BwTree *p_tree)
+        : tree(p_tree),
+          current_node_id(0),
+          current_node_p(nullptr),
+          next_key_id(0),
+          next_value_id(0) {
+      InitKeyMap();
+
+      return;
+    }
+
+    ~InteractiveDebugger() {}
+  };
 };
 
 }  // End index namespace
