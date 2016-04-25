@@ -28,7 +28,7 @@
 // Used for debugging
 #include <mutex>
 
-#define BWTREE_DEBUG
+//#define BWTREE_DEBUG
 #define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
@@ -1175,13 +1175,22 @@ class BwTree {
      * This needs to be called after we have collected all values, but we
      * can choose to call this after every log replay at the cost of losing
      * performance
+     *
+     * NOTE: DO NOT REMOVE DIRECTLY ON THE MAP USING ITERATOR
      */
     void RemoveEmptyValueSet() {
+      KeyValueSet temp_map{};
+
+      // Move every non-empty ValueSet into container
       for(auto &item : GetContainer()) {
-        if(item.second.size() == 0) {
-          GetContainer().erase(item.first);
+        if(item.second.size() != 0) {
+          // We use move semantics to move the ValueSet
+          temp_map[item.first] = std::move(item.second);
         }
       }
+
+      // Use move semantics to copy the map
+      key_value_set = std::move(temp_map);
 
       return;
     }
@@ -2719,7 +2728,8 @@ class BwTree {
       }
     }
 
-    // Move temporary map into the object
+    // Move temporary map into the object to save copy
+    // efforts of the content
     logical_node_p->key_value_map = std::move(temp_map);
 
     /*
@@ -4146,20 +4156,30 @@ class BwTree {
         const KeyType *next_key_p = nullptr;
         NodeID prev_node_id = INVALID_NODE_ID;
 
-        int depth = 0;
+        int depth = 1;
 
+        // This is a faster way of determining depth:
+        // Since we know the parent must be inner node
+        // the only exception is InnerType, in which we need to
+        // set depth to 1. In all other cases just cast them to
+        // DeltaNode and use its depth
+        NodeType parent_type = parent_snapshot_p->node_p->GetType();
+        if(parent_type != NodeType::InnerType) {
+          const DeltaNode *delta_node_p = \
+            static_cast<const DeltaNode *>(parent_snapshot_p->node_p);
+
+          depth = delta_node_p->depth + 1;
+        }
+
+        // Determine deleted key using merge node
         if(type == NodeType::InnerMergeType) {
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(node_p);
-
-          depth = merge_node_p->depth + 1;
 
           merge_key_p = &merge_node_p->merge_key;
         } else if(type == NodeType::LeafMergeType) {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(node_p);
-
-          depth = merge_node_p->depth + 1;
 
           merge_key_p = &merge_node_p->merge_key;
         } else {
@@ -4461,10 +4481,11 @@ class BwTree {
       } else {
         bwt_printf("Inner node consolidation CAS failed. NO ABORT\n");
 
-        // TODO: If we want to keep delta chain length constant then it
-        // should abort here
+        context_p->abort_flag = true;
 
         delete inner_node_p;
+
+        return;
       } // if CAS succeeds / fails
     } // if it is leaf / is inner
 
@@ -4591,6 +4612,8 @@ class BwTree {
 
           delete remove_node_p;
 
+          context_p->abort_flag = true;
+
           return;
         }
       }
@@ -4684,6 +4707,10 @@ class BwTree {
 
           delete remove_node_p;
 
+          // We must abort here since otherwise it might cause
+          // merge nodes to underflow
+          context_p->abort_flag = true;
+
           return;
         }
       } // if split/remove
@@ -4764,10 +4791,6 @@ class BwTree {
    *
    * NOTE 2: This function assumes the snapshot already has data and metadata
    *
-   * NOTE 3: This function asserts the sep deleted is the node
-   * that refers to the removing node. This is critical because otherwise we
-   * are deleting the wrong node
-   *
    * Return true if the merge key is found. false if merge key not found
    */
   bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
@@ -4785,7 +4808,19 @@ class BwTree {
     KeyNodeIDMap &sep_map = \
       snapshot_p->GetLogicalInnerNode()->GetContainer();
 
-    assert(sep_map.size() >= 2);
+    // This does not have to be >= 2, since it is possible
+    // that there is only 1 separator (we just return false
+    // to let the caller know the key has been deleted no
+    // matter what the key is)
+    idb_assert(sep_map.size() != 0);
+
+    // If there is only one key then we know
+    // and we know the key being deleted is not here
+    if(sep_map.size() == 1) {
+      bwt_printf("Only 1 key to delete. Return false\n");
+
+      return false;
+    }
 
     // it1 should not be the key since we do not allow
     // merge node on the leftmost child
@@ -4803,15 +4838,6 @@ class BwTree {
         // We use prev key's node ID
         *prev_node_id_p = it1->second;
 
-        /*
-        // Make sure it2 refers to the node we are removing
-        #ifdef BWTREE_DEBUG
-        assert(deleted_node_id == it2->second);
-        #else
-        assert(deleted_node_id == INVALID_NODE_ID);
-        #endif
-        */
-
         return true;
       }
 
@@ -4826,17 +4852,6 @@ class BwTree {
       *prev_key_p_p = &it1->first;
       *next_key_p_p = snapshot_p->GetHighKey();
       *prev_node_id_p = it1->second;
-
-      //bwt_printf("deleted id = %lu; it2->second = %lu\n", deleted_node_id, it2->second);
-
-      /*
-      // Same as above
-      #ifdef BWTREE_DEBUG
-      assert(deleted_node_id == it2->second);
-      #else
-      assert(deleted_node_id == INVALID_NODE_ID);
-      #endif
-      */
 
       return true;
     } else {
