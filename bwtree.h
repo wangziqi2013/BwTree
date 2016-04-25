@@ -4978,6 +4978,84 @@ class BwTree {
   }
 
   /*
+   * Delete() - Remove a key-value pair from the tree
+   *
+   * This function returns false if the key and value pair does not
+   * exist. Return true if delete succeeds
+   *
+   * This functions shares a same structure with the Insert() one
+   */
+  bool Delete(const KeyType &key, const ValueType &value) {
+    bwt_printf("Delete called\n");
+
+    while(1) {
+      Context context{key};
+
+      // Collect values with node navigation
+      Traverse(&context, true);
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      KeyValueSet &container = logical_node_p->GetContainer();
+
+      // If the key or key-value pair does not exist then we just
+      // return false
+      typename KeyValueSet::iterator it = container.find(key);
+      if(it == container.end()) {
+        return false;
+      }
+
+      // Look for value in consolidated leaf with the given key
+      auto it2 = it->second.find(value);
+      if(it2 == it->second.end()) {
+        return false;
+      }
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If node_p is a delta node then we have to use its
+      // delta value
+      int depth = 1;
+
+      if(node_p->IsDeltaNode() == true) {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        depth = delta_node_p->depth + 1;
+      }
+
+      const LeafInsertNode *delete_node_p = \
+        new LeafDeleteNode{key, value, depth, node_p};
+
+      bool ret = InstallNodeToReplace(node_id,
+                                      delete_node_p,
+                                      node_p);
+      if(ret == true) {
+        bwt_printf("Leaf Delete delta CAS succeed\n");
+
+        // This will actually not be used anymore, so maybe
+        // could save this assignment
+        snapshot_p->SwitchPhysicalPointer(delete_node_p);
+
+        // If install is a success then just break from the loop
+        // and return
+        break;
+      } else {
+        bwt_printf("Leaf Delete delta CAS failed\n");
+
+        delete delete_node_p;
+      }
+
+      // We reach here only because CAS failed
+      bwt_printf("Retry installing leaf delete delta from the root\n");
+    }
+
+    return true;
+  }
+
+  /*
    * GetValue() - Fill a value list with values stored
    *
    * This function accepts a value list as argument,
