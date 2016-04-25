@@ -449,6 +449,19 @@ void InsertTest(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+void InsertTest2(uint64_t thread_id, TreeType *t) {
+  for(int i = 0;i < 1024;i++) {
+    int key = 1024 * i + thread_id;
+
+    t->Insert(key, 1.11L * key);
+    t->Insert(key, 1.111L * key);
+    t->Insert(key, 1.1111L * key);
+    t->Insert(key, 1.11111L * key);
+  }
+
+  return;
+}
+
 void GetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
@@ -497,7 +510,7 @@ int main() {
   //TestNavigateInnerNode(t1);
 
   //InsertTest(t1);
-  LaunchParallelTestID(1024, InsertTest, t1);
+  LaunchParallelTestID(1024, InsertTest2, t1);
   GetValueTest(t1);
 
   return 0;
