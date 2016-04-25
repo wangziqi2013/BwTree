@@ -28,7 +28,7 @@
 // Used for debugging
 #include <mutex>
 
-//#define BWTREE_DEBUG
+#define BWTREE_DEBUG
 #define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
@@ -4022,7 +4022,9 @@ class BwTree {
         bwt_printf("Helping along remove node...\n");
 
         // We could not find remove delta on left most child
-        assert(snapshot_p->is_leftmost_child == false);
+        idb_assert_key(node_id,
+                       context_p->search_key,
+                       snapshot_p->is_leftmost_child == false);
 
         const DeltaNode *delta_node_p = \
           static_cast<const DeltaNode *>(node_p);
