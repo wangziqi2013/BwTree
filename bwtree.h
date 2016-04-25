@@ -28,8 +28,8 @@
 // Used for debugging
 #include <mutex>
 
-#define BWTREE_DEBUG
-#define INTERACTIVE_DEBUG
+//#define BWTREE_DEBUG
+//#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -2022,7 +2022,9 @@ class BwTree {
 
           // Navigate could abort since it goes to another NodeID
           if(context_p->abort_flag == true) {
-            // This is defined in Navigate function
+            bwt_printf("Navigate Inner Node abort. ABORT\n");
+
+            // This behavior is defined in Navigate function
             assert(child_node_id == INVALID_NODE_ID);
 
             context_p->current_state = OpState::Abort;
@@ -2042,7 +2044,7 @@ class BwTree {
           // If the sep key equals the low key of current node then we
           // know it definitely is the left most child since lbound is always
           // tight
-          // NOTE: For root node, current_lbound_p is nullptr
+          // NOTE: For root node, current_lbound_p is -Inf
           if(KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
             bwt_printf("Child node id = %lu is a left most child\n",
                        child_node_id);
@@ -2064,18 +2066,66 @@ class BwTree {
             break;
           }
 
-          // If we have reached a leaf node, then just return, and
-          // the current context object contains the leaf node ID and
-          // base node pointer
+          // This is the node we have just loaded
           snapshot_p = GetLatestNodeSnapshot(context_p);
-          if(snapshot_p->is_leaf == true) {
-            bwt_printf("Reached leaf page\n");
+          // We need to deal with leaf node and inner node when traversing down
+          // an inner node
+          bool is_leaf = snapshot_p->is_leaf;
+
+          // Take care: Do not use conflict names in the
+          // outer scope
+          const KeyType *snapshot_lbound_p = nullptr;
+          const KeyType *snapshot_ubound_p = nullptr;
+
+          // Get metadata from the next node we are going to
+          // navigate through
+          if(is_leaf == true) {
+            CollectMetadataOnLeaf(snapshot_p);
+
+            LogicalLeafNode *logical_node_p = \
+              snapshot_p->GetLogicalLeafNode();
+
+            snapshot_lbound_p = logical_node_p->lbound_p;
+            snapshot_ubound_p = logical_node_p->ubound_p;
+          } else {
+            CollectMetadataOnInner(snapshot_p);
+
+            LogicalInnerNode *logical_node_p = \
+              snapshot_p->GetLogicalInnerNode();
+
+            snapshot_lbound_p = logical_node_p->lbound_p;
+            snapshot_ubound_p = logical_node_p->ubound_p;
+          }
+
+          // This must be true since the NodeID to low key mapping
+          // is constant
+          assert(KeyCmpGreaterEqual(context_p->search_key,
+                                    *snapshot_lbound_p) == true);
+
+          // If this happen then it means between the moment we get NodeID
+          // and we get actual physical pointer, it has splited, changing
+          // the high key to a smaller value
+          // In that case we need to abort and re-traverse
+          if(KeyCmpGreaterEqual(context_p->search_key,
+                                *snapshot_ubound_p) == true) {
+            bwt_printf("Child node high key has changed. ABORT\n");
+
+            // TODO: In the future if we observed an inconsistent
+            // state here (need to go right) then we need to
+            // help along the SMO
+            context_p->abort_flag = true;
+            context_p->current_state = OpState::Abort;
+
+            break;
+          }
+
+
+          if(is_leaf == true) {
+            bwt_printf("The next node is a leaf\n");
 
             // Then we start traversing leaf node, and deal
             // with potential aborts
             context_p->current_state = OpState::Leaf;
-
-            break;
           }
 
           // go to next level
@@ -2631,6 +2681,12 @@ class BwTree {
       return;
     }
 
+    // Because metadata will interfere will sep collection
+    // which also collects metadata
+    if(snapshot_p->has_metadata == true) {
+      snapshot_p->ResetLogicalNode();
+    }
+
     LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
 
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
@@ -2665,6 +2721,13 @@ class BwTree {
    * to false
    */
   void CollectMetadataOnInner(NodeSnapshot *snapshot_p) {
+    // If there is cached metadata then we just use cached version
+    if(snapshot_p->has_metadata == true) {
+      bwt_printf("Fast path: Use previous cached metadata\n");
+
+      return;
+    }
+
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
                                    snapshot_p->GetLogicalInnerNode(),
                                    true,
@@ -2717,7 +2780,7 @@ class BwTree {
               // just ignore it (>= high key, if exists a high key)
               if(ubound_p != nullptr && \
                  KeyCmpGreaterEqual(item.key, *ubound_p)) {
-                bwt_printf("Detected a out of range key in inner base node\n");
+                //bwt_printf("Detected a out of range key in inner base node\n");
 
                 continue;
               }
@@ -2819,7 +2882,7 @@ class BwTree {
             if((ubound_p != nullptr && \
                 KeyCmpLess(delete_key, *ubound_p)) || \
                 ubound_p == nullptr) {
-              bwt_printf("Key is deleted by a delete delta\n");
+              //bwt_printf("Key is deleted by a delete delta\n");
 
               auto ret = logical_node_p->key_value_map.insert( \
                 typename decltype(logical_node_p->key_value_map)::value_type( \
@@ -2838,7 +2901,7 @@ class BwTree {
 
           // If the high key has not been set yet, just set it
           if(ubound_p == nullptr) {
-            bwt_printf("Updating high key with split node\n");
+            //bwt_printf("Updating high key with split node\n");
 
             ubound_p = &split_node_p->split_key;
           }
@@ -3409,6 +3472,13 @@ class BwTree {
       return;
     }
 
+    // No data but has metadata
+    // Then we should clean metadata since they collide with value collection
+    // which also collect metadata
+    if(snapshot_p->has_metadata == true) {
+      snapshot_p->ResetLogicalNode();
+    }
+
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->logical_node_p != nullptr);
 
@@ -3438,7 +3508,15 @@ class BwTree {
    */
   void
   CollectMetadataOnLeaf(NodeSnapshot *snapshot_p) {
-    snapshot_p->ResetLogicalNode();
+    // If there is cached metadata then we just use cached version
+    if(snapshot_p->has_metadata == true) {
+      bwt_printf("Fast path: Use previous cached metadata\n");
+
+      return;
+    }
+
+    // If there is no metadata then there is definitely no data
+    assert(snapshot_p->has_data == false);
 
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->logical_node_p != nullptr);

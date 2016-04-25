@@ -492,7 +492,7 @@ int main() {
   //TestNavigateInnerNode(t1);
 
   //InsertTest(t1);
-  LaunchParallelTestID(40, InsertTest, t1);
+  LaunchParallelTestID(1024, InsertTest, t1);
   GetValueTest(t1);
 
   return 0;
