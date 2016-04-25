@@ -28,8 +28,8 @@
 // Used for debugging
 #include <mutex>
 
-//#define BWTREE_DEBUG
-//#define INTERACTIVE_DEBUG
+#define BWTREE_DEBUG
+#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -1378,6 +1378,9 @@ class BwTree {
 
       // Iterate through the ordered map and push separator items
       for(auto &it : key_value_map) {
+        // We should not use INVALID_NODE_ID in inner node
+        assert(it.second != INVALID_NODE_ID);
+
         inner_node_p->sep_list.push_back(SepItem{it.first, it.second});
       }
 
@@ -1914,7 +1917,7 @@ class BwTree {
    * If we want to keep the same snapshot then we should only
    * call GetNode() once and stick to that physical pointer
    */
-  const BaseNode *GetNode(const NodeID node_id) const {
+  const BaseNode *GetNode(const NodeID node_id) {
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
 
@@ -2096,6 +2099,11 @@ class BwTree {
             snapshot_lbound_p = logical_node_p->lbound_p;
             snapshot_ubound_p = logical_node_p->ubound_p;
           }
+
+          // Make sure the lbound is not empty
+          idb_assert_key(snapshot_p->node_id,
+                         context_p->search_key,
+                         snapshot_lbound_p != nullptr);
 
           // This must be true since the NodeID to low key mapping
           // is constant
@@ -2687,6 +2695,8 @@ class BwTree {
       snapshot_p->ResetLogicalNode();
     }
 
+    assert(snapshot_p->has_metadata == false);
+
     LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
 
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
@@ -2695,15 +2705,28 @@ class BwTree {
                                    true,
                                    true);
 
+    KeyNodeIDMap temp_map{};
+
     // Remove all key with INVALID_NODE_ID placeholder
     // since they are deleted nodes. This could not be
     // done inside the recursive function since it is
     // possible that a deleted key reappearing
+    // NOTE: DO NOT USE ITERATOR AND erase() TOGETHER!
+    // WE WOULD LEAVE OUT SOME VALUES IF DO SO
     for(auto &item : logical_node_p->key_value_map) {
-      if(item.second == INVALID_NODE_ID) {
-        logical_node_p->key_value_map.erase(item.first);
+      if(item.second != INVALID_NODE_ID) {
+        temp_map[item.first] = item.second;
       }
     }
+
+    // Move temporary map into the object
+    logical_node_p->key_value_map = std::move(temp_map);
+
+    /*
+    for(auto &item : logical_node_p->key_value_map) {
+      assert(item.second != INVALID_NODE_ID);
+    }
+    */
 
     snapshot_p->has_data = true;
     snapshot_p->has_metadata = true;
@@ -3657,6 +3680,7 @@ class BwTree {
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
+    idb_assert(left_sibling_id != INVALID_NODE_ID);
 
     // This is used for LoadNodeID() if the left sibling itself
     // is removed, then we need to recursively call this function
@@ -3671,6 +3695,16 @@ class BwTree {
     }
 
     while(1) {
+      // It is impossible that the current node is merged
+      // and its next node ID is INVALID_NODE_ID
+      // In this case we would catch that by the range check
+      if(left_sibling_id == INVALID_NODE_ID) {
+        bwt_printf("Have reached the end of current level. "
+                   "But it should be caught by range check\n");
+
+        assert(false);
+      }
+
       // This might incur recursive update
       // We need to pass in the low key of left sibling node
       JumpToNodeId(left_sibling_id, context_p, entry_key_p, is_leftmost_child);
@@ -3998,6 +4032,9 @@ class BwTree {
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = \
           GetLatestNodeSnapshot(context_p);
+        // Make sure we are still on the same level
+        assert(snapshot_p->is_leaf == left_snapshot_p->is_leaf);
+
         const BaseNode *left_sibling_p = left_snapshot_p->node_p;
 
         // We save this before lbound_p which was once remove node lbound_p
@@ -4023,12 +4060,9 @@ class BwTree {
           CollectMetadataOnInner(left_snapshot_p);
         }
 
-        //bwt_printf("high key = %d; lbound_p = %d\n",
-        //           left_snapshot_p->GetHighKey()->key,
-        //           remove_node_lbound_p->key);
-
         // Make sure it is the real left sibling
-        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(), *remove_node_lbound_p));
+        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(),
+                           *remove_node_lbound_p));
         assert(left_snapshot_p->GetNextNodeID() == remove_node_id);
         #endif
 
@@ -4052,7 +4086,16 @@ class BwTree {
 
         // If CAS fails just abort and return
         if(ret == true) {
-          bwt_printf("Merge delta CAS succeeds\n");
+          bwt_printf("Merge delta CAS succeeds. ABORT\n");
+
+          // Update the new merge node back to snapshot
+          snapshot_p->SwitchPhysicalPointer(node_p);
+
+          // Then we abort, because it is possible for us to immediately
+          // posting on the merge delta
+          context_p->abort_flag = true;
+
+          return;
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
@@ -4072,14 +4115,11 @@ class BwTree {
         assert(type == NodeType::InnerMergeType ||
                type == NodeType::LeafMergeType);
 
-        // Update the new merge node back to snapshot
-        snapshot_p->SwitchPhysicalPointer(node_p);
-
         // FALL THROUGH TO MERGE
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
-        bwt_printf("Helping along merge delta\n");
+        bwt_printf("Helping along merge delta, ID = %lu\n", node_id);
 
         // First consolidate parent node and find the left/right
         // sep pair plus left node ID
@@ -4092,24 +4132,7 @@ class BwTree {
         }
 
         assert(parent_snapshot_p->has_data == true);
-
-        // If debug is on, we extract the next node ID
-        // which is the deleted node ID
-        /*
-        #ifdef BWTREE_DEBUG
-        if(snapshot_p->has_metadata == false) {
-          if(snapshot_p->is_leaf) {
-            CollectMetadataOnLeaf(snapshot_p);
-          } else {
-            CollectMetadataOnInner(snapshot_p);
-          }
-        }
-
-        NodeID deleted_node_id = snapshot_p->GetNextNodeID();
-        #else
-        NodeID deleted_node_id = INVALID_NODE_ID;
-        #endif
-        */
+        assert(parent_snapshot_p->is_leaf == false);
 
         // DUMMY PLACEHOLDER; DO NOT USE OR MODIFY
         NodeID deleted_node_id = INVALID_NODE_ID;
@@ -4161,13 +4184,16 @@ class BwTree {
           break;
         }
 
+        // NOTE: InnerDeleteNode should use parent node's current
+        // delta chain as its child node
+        // DO NOT USE node_p AS ITS CHILD!!!!!!
         const InnerDeleteNode *delete_node_p = \
           new InnerDeleteNode{*merge_key_p,
                               *next_key_p,
                               *prev_key_p,
                               prev_node_id,
                               depth,
-                              node_p};
+                              parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
         // If CAS failed then parent has changed, and we have no idea how it
@@ -4176,7 +4202,11 @@ class BwTree {
                                         delete_node_p,
                                         parent_snapshot_p->node_p);
         if(ret == true) {
-          bwt_printf("Index term delete delta installed\n");
+          bwt_printf("Index term delete delta installed, ID = %lu\n",
+                     parent_snapshot_p->node_id);
+
+          // Update in parent snapshot
+          parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
@@ -4186,9 +4216,6 @@ class BwTree {
 
           return;
         }
-
-        // Update in parent snapshot
-        parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
 
         break;
       } // case Inner/LeafMergeNode
@@ -5026,7 +5053,7 @@ class BwTree {
         depth = delta_node_p->depth + 1;
       }
 
-      const LeafInsertNode *delete_node_p = \
+      const LeafDeleteNode *delete_node_p = \
         new LeafDeleteNode{key, value, depth, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
