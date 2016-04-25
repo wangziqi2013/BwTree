@@ -439,7 +439,7 @@ void TestNavigateInnerNode(TreeType *t) {
 */
 
 void InsertTest(uint64_t thread_id, TreeType *t) {
-  for(int i = thread_id * 65;i < (thread_id + 1) * 65;i++) {
+  for(int i = thread_id * 1024;i < (thread_id + 1) * 1024;i++) {
     t->Insert(i, 1.11L * i);
     t->Insert(i, 1.111L * i);
     t->Insert(i, 1.1111L * i);
@@ -452,10 +452,15 @@ void InsertTest(uint64_t thread_id, TreeType *t) {
 void GetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
-  for(int i = 0;i < 257;i ++) {
+  auto value_set = t->GetValue(0);
+  assert(value_set.size() == 1);
+
+  for(int i = 1;i < 1024 * 1024;i ++) {
     auto value_set = t->GetValue(i);
 
     printf("i = %d\n    Values = ", i);
+
+    assert(value_set.size() == 4);
 
     for(auto it : value_set) {
       printf("%lf ", it);
