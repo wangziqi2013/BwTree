@@ -438,7 +438,7 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 1024;
+constexpr int key_num = 16;
 constexpr int thread_num = 1024;
 
 std::mutex tree_size_mutex;
@@ -477,17 +477,19 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
 }
 
 void InsertTest2(uint64_t thread_id, TreeType *t) {
-  for(int i = 0;i < 1024;i++) {
-    int key = 1024 * i + thread_id;
+  for(int i = 0;i < key_num;i++) {
+    int key = key_num * i + thread_id;
 
     t->Insert(key, 1.11L * key);
     t->Insert(key, 1.111L * key);
     t->Insert(key, 1.1111L * key);
     t->Insert(key, 1.11111L * key);
 
-    //tree_size_mutex.lock();
-    //tree_size += 4;
-    //tree_size_mutex.unlock();
+    tree_size_mutex.lock();
+    tree_size += 4;
+    tree_size_mutex.unlock();
+
+    printf("Tree size = %lu\n", tree_size);
   }
 
   return;
@@ -567,6 +569,12 @@ int main() {
   //InsertGetValueTest(t1);
   LaunchParallelTestID(thread_num, DeleteTest1, t1);
   DeleteGetValueTest(t1);
+
+  printf("Done Delete\n");
+  
+  //print_flag = true;
+  LaunchParallelTestID(thread_num, InsertTest2, t1);
+  InsertGetValueTest(t1);
 
   printf("Done\n");
 
