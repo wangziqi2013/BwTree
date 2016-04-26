@@ -14,3 +14,9 @@ This is the official Bw-Tree paper with many of the details blurred
 http://db.disi.unitn.eu/pages/VLDBProgram/pdf/DBRank/dbrank2013-invited2.pdf
 
 Here is again an interesting paper which has nothing new about Bw-Tree but there is a short summary of Bw-Tree in section 1.1
+
+Potential Problem with the Paper
+================================
+In the official paper of Bw-Tree, removing a node is described as posting a node remove delta on the removed node first, and then we make progress with this SMO using the help-along protocol, finishing it by posting an index term delete delta on top of its parent. This procedure has a potential problem when the parent is undergoing a split, and the split key is unfortunately chosen to be pointing to the removed node. In this case, after parent node split, its left most child is logically merged into the left sibling of the parent node, which implicitly changes both the low key of the parent and the high key of its left sibling.
+
+Our approach to avoid this problem is to post a special ABORT node on the parent before we post remove node. This ABORT node blocks all further access of the parent node, and in the meanwhile it prevents any thread that has already taken the snapshot before it is posted posting another SMO. After remove node delta is posted, we remove this ABORT node, and jump to the left sibling to finish the remove SMO. Also when posting a node split delta, we always check whether the chosen key is mapped to a removed child. If it is the case then we do not split and continue.
