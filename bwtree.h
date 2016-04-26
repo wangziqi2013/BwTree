@@ -29,7 +29,7 @@
 #include <mutex>
 
 #define BWTREE_DEBUG
-//#define INTERACTIVE_DEBUG
+#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -1382,7 +1382,7 @@ class BwTree {
    * page node with all delta changes applied to separator list
    *
    * The structure of this logical node is even more similar to
-   * InnerNode than its counterart for leaf. The reason is that
+   * InnerNode than its counterpart for leaf. The reason is that
    * for inner nodes, we do not have to worry about multi-value
    * single-key, and thus the reconstruction algorithm does not
    * require replaying the log.
@@ -1685,7 +1685,7 @@ class BwTree {
      *
      * This is useful sometimes for assertion conditions
      */
-    inline KeyType *GetLowKey() {
+    inline const KeyType *GetLowKey() {
       if(is_leaf == true) {
         return GetLogicalLeafNode()->lbound_p;
       } else {
@@ -1696,7 +1696,7 @@ class BwTree {
     /*
      * GetNextNodeID() - Return the NodeID of its right sibling
      */
-    inline NodeID GetNextNodeID() {
+    inline const NodeID GetNextNodeID() {
       if(is_leaf == true) {
         return GetLogicalLeafNode()->next_node_id;
       } else {
@@ -4103,7 +4103,7 @@ class BwTree {
 
         // If this aborts then we propagate this to the state machine driver
         if(context_p->abort_flag == true) {
-          bwt_printf("CALLEE ABORT\n");
+          bwt_printf("Jump to left sibling in Remove helo along ABORT\n");
 
           return;
         }
@@ -6220,6 +6220,51 @@ class BwTree {
     }
 
     /*
+     * ProcessConsolidate() - Consolidate current node and print
+     */
+    void ProcessConsolidate() {
+      bool is_leaf = current_node_p->IsOnLeafDeltaChain();
+
+      NodeSnapshot snapshot{is_leaf};
+      snapshot.node_p = current_node_p;
+
+      if(is_leaf == true) {
+        tree->CollectAllValuesOnLeaf(&snapshot);
+
+        std::cout << "Value list = [";
+        for(auto &item : snapshot.GetLogicalLeafNode()->GetContainer()) {
+          std::cout << GetKeyID(item.first)
+                    << ", ";
+        }
+      } else {
+        tree->CollectAllSepsOnInner(&snapshot);
+
+        std::cout << "Sep list = [";
+        for(auto &item : snapshot.GetLogicalInnerNode()->GetContainer()) {
+          std::cout << "("
+                    << GetKeyID(item.first)
+                    << ", "
+                    << item.second
+                    << "), ";
+        }
+      }
+
+      NodeID id = snapshot.GetNextNodeID();
+      std::cout << "]" << std::endl;
+      std::cout << "Low key = "
+                << GetKeyID(*snapshot.GetLowKey())
+                << std::endl;
+      std::cout << "High key = "
+                << GetKeyID(*snapshot.GetHighKey())
+                << std::endl;
+      std::cout << "Next ID = "
+                << ((id == INVALID_NODE_ID) ? "INVALID_ID" : std::to_string(id))
+                << std::endl;
+
+      return;
+    }
+
+    /*
      * InitKeyMap() - Initialize representation for +/-Inf key
      *
      * This function only makes sure that +/-Inf are in the map
@@ -6341,6 +6386,8 @@ class BwTree {
           printf("%8lX\n", std::hash<std::thread::id>()(std::this_thread::get_id()));
         } else if(opcode == "print-path") {
           ProcessPrintPath();
+        } else if(opcode == "consolidate") {
+          ProcessConsolidate();
         } else {
           std::cout << "Unknown command: " << opcode << std::endl;
         }
