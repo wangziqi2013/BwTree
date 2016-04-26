@@ -1,7 +1,6 @@
 
 #include "bwtree.h"
 
-
 using namespace peloton::index;
 
 using TreeType = BwTree<int, double>;
@@ -438,8 +437,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 16;
-constexpr int thread_num = 1024;
+constexpr int key_num = 65536;
+constexpr int thread_num = 4;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
@@ -451,9 +450,9 @@ void InsertTest1(uint64_t thread_id, TreeType *t) {
     t->Insert(i, 1.1111L * i);
     t->Insert(i, 1.11111L * i);
 
-    tree_size_mutex.lock();
-    tree_size += 4;
-    tree_size_mutex.unlock();
+    //tree_size_mutex.lock();
+    //tree_size += 4;
+    //tree_size_mutex.unlock();
   }
 
   return;
@@ -478,22 +477,42 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
 
 void InsertTest2(uint64_t thread_id, TreeType *t) {
   for(int i = 0;i < key_num;i++) {
-    int key = key_num * i + thread_id;
+    int key = thread_num * i + thread_id;
 
     t->Insert(key, 1.11L * key);
     t->Insert(key, 1.111L * key);
     t->Insert(key, 1.1111L * key);
     t->Insert(key, 1.11111L * key);
 
-    tree_size_mutex.lock();
-    tree_size += 4;
-    tree_size_mutex.unlock();
+    //tree_size_mutex.lock();
+    //tree_size += 4;
+    //tree_size_mutex.unlock();
 
-    printf("Tree size = %lu\n", tree_size);
+    //printf("Tree size = %lu\n", tree_size);
   }
 
   return;
 }
+
+void DeleteTest2(uint64_t thread_id, TreeType *t) {
+  for(int i = 0;i < key_num;i++) {
+    int key = thread_num * i + thread_id;
+
+    t->Delete(key, 1.11L * key);
+    t->Delete(key, 1.111L * key);
+    t->Delete(key, 1.1111L * key);
+    t->Delete(key, 1.11111L * key);
+
+    //tree_size_mutex.lock();
+    //tree_size += 4;
+    //tree_size_mutex.unlock();
+
+    //printf("Tree size = %lu\n", tree_size);
+  }
+
+  return;
+}
+
 
 void DeleteGetValueTest(TreeType *t) {
   for(int i = 0;i < key_num * thread_num;i ++) {
@@ -519,18 +538,24 @@ void InsertGetValueTest(TreeType *t) {
   auto value_set = t->GetValue(0);
   assert(value_set.size() == 1);
 
-  for(int i = 1;i < key_num * thread_num;i ++) {
+  for(int i = 1;i < key_num * thread_num;i++) {
     auto value_set = t->GetValue(i);
 
     //printf("i = %d\n    Values = ", i);
-
-    assert(value_set.size() == 4);
 
     for(auto it : value_set) {
       //printf("%lf ", it);
     }
 
     //putchar('\n');
+
+    if(value_set.size() != 4) {
+      //debug_stop_mutex.lock();
+      //t->idb.Start();
+      //debug_stop_mutex.unlock();
+
+      assert(false);
+    }
   }
 
   return;
@@ -563,20 +588,60 @@ int main() {
   //InsertTest(t1);
   tree_size = 0;
   print_flag = false;
-  LaunchParallelTestID(thread_num, InsertTest1, t1);
+
+  LaunchParallelTestID(thread_num, InsertTest2, t1);
   //print_flag = true;
   printf("Finished inserting all keys\n");
-  //InsertGetValueTest(t1);
-  LaunchParallelTestID(thread_num, DeleteTest1, t1);
-  DeleteGetValueTest(t1);
 
-  printf("Done Delete\n");
-  
-  //print_flag = true;
-  LaunchParallelTestID(thread_num, InsertTest2, t1);
   InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
 
-  printf("Done\n");
+  LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  printf("Finished deleting all keys\n");
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  //debug_stop_mutex.lock();
+  //t1->idb.Start();
+  //debug_stop_mutex.unlock();
+
+  //print_flag = true;
+  LaunchParallelTestID(thread_num, InsertTest1, t1);
+  printf("Finished inserting all keys\n");
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest2, t1);
+  printf("Finished deleting all keys\n");
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  LaunchParallelTestID(thread_num, InsertTest1, t1);
+  printf("Finished inserting all keys\n");
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  printf("Finished deleting all keys\n");
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  LaunchParallelTestID(thread_num, InsertTest2, t1);
+  printf("Finished inserting all keys\n");
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest2, t1);
+  printf("Finished deleting all keys\n");
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
 
   return 0;
 }
