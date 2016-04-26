@@ -438,12 +438,26 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-void InsertTest(uint64_t thread_id, TreeType *t) {
-  for(int i = thread_id * 1024;i < (thread_id + 1) * 1024;i++) {
+constexpr int key_num = 10;
+constexpr int thread_num = 1024;
+
+void InsertTest1(uint64_t thread_id, TreeType *t) {
+  for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
     t->Insert(i, 1.11L * i);
     t->Insert(i, 1.111L * i);
     t->Insert(i, 1.1111L * i);
     t->Insert(i, 1.11111L * i);
+  }
+
+  return;
+}
+
+void DeleteTest1(uint64_t thread_id, TreeType *t) {
+  for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
+    t->Delete(i, 1.11L * i);
+    t->Delete(i, 1.111L * i);
+    t->Delete(i, 1.1111L * i);
+    t->Delete(i, 1.11111L * i);
   }
 
   return;
@@ -462,13 +476,31 @@ void InsertTest2(uint64_t thread_id, TreeType *t) {
   return;
 }
 
-void GetValueTest(TreeType *t) {
+void DeleteGetValueTest(TreeType *t) {
+  for(int i = 0;i < key_num * thread_num;i ++) {
+    auto value_set = t->GetValue(i);
+
+    printf("i = %d\n    Values = ", i);
+
+    assert(value_set.size() == 0);
+
+    for(auto it : value_set) {
+      printf("%lf ", it);
+    }
+
+    putchar('\n');
+  }
+
+  return;
+}
+
+void InsertGetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
   auto value_set = t->GetValue(0);
   assert(value_set.size() == 1);
 
-  for(int i = 1;i < 1024 * 1024;i ++) {
+  for(int i = 1;i < key_num * thread_num;i ++) {
     auto value_set = t->GetValue(i);
 
     printf("i = %d\n    Values = ", i);
@@ -510,8 +542,10 @@ int main() {
   //TestNavigateInnerNode(t1);
 
   //InsertTest(t1);
-  LaunchParallelTestID(1024, InsertTest2, t1);
-  GetValueTest(t1);
+  LaunchParallelTestID(thread_num, InsertTest1, t1);
+  printf("Finished inserting all keys\n");
+  LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  DeleteGetValueTest(t1);
 
   return 0;
 }
