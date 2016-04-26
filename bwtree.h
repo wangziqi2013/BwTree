@@ -28,7 +28,7 @@
 // Used for debugging
 #include <mutex>
 
-#define BWTREE_DEBUG
+//#define BWTREE_DEBUG
 #define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
@@ -178,6 +178,7 @@ class BwTree {
     LeafDeleteType,
     LeafRemoveType,
     LeafMergeType,
+    LeafAbortType, // Unconditional abort
 
     // Only valid for inner
     InnerInsertType,
@@ -185,6 +186,7 @@ class BwTree {
     InnerDeleteType,
     InnerRemoveType,
     InnerMergeType,
+    InnerAbortType, // Unconditional abort
   };
 
   /*
@@ -675,6 +677,8 @@ class BwTree {
     /*
      * IsOnLeafDeltaChain() - Return whether the node is part of
      *                        leaf delta chain
+     *
+     * This is true even for NodeType::LeafType
      */
     bool IsOnLeafDeltaChain() const {
       return (type == NodeType::LeafType || \
@@ -900,6 +904,29 @@ class BwTree {
   };
 
   /*
+   * class LeafAbortNode - All operations must abort unconditionally
+   *
+   * This node is used to block all further updates when we want to
+   * perform split on the parent node of the target node
+   *
+   * It needs to be removed by the same thread that posted this node.
+   * And if the node has changed, then
+   */
+  class LeafAbortNode : public DeltaNode {
+   public:
+
+    /*
+     * Constructor
+     *
+     * It does not have to take a depth as argument, because
+     * no thread is allowed to post on top of that
+     */
+    LeafAbortNode(const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::LeafAbortType, -1, p_child_node_p}
+    {}
+  };
+
+  /*
    * class InnerNode - Inner node that holds separators
    */
   class InnerNode : public BaseNode {
@@ -1040,6 +1067,21 @@ class BwTree {
   };
 
   /*
+   * class InnerRemoveNode
+   */
+  class InnerRemoveNode : public DeltaNode {
+   public:
+
+    /*
+     * Constructor
+     */
+    InnerRemoveNode(int p_depth,
+                    const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::InnerRemoveType, p_depth, p_child_node_p}
+    {}
+  };
+
+  /*
    * class InnerMergeNode - Merge delta for inner nodes
    */
   class InnerMergeNode : public DeltaNode {
@@ -1062,17 +1104,16 @@ class BwTree {
   };
 
   /*
-   * class InnerRemoveNode
+   * class InnerAbortNode - Same as LeafAbortNode
    */
-  class InnerRemoveNode : public DeltaNode {
+  class InnerAbortNode : public DeltaNode {
    public:
 
     /*
      * Constructor
      */
-    InnerRemoveNode(int p_depth,
-                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerRemoveType, p_depth, p_child_node_p}
+    InnerAbortNode(const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::InnerAbortType, -1, p_child_node_p}
     {}
   };
 
@@ -4017,6 +4058,13 @@ class BwTree {
     NodeType type = node_p->GetType();
 
     switch(type) {
+      case NodeType::InnerAbortType: {
+        bwt_printf("Observed Inner Abort Node; ABORT\n");
+
+        context_p->abort_flag = true;
+
+        return;
+      }
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
         bwt_printf("Helping along remove node...\n");
@@ -4593,6 +4641,31 @@ class BwTree {
 
         bwt_printf("Node size <= leaf lower threshold. Remove\n");
 
+        // Install an abort node on parent
+        const BaseNode *abort_node_p = nullptr;
+        const BaseNode *abort_child_node_p = nullptr;
+        NodeID parent_node_id = INVALID_NODE_ID;
+
+        bool abort_node_ret = \
+          PostAbortOnParent(context_p,
+                            &parent_node_id,
+                            &abort_node_p,
+                            &abort_child_node_p);
+
+        // If we could not block the parent then the parent has changed
+        // (splitted, etc.)
+        if(abort_node_ret == true) {
+          bwt_printf("Blocked parent node (current node is leaf)\n");
+        } else {
+          bwt_printf("Unable to block parent node "
+                     "(current node is leaf). ABORT\n");
+
+          // ABORT and return
+          context_p->abort_flag = true;
+
+          return;
+        }
+
         // TODO: If we support removing non-base nodes, then we need
         // to fill into this will actual depth of the delta node
         int depth = 1;
@@ -4608,6 +4681,10 @@ class BwTree {
 
           context_p->abort_flag = true;
 
+          RemoveAbortOnParent(parent_node_id,
+                              abort_node_p,
+                              abort_child_node_p);
+
           return;
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
@@ -4615,6 +4692,10 @@ class BwTree {
           delete remove_node_p;
 
           context_p->abort_flag = true;
+
+          RemoveAbortOnParent(parent_node_id,
+                              abort_node_p,
+                              abort_child_node_p);
 
           return;
         }
@@ -4641,6 +4722,31 @@ class BwTree {
 
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
         const KeyType *split_key_p = &new_inner_node_p->lbound;
+
+        // New node has at least one item (this is the basic requirement)
+        assert(new_inner_node_p->sep_list.size() > 0);
+
+        // This points to the left most node on the right split sibling
+        // If this node is being removed then we abort
+        NodeID split_key_child_node_id = new_inner_node_p->sep_list[0].node;
+
+        // NOTE: WE FETCH THE POINTER WITHOUT HELP ALONG SINCE WE ARE
+        // NOW ON ITS PARENT
+        const BaseNode *split_key_child_node_p = \
+          GetNode(split_key_child_node_id);
+
+        // If the type is remove then just abort
+        NodeType split_key_child_node_type = split_key_child_node_p->GetType();
+        if(split_key_child_node_type == NodeType::LeafRemoveType || \
+           split_key_child_node_type == NodeType::InnerRemoveType) {
+          bwt_printf("Found a removed node (type %d) on split key child "
+                     "ABORT \n",
+                     static_cast<int>(split_key_child_node_type));
+
+          context_p->abort_flag = true;
+
+          return;
+        }
 
         NodeID new_node_id = GetNextNodeID();
 
@@ -4687,6 +4793,32 @@ class BwTree {
 
         bwt_printf("Node size <= inner lower threshold. Remove\n");
 
+        // Then we abort its parent node
+        // These two are used to hold abort node and its previous child
+        const BaseNode *abort_node_p = nullptr;
+        const BaseNode *abort_child_node_p = nullptr;
+        NodeID parent_node_id = INVALID_NODE_ID;
+
+        bool abort_node_ret = \
+          PostAbortOnParent(context_p,
+                            &parent_node_id,
+                            &abort_node_p,
+                            &abort_child_node_p);
+
+        // If we could not block the parent then the parent has changed
+        // (splitted, etc.)
+        if(abort_node_ret == true) {
+          bwt_printf("Blocked parent node (current node is inner)\n");
+        } else {
+          bwt_printf("Unable to block parent node "
+                     "(current node is inner). ABORT\n");
+
+          // ABORT and return
+          context_p->abort_flag = true;
+
+          return;
+        }
+
         // TODO: If we support removing non-base inner nodes then we should
         // fill in actual delta chain depth here
         int depth = 1;
@@ -4703,6 +4835,13 @@ class BwTree {
           // We abort after installing a node remove delta
           context_p->abort_flag = true;
 
+          // Even if we success we need to remove the abort
+          // on the parent, and let parent split thread to detect the remove
+          // delta on child
+          RemoveAbortOnParent(parent_node_id,
+                              abort_node_p,
+                              abort_child_node_p);
+
           return;
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
@@ -4713,6 +4852,11 @@ class BwTree {
           // merge nodes to underflow
           context_p->abort_flag = true;
 
+          // Same as above
+          RemoveAbortOnParent(parent_node_id,
+                              abort_node_p,
+                              abort_child_node_p);
+
           return;
         }
       } // if split/remove
@@ -4721,6 +4865,73 @@ class BwTree {
     return;
   }
 
+  /*
+   * RemoveAbortOnParent() - Removes the abort node on the parent
+   *
+   * This operation must succeeds since only the thread that installed
+   * the abort node could remove it
+   */
+  void RemoveAbortOnParent(NodeID parent_node_id,
+                           const BaseNode *abort_node_p,
+                           const BaseNode *abort_child_node_p) {
+    // We switch back to the child node (so it is the target)
+    bool ret = \
+      InstallNodeToReplace(parent_node_id, abort_child_node_p, abort_node_p);
+
+    // This CAS must succeed since nobody except this thread could remove
+    // the ABORT delta on parent node
+    assert(ret == true);
+
+    return;
+  }
+
+  /*
+   * PostAbortOnParent() - Posts an inner abort node on the parent
+   *
+   * This function blocks all accesses to the parent node, and blocks
+   * all CAS efforts for threads that took snapshots before the CAS
+   * of this functions.
+   *
+   * Return false if CAS failed. In that case the memory is freed
+   * by this function
+   *
+   * This function DOES NOT ABORT. Do not have to check for abort flag
+   */
+  bool PostAbortOnParent(Context *context_p,
+                         NodeID *parent_node_id_p,
+                         const BaseNode **abort_node_p_p,
+                         const BaseNode **abort_child_node_p_p) {
+    // This will make sure the path list has length >= 2
+    NodeSnapshot *parent_snapshot_p = \
+      GetLatestParentNodeSnapshot(context_p);
+
+    const BaseNode *parent_node_p = parent_snapshot_p->node_p;
+    NodeID parent_node_id = parent_snapshot_p->node_id;
+
+    // Save original node pointer
+    *abort_child_node_p_p = parent_node_p;
+    *parent_node_id_p = parent_node_id;
+
+    InnerAbortNode *abort_node_p = new InnerAbortNode{parent_node_p};
+
+    bool ret = InstallNodeToReplace(parent_node_id,
+                                    abort_node_p,
+                                    parent_node_p);
+
+    if(ret == true) {
+      bwt_printf("Inner Abort node CAS succeeds\n");
+
+      // Copy the new node to caller since after posting remove delta we will
+      // remove this abort node to enable accessing again
+      *abort_node_p_p = abort_node_p;
+    } else {
+      bwt_printf("Inner Abort node CAS failed\n");
+
+      delete abort_node_p;
+    }
+
+    return ret;
+  }
 
   /*
    * FindSplitNextKey() - Given a parent snapshot, find the next key of
@@ -4875,6 +5086,9 @@ class BwTree {
    * NOTE: This function takes an argument, such that if CAS succeeds it
    * sets that pointer's value to be the new node we just created
    * If CAS fails we do not touch that pointer
+   *
+   * NOTE: This function deletes memory for the caller, so caller do
+   * not have to free memory when this function returns false
    */
   template <typename MergeNodeType>
   bool PostMergeNode(const NodeSnapshot *snapshot_p,
