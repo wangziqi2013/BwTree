@@ -28,8 +28,8 @@
 // Used for debugging
 #include <mutex>
 
-//#define BWTREE_DEBUG
-#define INTERACTIVE_DEBUG
+#define BWTREE_DEBUG
+//#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -47,13 +47,14 @@ namespace index {
     }                                                                   \
   } while (0);
 
-#define idb_assert_key(node_id, key, cond)                              \
+#define idb_assert_key(node_id, key, context_p, cond)                   \
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
       printf("assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
       idb.key_list.push_back(key);                                      \
       idb.node_id_list.push_back(node_id);                              \
+      idb.context_p = context_p;                                        \
       idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
@@ -66,9 +67,9 @@ namespace index {
     assert(cond);        \
   } while (0);
 
-#define idb_assert_key(key, id, cond) \
-  do {                            \
-    assert(cond);                 \
+#define idb_assert_key(key, id, context_p, cond) \
+  do {                                           \
+    assert(cond);                                \
   } while (0);
 
 #endif
@@ -77,6 +78,7 @@ namespace index {
 
 #define bwt_printf(fmt, ...)                              \
   do {                                                    \
+    if(print_flag == false) break;                        \
     printf("%-24s(%8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
     fflush(stdout);                                       \
   } while (0);
@@ -104,6 +106,8 @@ static std::mutex debug_stop_mutex;
 using NodeID = uint64_t;
 // We use uint64_t(-1) as invalid node ID
 constexpr NodeID INVALID_NODE_ID = NodeID(-1);
+
+bool print_flag = true;
 
 /*
  * class BwTree() - Lock-free BwTree index implementation
@@ -2153,6 +2157,7 @@ class BwTree {
           // Make sure the lbound is not empty
           idb_assert_key(snapshot_p->node_id,
                          context_p->search_key,
+                         context_p,
                          snapshot_lbound_p != nullptr);
 
           // This must be true since the NodeID to low key mapping
@@ -2337,7 +2342,7 @@ class BwTree {
   NodeID LocateSeparatorByKey(const KeyType &search_key,
                               const InnerNode *inner_node_p,
                               const KeyType *ubound_p,
-                              const KeyType **lbound_p_p) const {
+                              const KeyType **lbound_p_p) {
     // If the upper bound is not set because we have not met a
     // split delta node, then just set to the current upper bound
     if(ubound_p == nullptr) {
@@ -2377,7 +2382,7 @@ class BwTree {
 
     // If search key >= upper bound (natural or artificial) then
     // we have hit the wrong inner node
-    assert(KeyCmpLess(search_key, *ubound_p));
+    idb_assert(KeyCmpLess(search_key, *ubound_p));
 
     // Search key must be greater than or equal to the lower bound
     // which is assumed to be a constant associated with a NodeID
@@ -3115,6 +3120,7 @@ class BwTree {
           // since merge and split would direct to the correct page by sep key
           idb_assert_key(snapshot_p->node_id,
                          search_key,
+                         context_p,
                          (KeyCmpGreaterEqual(search_key, *lbound_p) && \
                          KeyCmpLess(search_key, *ubound_p))
                          );
@@ -4069,9 +4075,22 @@ class BwTree {
       case NodeType::InnerRemoveType: {
         bwt_printf("Helping along remove node...\n");
 
+        // If snapshot indicates this is a leftmost child, but
+        // actually we have seen a remove, then the parent must have
+        // been removed into its left sibling
+        // so we just abort and retry
+        if(snapshot_p->is_leftmost_child == true) {
+          bwt_printf("Snapshot indicates this is left most child. ABORT\n");
+
+          context_p->abort_flag = true;
+
+          return;
+        }
+
         // We could not find remove delta on left most child
         idb_assert_key(node_id,
                        context_p->search_key,
+                       context_p,
                        snapshot_p->is_leftmost_child == false);
 
         const DeltaNode *delta_node_p = \
@@ -4726,24 +4745,29 @@ class BwTree {
         // New node has at least one item (this is the basic requirement)
         assert(new_inner_node_p->sep_list.size() > 0);
 
+        const SepItem &first_item = new_inner_node_p->sep_list[0];
         // This points to the left most node on the right split sibling
         // If this node is being removed then we abort
-        NodeID split_key_child_node_id = new_inner_node_p->sep_list[0].node;
+        NodeID split_key_child_node_id = first_item.node;
+
+        // This must be the split key
+        assert(KeyCmpEqual(first_item.key, *split_key_p));
 
         // NOTE: WE FETCH THE POINTER WITHOUT HELP ALONG SINCE WE ARE
         // NOW ON ITS PARENT
         const BaseNode *split_key_child_node_p = \
           GetNode(split_key_child_node_id);
 
-        // If the type is remove then just abort
+        // If the type is remove then we just continue without abort
+        // If we abort then it might introduce deadlock
         NodeType split_key_child_node_type = split_key_child_node_p->GetType();
         if(split_key_child_node_type == NodeType::LeafRemoveType || \
            split_key_child_node_type == NodeType::InnerRemoveType) {
           bwt_printf("Found a removed node (type %d) on split key child "
-                     "ABORT \n",
+                     "CONTINUE \n",
                      static_cast<int>(split_key_child_node_type));
 
-          context_p->abort_flag = true;
+          //context_p->abort_flag = true;
 
           return;
         }
@@ -4874,6 +4898,8 @@ class BwTree {
   void RemoveAbortOnParent(NodeID parent_node_id,
                            const BaseNode *abort_node_p,
                            const BaseNode *abort_child_node_p) {
+    bwt_printf("Remove abort on parent node\n");
+
     // We switch back to the child node (so it is the target)
     bool ret = \
       InstallNodeToReplace(parent_node_id, abort_child_node_p, abort_node_p);
@@ -4968,8 +4994,9 @@ class BwTree {
     while(it1 != sep_map.end()) {
       // We have inserted the same key before
       if(KeyCmpEqual(it1->first, *split_key_p) == true) {
-        // Make sure the SepItem is used to map newly splited node
-        assert(insert_pid == it1->second);
+        // Make sure the SepItem is used to map newly splitted node
+        //idb_assert_key(snapshot_p->node_id,
+        //               , insert_pid == it1->second);
 
         return false;
       }
@@ -5541,6 +5568,9 @@ class BwTree {
     // Also used as a buffer to hold PID
     std::vector<NodeID> node_id_list;
 
+    // We catch this for debugging from the place where we put it
+    Context *context_p;
+
     std::mutex key_map_mutex;
 
     /*
@@ -5987,11 +6017,6 @@ class BwTree {
                 << NodeTypeToString(current_type) << ")"
                 << std::endl;
 
-      // We need to print out depth for debugging
-      std::cout << "Delta depth: "
-                << static_cast<const DeltaNode *>(current_node_p)->depth
-                << std::endl;
-
       switch (current_type) {
         case NodeType::LeafType:
         case NodeType::InnerType:
@@ -6002,7 +6027,7 @@ class BwTree {
                     << ") does not have record"
                     << std::endl;
 
-          break;
+          return;
         }
         case NodeType::LeafSplitType: {
           const LeafSplitNode *split_node_p = \
@@ -6118,8 +6143,13 @@ class BwTree {
                     << std::endl;
 
           assert(false);
-          break;
+          return;
       }
+
+      // We need to print out depth for debugging
+      std::cout << "Delta depth: "
+                << static_cast<const DeltaNode *>(current_node_p)->depth
+                << std::endl;
 
       return;
     }
@@ -6154,6 +6184,37 @@ class BwTree {
       node_p_stack.pop();
 
       current_type = current_node_p->type;
+
+      return;
+    }
+
+    /*
+     * ProcessPrintPath() - Print path in context_p object
+     */
+    void ProcessPrintPath() {
+      if(context_p == nullptr) {
+        std::cout << "Context object does not exist" << std::endl;
+
+        return;
+      } else {
+        std::cout << "Path list length: "
+                  << context_p->path_list.size()
+                  << std::endl;
+        std::cout << "Root NodeID: "
+                  << tree->root_id.load() << std::endl;
+      }
+
+      for(auto &snapshot : context_p->path_list) {
+        std::cout << snapshot.node_id;
+        std::cout << "; leftmost = "
+                  << snapshot.is_leftmost_child;
+        std::cout << "; is_leaf = "
+                  << snapshot.is_leaf;
+        std::cout << "; low key: "
+                  << GetKeyID(*snapshot.lbound_p);
+
+        std::cout << std::endl;
+      }
 
       return;
     }
@@ -6278,6 +6339,8 @@ class BwTree {
           }
         } else if(opcode == "get-thread-id") {
           printf("%8lX\n", std::hash<std::thread::id>()(std::this_thread::get_id()));
+        } else if(opcode == "print-path") {
+          ProcessPrintPath();
         } else {
           std::cout << "Unknown command: " << opcode << std::endl;
         }

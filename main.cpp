@@ -438,8 +438,11 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 10;
+constexpr int key_num = 1024;
 constexpr int thread_num = 1024;
+
+std::mutex tree_size_mutex;
+size_t tree_size = 0;
 
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
@@ -447,6 +450,10 @@ void InsertTest1(uint64_t thread_id, TreeType *t) {
     t->Insert(i, 1.111L * i);
     t->Insert(i, 1.1111L * i);
     t->Insert(i, 1.11111L * i);
+
+    tree_size_mutex.lock();
+    tree_size += 4;
+    tree_size_mutex.unlock();
   }
 
   return;
@@ -458,6 +465,12 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
     t->Delete(i, 1.111L * i);
     t->Delete(i, 1.1111L * i);
     t->Delete(i, 1.11111L * i);
+
+    //tree_size_mutex.lock();
+    //tree_size -= 4;
+    //tree_size_mutex.unlock();
+
+    //printf("Tree size = %lu\n", tree_size);
   }
 
   return;
@@ -471,6 +484,10 @@ void InsertTest2(uint64_t thread_id, TreeType *t) {
     t->Insert(key, 1.111L * key);
     t->Insert(key, 1.1111L * key);
     t->Insert(key, 1.11111L * key);
+
+    //tree_size_mutex.lock();
+    //tree_size += 4;
+    //tree_size_mutex.unlock();
   }
 
   return;
@@ -480,15 +497,15 @@ void DeleteGetValueTest(TreeType *t) {
   for(int i = 0;i < key_num * thread_num;i ++) {
     auto value_set = t->GetValue(i);
 
-    printf("i = %d\n    Values = ", i);
+    //printf("i = %d\n    Values = ", i);
 
     assert(value_set.size() == 0);
 
     for(auto it : value_set) {
-      printf("%lf ", it);
+      //printf("%lf ", it);
     }
 
-    putchar('\n');
+    //putchar('\n');
   }
 
   return;
@@ -503,15 +520,15 @@ void InsertGetValueTest(TreeType *t) {
   for(int i = 1;i < key_num * thread_num;i ++) {
     auto value_set = t->GetValue(i);
 
-    printf("i = %d\n    Values = ", i);
+    //printf("i = %d\n    Values = ", i);
 
     assert(value_set.size() == 4);
 
     for(auto it : value_set) {
-      printf("%lf ", it);
+      //printf("%lf ", it);
     }
 
-    putchar('\n');
+    //putchar('\n');
   }
 
   return;
@@ -542,10 +559,16 @@ int main() {
   //TestNavigateInnerNode(t1);
 
   //InsertTest(t1);
+  tree_size = 0;
+  print_flag = false;
   LaunchParallelTestID(thread_num, InsertTest1, t1);
+  //print_flag = true;
   printf("Finished inserting all keys\n");
+  //InsertGetValueTest(t1);
   LaunchParallelTestID(thread_num, DeleteTest1, t1);
   DeleteGetValueTest(t1);
+
+  printf("Done\n");
 
   return 0;
 }
