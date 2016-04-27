@@ -2224,13 +2224,41 @@ class BwTree {
           std::vector<NodeSnapshot> *path_list_p = \
             &context_p->path_list;
 
+          assert(path_list_p->size() > 0);
+
+          // We roll back for at least one level
+          // and stop at the first
+          NodeSnapshot *snapshot_p = nullptr;
+          do {
+            path_list_p->pop_back();
+            context_p->current_level--;
+
+            if(path_list_p->size() == 0) {
+              context_p->current_state = OpState::Init;
+              context_p->current_level = 0;
+
+              break;
+            }
+
+            snapshot_p = &path_list_p->back();
+
+            // Even if we break on leaf level we are now
+            // on inner level
+            context_p->current_state = OpState::Inner;
+
+            // If we see a match after popping the first one
+            // then quit aborting
+            if(snapshot_p->node_p == GetNode(snapshot_p->node_id)) {
+              break;
+            }
+          }while(1);
           // This calls destructor for all NodeSnapshot object, and
           // will release memory for logical node object
-          path_list_p->clear();
+          //path_list_p->clear();
 
           context_p->abort_counter++;
-          context_p->current_level = 0;
-          context_p->current_state = OpState::Init;
+          //context_p->current_level = 0;
+          //context_p->current_state = OpState::Init;
           context_p->abort_flag = false;
 
           break;
