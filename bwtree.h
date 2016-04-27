@@ -4063,13 +4063,27 @@ class BwTree {
     // it as constant
     NodeType type = node_p->GetType();
 
+before_switch:
     switch(type) {
       case NodeType::InnerAbortType: {
         bwt_printf("Observed Inner Abort Node; ABORT\n");
 
-        context_p->abort_flag = true;
+        // This block is an optimization - when seeing an ABORT
+        // node, we continue but set the physical pointer to be ABORT's
+        // child, to make CAS always fail on this node to avoid
+        // posting on ABORT, especially posting split node
+        {
+          node_p = \
+            static_cast<const DeltaNode *>(node_p)->child_node_p;
+          snapshot_p->SwitchPhysicalPointer(node_p);
+          type = node_p->GetType();
 
-        return;
+          goto before_switch;
+        }
+
+        //context_p->abort_flag = true;
+
+        //return;
       }
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
