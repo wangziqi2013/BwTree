@@ -1,6 +1,8 @@
 # BwTree
 This is a street strength implementation of Bw-Tree, the Microsoft's implementation of which is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
 
+![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/master/cover.png)
+
 Paper for reference
 ===================
 http://research.microsoft.com/pubs/246926/p2067-makreshanski.pdf
