@@ -3522,6 +3522,28 @@ class BwTree {
 
           break;
         } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+
+          if(collect_value == true) {
+            // For update nodes we also need to check whether
+            // the updated key is in the range or not
+            if(ubound_p != nullptr && \
+               KeyCmpGreaterEqual(update_node_p->update_key,
+                                  *ubound_p)) {
+              //bwt_printf("Update key not in range (>= high key)\n");
+            } else {
+              logical_node_p->pointer_list.push_back(node_p);
+
+              log_count++;
+            }
+          }
+
+          node_p = update_node_p->child_node_p;
+
+          break;
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: LeafRemoveNode not allowed\n");
 
