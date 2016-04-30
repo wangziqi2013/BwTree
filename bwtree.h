@@ -3235,12 +3235,18 @@ class BwTree {
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
 
+          // Internally we treat update node as two operations
+          // but they must be packed together to make an atomic step
           if(collect_value == true) {
             if(KeyCmpEqual(search_key, update_node_p->update_key)) {
               logical_node_p->pointer_list.push_back(node_p);
               log_count++;
             }
           }
+
+          node_p = update_node_p->child_node_p;
+
+          break;
         } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
