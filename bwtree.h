@@ -180,6 +180,7 @@ class BwTree {
     LeafInsertType,
     LeafSplitType,
     LeafDeleteType,
+    LeafUpdateType,
     LeafRemoveType,
     LeafMergeType,
     LeafAbortType, // Unconditional abort
@@ -833,6 +834,33 @@ class BwTree {
       DeltaNode{NodeType::LeafDeleteType, p_depth, p_child_node_p},
       delete_key{p_delete_key},
       value{p_value}
+    {}
+  };
+
+  /*
+   * class LeafUpdateNode - Update a key atomically
+   *
+   * Without using this node there is no guarantee that an insert
+   * after delete is atomic
+   */
+  class LeafUpdateNode : public DeltaNode {
+   public:
+    KeyType update_key;
+    ValueType old_value;
+    ValueType new_value;
+
+    /*
+     * Constructor
+     */
+    LeafUpdateNode(const KeyType &p_update_key,
+                   const ValueType &p_old_value,
+                   const ValueType &p_new_value,
+                   int p_depth,
+                   const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::LeafUpdateType, p_depth, p_child_node_p},
+      update_key{p_update_key},
+      old_value{p_old_value},
+      new_value{p_new_value}
     {}
   };
 
