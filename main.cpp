@@ -3,6 +3,7 @@
 
 using namespace peloton::index;
 
+
 using TreeType = BwTree<int, double>;
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;

@@ -9,3 +9,4 @@ main.o: main.cpp bwtree.h
 
 clean:
 	rm -f *.o *.log
+	
