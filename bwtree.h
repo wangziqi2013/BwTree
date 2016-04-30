@@ -3207,8 +3207,6 @@ class BwTree {
           if(collect_value == true) {
             // If there is a match then push the delta
             if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
-              bwt_printf("Push insert delta\n");
-
               logical_node_p->pointer_list.push_back(node_p);
               log_count++;
             }
@@ -3224,8 +3222,6 @@ class BwTree {
 
           if(collect_value == true) {
             if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
-              bwt_printf("Push delete delta\n");
-
               logical_node_p->pointer_list.push_back(node_p);
               log_count++;
             }
@@ -3235,6 +3231,17 @@ class BwTree {
 
           break;
         } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+
+          if(collect_value == true) {
+            if(KeyCmpEqual(search_key, update_node_p->update_key)) {
+              logical_node_p->pointer_list.push_back(node_p);
+              log_count++;
+            }
+          }
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
 
