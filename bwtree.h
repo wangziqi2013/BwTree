@@ -6696,6 +6696,52 @@ before_switch:
   };
 };
 
+
+
+
+/*
+ * class EpochManager - Delays memory deallocation
+ */
+template <typename RawKeyType,
+          typename ValueType,
+          typename KeyComparator = std::less<RawKeyType>,
+          typename KeyEqualityChecker = std::equal_to<RawKeyType>,
+          typename ValueEqualityChecker = std::equal_to<ValueType>,
+          typename ValueHashFunc = std::hash<ValueType>>
+class EpochManager {
+ public:
+  // This is the type of tree we are working on
+  using TreeType = BwTree<RawKeyType,
+                          ValueType,
+                          KeyComparator,
+                          KeyEqualityChecker,
+                          ValueEqualityChecker,
+                          ValueHashFunc>;
+
+  // The followings are types that will be needed during garbage collection
+  using LeafRemoveNode = typename TreeType::LeafRemoveNode;
+  using LeafInsertNode = typename TreeType::LeafInsertNode;
+  using LeafDeleteNode = typename TreeType::LeafDeleteNode;
+  using LeafSplitNode = typename TreeType::LeafSplitNode;
+  using LeafMergeNode = typename TreeType::LeafMergeNode;
+  using LeafAbortNode = typename TreeType::LeafAbortNode;
+  using LeafNode = typename TreeType::LeafNode;
+
+  using InnerRemoveNode = typename TreeType::InnerRemoveNode;
+  using InnerInsertNode = typename TreeType::InnerInsertNode;
+  using InnerDeleteNode = typename TreeType::InnerDeleteNode;
+  using InnerSplitNode = typename TreeType::InnerSplitNode;
+  using InnerMergeNode = typename TreeType::InnerMergeNode;
+  using InnerAbortNode = typename TreeType::InnerAbortNode;
+  using InnerNode = typename TreeType::InnerNode;
+
+  using DeltaNode = typename TreeType::DeltaNode;
+
+  using NodeType = typename TreeType::NodeType;
+  using BaseNode = typename TreeType::BaseNode;
+
+};
+
 }  // End index namespace
 }  // End peloton namespace
 
