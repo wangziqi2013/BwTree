@@ -5963,6 +5963,8 @@ before_switch:
           return "Inner Remove";
         case NodeType::InnerMergeType:
           return "InnerMerge";
+        case NodeType::LeafUpdateType:
+          return "LeafUpdate";
         default:
           return "Unknown Type (Error!)";
       }
@@ -6312,6 +6314,21 @@ before_switch:
                     << GetKeyID(delete_node_p->delete_key)
                     << ", "
                     << GetValueID(delete_node_p->value)
+                    << "]"
+                    << std::endl;
+
+          break;
+        }
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(current_node_p);
+
+          std::cout << "key, old value, new value = ["
+                    << GetKeyID(update_node_p->update_key)
+                    << ", "
+                    << GetValueID(update_node_p->old_value)
+                    << ", "
+                    << GetValueID(update_node_p->new_value)
                     << "]"
                     << std::endl;
 
