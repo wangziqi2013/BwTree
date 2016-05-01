@@ -1834,7 +1834,13 @@ class BwTree {
       value_hash_obj{p_value_hash_obj},
       key_dup{p_key_dup},
       next_unused_node_id{0},
-      idb{this} {
+      idb{this},
+      insert_op_count{0},
+      insert_abort_count{0},
+      delete_op_count{0},
+      delete_abort_count{0},
+      update_op_count{0},
+      update_abort_count{0}{
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
 
@@ -5657,6 +5663,15 @@ before_switch:
   NodeID first_node_id;
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
+
+  std::atomic<uint64_t> insert_op_count;
+  std::atomic<uint64_t> insert_abort_count;
+
+  std::atomic<uint64_t> delete_op_count;
+  std::atomic<uint64_t> delete_abort_count;
+
+  std::atomic<uint64_t> update_op_count;
+  std::atomic<uint64_t> update_abort_count;
 
   InteractiveDebugger idb;
 
