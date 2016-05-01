@@ -9,6 +9,16 @@
 // Copyright (c) 2015, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
+//
+// NOTE: If you encounter any bug, assertion failure, segment fault or
+// other anomalies, please contact:
+//
+// Ziqi Wang
+// ziqiw a.t. andrew.cmu.edu
+//
+// in order to get a quick response and diagnosis
+//
+//===----------------------------------------------------------------------===//
 
 #pragma once
 #include <vector>
