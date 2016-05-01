@@ -438,8 +438,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 1024;
-constexpr int thread_num = 1024;
+constexpr int key_num = 256;
+constexpr int thread_num = 16;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
@@ -533,6 +533,7 @@ void DeleteGetValueTest(TreeType *t) {
   return;
 }
 
+bool insert_get_value_print = true;
 void InsertGetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
@@ -542,13 +543,19 @@ void InsertGetValueTest(TreeType *t) {
   for(int i = 1;i < key_num * thread_num;i++) {
     auto value_set = t->GetValue(i);
 
-    //printf("i = %d\n    Values = ", i);
-
-    for(auto it : value_set) {
-      //printf("%lf ", it);
+    if(insert_get_value_print) {
+      printf("i = %d\n    Values = ", i);
     }
 
-    //putchar('\n');
+    for(auto it : value_set) {
+      if(insert_get_value_print) {
+        printf("%lf ", it);
+      }
+    }
+
+    if(insert_get_value_print) {
+      putchar('\n');
+    }
 
     if(value_set.size() != 4) {
       //debug_stop_mutex.lock();
@@ -557,6 +564,19 @@ void InsertGetValueTest(TreeType *t) {
 
       assert(false);
     }
+  }
+
+  return;
+}
+
+void UpdateTest2(uint64_t thread_id, TreeType *t) {
+  for(int i = 0;i < key_num;i++) {
+    int key = thread_num * i + thread_id;
+
+    t->Update(key, 1.11L * key, 2.22L * key);
+    t->Update(key, 1.111L * key, 2.222L * key);
+    t->Update(key, 1.1111L * key, 2.2222L * key);
+    t->Update(key, 1.11111L * key, 2.22222L * key);
   }
 
   return;
@@ -594,14 +614,18 @@ int main() {
   //print_flag = true;
   printf("Finished inserting all keys\n");
 
+  LaunchParallelTestID(thread_num, UpdateTest2, t1);
+  printf("Finished updating all keys\n");
+
+  insert_get_value_print = true;
   InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
-  LaunchParallelTestID(thread_num, DeleteTest1, t1);
-  printf("Finished deleting all keys\n");
+  //LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  //printf("Finished deleting all keys\n");
 
-  DeleteGetValueTest(t1);
-  printf("Finished verifying all deleted values\n");
+  //DeleteGetValueTest(t1);
+  //printf("Finished verifying all deleted values\n");
 
   debug_stop_mutex.lock();
   t1->idb.Start();

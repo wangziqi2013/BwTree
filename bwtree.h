@@ -2188,6 +2188,8 @@ class BwTree {
 
             snapshot_lbound_p = logical_node_p->lbound_p;
             snapshot_ubound_p = logical_node_p->ubound_p;
+
+            //assert(snapshot_lbound_p != nullptr);
           } else {
             CollectMetadataOnInner(snapshot_p);
 
@@ -2196,6 +2198,8 @@ class BwTree {
 
             snapshot_lbound_p = logical_node_p->lbound_p;
             snapshot_ubound_p = logical_node_p->ubound_p;
+
+            //assert(snapshot_lbound_p != nullptr);
           }
 
           // Make sure the lbound is not empty
@@ -5388,6 +5392,11 @@ before_switch:
    *
    * This function returns false if the key does not exist or
    * value does not exist with the key
+   *
+   * This function also returns false if the new value already exists
+   *
+   * TODO: Use a flag set to represent all these error conditions
+   * instead of only one boolean flag
    */
   bool Update(const KeyType &key,
               const ValueType &old_value,
@@ -5415,6 +5424,13 @@ before_switch:
       // and if value does not exist return false
       auto it2 = it->second.find(old_value);
       if(it2 == it->second.end()) {
+        return false;
+      }
+
+      // If the new value already exists in the leaf
+      // we also will not do update and simply return false
+      auto it3 = it->second.find(new_value);
+      if(it3 != it->second.end()) {
         return false;
       }
 
