@@ -5338,6 +5338,8 @@ before_switch:
   bool Insert(const KeyType &key, const ValueType &value) {
     bwt_printf("Insert called\n");
 
+    insert_op_count.fetch_add(1);
+
     while(1) {
       Context context{key};
 
@@ -5397,6 +5399,11 @@ before_switch:
         delete insert_node_p;
       }
 
+      // Update abort counter
+      // We could not do this before return since the context
+      // object is cleared at the end of loop
+      insert_abort_count.fetch_add(context.abort_counter);
+
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert delta from the root\n");
     }
@@ -5419,6 +5426,8 @@ before_switch:
               const ValueType &old_value,
               const ValueType &new_value) {
     bwt_printf("Update called\n");
+
+    update_op_count.fetch_add(1);
 
     while(1) {
       Context context{key};
@@ -5488,6 +5497,8 @@ before_switch:
         delete update_node_p;
       }
 
+      update_abort_count.fetch_add(context.abort_counter);
+
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf update delta from the root\n");
     }
@@ -5505,6 +5516,8 @@ before_switch:
    */
   bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
+
+    delete_op_count.fetch_add(1);
 
     while(1) {
       Context context{key};
@@ -5565,6 +5578,8 @@ before_switch:
 
         delete delete_node_p;
       }
+
+      delete_abort_count.fetch_add(context.abort_counter);
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
