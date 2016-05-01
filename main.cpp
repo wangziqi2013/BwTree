@@ -438,8 +438,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 256;
-constexpr int thread_num = 64;
+constexpr int key_num = 256 * 256;
+constexpr int thread_num = 4;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
@@ -582,6 +582,20 @@ void UpdateTest2(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+void PrintStat(TreeType *t) {
+  printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
+         t->insert_op_count.load(),
+         t->insert_abort_count.load(),
+         (double)t->insert_abort_count.load() / (double)t->insert_op_count.load());
+
+  printf("Delete op = %lu; abort = %lu; abort rate = %lf\n",
+         t->delete_op_count.load(),
+         t->delete_abort_count.load(),
+         (double)t->delete_abort_count.load() / (double)t->delete_op_count.load());
+
+  return;
+}
+
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
   //BwTree<long, double> *t2 = new BwTree<long, double>{};
@@ -614,59 +628,77 @@ int main() {
   //print_flag = true;
   printf("Finished inserting all keys\n");
 
-  LaunchParallelTestID(thread_num, UpdateTest2, t1);
-  printf("Finished updating all keys\n");
+  PrintStat(t1);
+  //LaunchParallelTestID(thread_num, UpdateTest2, t1);
+  //printf("Finished updating all keys\n");
 
-  insert_get_value_print = true;
+  insert_get_value_print = false;
   InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
-  //LaunchParallelTestID(thread_num, DeleteTest1, t1);
-  //printf("Finished deleting all keys\n");
+  LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  printf("Finished deleting all keys\n");
 
-  //DeleteGetValueTest(t1);
-  //printf("Finished verifying all deleted values\n");
+  PrintStat(t1);
 
-  debug_stop_mutex.lock();
-  t1->idb.Start();
-  debug_stop_mutex.unlock();
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  //debug_stop_mutex.lock();
+  //t1->idb.Start();
+  //debug_stop_mutex.unlock();
 
   //print_flag = true;
-//  LaunchParallelTestID(thread_num, InsertTest1, t1);
-//  printf("Finished inserting all keys\n");
-//
-//  InsertGetValueTest(t1);
-//  printf("Finished verifying all inserted values\n");
-//
-//  LaunchParallelTestID(thread_num, DeleteTest2, t1);
-//  printf("Finished deleting all keys\n");
-//
-//  DeleteGetValueTest(t1);
-//  printf("Finished verifying all deleted values\n");
+  LaunchParallelTestID(thread_num, InsertTest1, t1);
+  printf("Finished inserting all keys\n");
 
-//  LaunchParallelTestID(thread_num, InsertTest1, t1);
-//  printf("Finished inserting all keys\n");
-//
-//  InsertGetValueTest(t1);
-//  printf("Finished verifying all inserted values\n");
-//
-//  LaunchParallelTestID(thread_num, DeleteTest1, t1);
-//  printf("Finished deleting all keys\n");
-//
-//  DeleteGetValueTest(t1);
-//  printf("Finished verifying all deleted values\n");
-//
-//  LaunchParallelTestID(thread_num, InsertTest2, t1);
-//  printf("Finished inserting all keys\n");
-//
-//  InsertGetValueTest(t1);
-//  printf("Finished verifying all inserted values\n");
-//
-//  LaunchParallelTestID(thread_num, DeleteTest2, t1);
-//  printf("Finished deleting all keys\n");
-//
-//  DeleteGetValueTest(t1);
-//  printf("Finished verifying all deleted values\n");
+  PrintStat(t1);
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest2, t1);
+  printf("Finished deleting all keys\n");
+
+  PrintStat(t1);
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  LaunchParallelTestID(thread_num, InsertTest1, t1);
+  printf("Finished inserting all keys\n");
+
+  PrintStat(t1);
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  printf("Finished deleting all keys\n");
+
+  PrintStat(t1);
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  LaunchParallelTestID(thread_num, InsertTest2, t1);
+  printf("Finished inserting all keys\n");
+
+  PrintStat(t1);
+
+  InsertGetValueTest(t1);
+  printf("Finished verifying all inserted values\n");
+
+  LaunchParallelTestID(thread_num, DeleteTest2, t1);
+  printf("Finished deleting all keys\n");
+
+  PrintStat(t1);
+
+  DeleteGetValueTest(t1);
+  printf("Finished verifying all deleted values\n");
+
+  // We print statistics at the end
+
 
   return 0;
 }
