@@ -5384,6 +5384,85 @@ before_switch:
   }
 
   /*
+   * Update() - Update an existing value for a key to a new value
+   *
+   * This function returns false if the key does not exist or
+   * value does not exist with the key
+   */
+  bool Update(const KeyType &key,
+              const ValueType &old_value,
+              const ValueType &new_value) {
+    bwt_printf("Update called\n");
+
+    while(1) {
+      Context context{key};
+
+      Traverse(&context, true);
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      KeyValueSet &container = logical_node_p->GetContainer();
+
+      // first check whether the key exists or not
+      // if key does not exist return false
+      typename KeyValueSet::iterator it = container.find(key);
+      if(it == container.end()) {
+        return false;
+      }
+
+      // Then check whether the value exists for this key
+      // given the value set for the key
+      // and if value does not exist return false
+      auto it2 = it->second.find(old_value);
+      if(it2 == it->second.end()) {
+        return false;
+      }
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If node_p is a delta node then we have to use its
+      // delta value
+      int depth = 1;
+
+      if(node_p->IsDeltaNode() == true) {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        depth = delta_node_p->depth + 1;
+      }
+
+      const LeafUpdateNode *update_node_p = \
+        new LeafUpdateNode{key, old_value, new_value, depth, node_p};
+
+      bool ret = InstallNodeToReplace(node_id,
+                                      update_node_p,
+                                      node_p);
+      if(ret == true) {
+        bwt_printf("Leaf Update delta CAS succeed\n");
+
+        // This will actually not be used anymore, so maybe
+        // could save this assignment
+        snapshot_p->SwitchPhysicalPointer(update_node_p);
+
+        // If install is a success then just break from the loop
+        // and return
+        break;
+      } else {
+        bwt_printf("Leaf update delta CAS failed\n");
+
+        delete update_node_p;
+      }
+
+      // We reach here only because CAS failed
+      bwt_printf("Retry installing leaf update delta from the root\n");
+    }
+
+    return true;
+  }
+
+  /*
    * Delete() - Remove a key-value pair from the tree
    *
    * This function returns false if the key and value pair does not
