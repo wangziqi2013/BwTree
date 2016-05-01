@@ -684,14 +684,23 @@ class BwTree {
      *                        leaf delta chain
      *
      * This is true even for NodeType::LeafType
+     *
+     * NOTE: WHEN ADDING NEW NODE TYPES PLEASE UPDATE THIS LIST
+     *
+     * Note 2: Avoid calling this in multiple places. Currently we only
+     * call this in TakeNodeSnapshot() or in the debugger
      */
-    bool IsOnLeafDeltaChain() const {
+    inline bool IsOnLeafDeltaChain() const {
       return (type == NodeType::LeafType || \
               type == NodeType::LeafInsertType || \
               type == NodeType::LeafDeleteType || \
               type == NodeType::LeafSplitType || \
               type == NodeType::LeafMergeType || \
-              type == NodeType::LeafRemoveType);
+              type == NodeType::LeafRemoveType || \
+              type == NodeType::LeafUpdateType || \
+              // This is necessary, since we need to first load
+              // node ID and then judge its type
+              type == NodeType::LeafAbortType);
     }
 
     /*
@@ -3977,6 +3986,8 @@ class BwTree {
     std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
 
     // Need to check whether it is leaf or inner node
+    // NOTE: EVEN IF IT IS A LeafAbortNode WE STILL NEED
+    // TO CALL THIS FUNCTION TO KNOW WE ARE ON LEAF
     bool is_leaf = node_p->IsOnLeafDeltaChain();
     NodeSnapshot snapshot{is_leaf};
 
@@ -4047,7 +4058,7 @@ class BwTree {
     snapshot_p->lbound_p = lbound_p;
 
     // We only call UpdateNodeSnapshot() when we switch to split
-    // sibling in Navigate function
+    // sibling in Navigate function and jump to left sibling
     // When updating the physical pointer of a root node after posting
     // a delta, please call SwitchPhysicalPointer() instead
     snapshot_p->is_root = false;
@@ -6017,7 +6028,8 @@ before_switch:
         case NodeType::InnerDeleteType:
         case NodeType::InnerSplitType:
         case NodeType::InnerRemoveType:
-        case NodeType::InnerMergeType: {
+        case NodeType::InnerMergeType:
+        case NodeType::LeafUpdateType: {
           const DeltaNode *delta_node_p = \
             static_cast<const DeltaNode *>(current_node_p);
 

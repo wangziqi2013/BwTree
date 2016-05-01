@@ -439,7 +439,7 @@ void TestNavigateInnerNode(TreeType *t) {
 */
 
 constexpr int key_num = 256;
-constexpr int thread_num = 16;
+constexpr int thread_num = 64;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
