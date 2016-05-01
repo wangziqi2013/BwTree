@@ -1331,9 +1331,6 @@ class BwTree {
             auto it = key_value_set.find(delete_node_p->delete_key);
             if(it == key_value_set.end()) {
               bwt_printf("ERROR: Delete a value that does not exist\n");
-              bwt_printf("Key = %d; Value = %lf\n",
-                         delete_node_p->delete_key.key,
-                         delete_node_p->value);
 
               assert(false);
             }
@@ -1346,6 +1343,25 @@ class BwTree {
 
             break;
           } // case LeafDeleteType
+          case NodeType::LeafUpdateType: {
+            const LeafUpdateNode *update_node_p = \
+              static_cast<const LeafUpdateNode *>(node_p);
+
+            auto it = key_value_set.find(update_node_p->update_key);
+            if(it == key_value_set.end()) {
+              bwt_printf("ERROR: Update a value whose key does not exist\n");
+
+              assert(false);
+            }
+
+            // Same as above: We do not detect whether value is present
+            // here or not
+            // Just blindly delete and then insert
+            it->second.erase(update_node_p->old_value);
+            it->second.insert(update_node_p->new_value);
+
+            break;
+          } // case LeafUpdateType
           default: {
             bwt_printf("ERROR: Unknown delta node type: %d\n", type);
 
