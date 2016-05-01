@@ -6704,10 +6704,10 @@ before_switch:
  */
 template <typename RawKeyType,
           typename ValueType,
-          typename KeyComparator = std::less<RawKeyType>,
-          typename KeyEqualityChecker = std::equal_to<RawKeyType>,
-          typename ValueEqualityChecker = std::equal_to<ValueType>,
-          typename ValueHashFunc = std::hash<ValueType>>
+          typename KeyComparator,
+          typename KeyEqualityChecker,
+          typename ValueEqualityChecker,
+          typename ValueHashFunc>
 class EpochManager {
  public:
   // This is the type of tree we are working on
@@ -6739,6 +6739,37 @@ class EpochManager {
 
   using NodeType = typename TreeType::NodeType;
   using BaseNode = typename TreeType::BaseNode;
+
+  /*
+   * struct GarbageNode - A linked list of garbages
+   */
+  struct GarbageNode {
+    const BaseNode *node_p;
+
+    // This does not have to be atomic, since we only
+    // insert at the head of garbage list
+    GarbageNode *next_p;
+  };
+
+  /*
+   * struct EpochNode - A linked list of epoch node that records thread count
+   *
+   * This struct is also the head of garbage node linked list, which must
+   * be made atomic since different worker threads will contend to insert
+   * garbage into the head of the list
+   */
+  struct EpochNode {
+    // We need this to be atomic in order to accurately
+    // counter the number of threads
+    std::atomic<size_t> active_thread_count;
+    // We need this to be atomic to be able to
+    // add garbage nodes without any race condition
+    std::atomic<GarbageNode *> garbage_list_p;
+
+    // This does not need to be atomic since it is
+    // only maintained by the epoch thread
+    EpochNode *next_p;
+  };
 
 };
 
