@@ -6804,6 +6804,10 @@ before_switch:
 
     std::thread *thread_p;
 
+    #ifdef BWTREE_DEBUG
+    std::atomic<size_t> freed_size;
+    #endif
+
     /*
      * Constructor - Initialize the epoch list to be a single node
      *
@@ -6826,6 +6830,10 @@ before_switch:
 
       // This is used to notify the cleaner thread that it has ended
       exited_flag = false;
+
+      #ifdef BWTREE_DEBUG
+      freed_size = 0UL;
+      #endif
 
       return;
     }
@@ -6850,6 +6858,11 @@ before_switch:
 
       assert(head_epoch_p == nullptr);
       bwt_printf("Clean up for garbage collector\n");
+
+      #ifdef BWTREE_DEBUG
+      bwt_printf("Stat: Cleared %lu bytes of memory\n",
+                 freed_size.load());
+      #endif
 
       return;
     }
@@ -6969,32 +6982,50 @@ before_switch:
             next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
 
             delete (LeafInsertNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafInsertNode));
+            #endif
             break;
           case NodeType::LeafDeleteType:
             next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
             delete (LeafDeleteNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafDeleteNode));
+            #endif
             break;
           case NodeType::LeafSplitType:
             next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
             delete (LeafSplitNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafSplitNode));
+            #endif
             break;
           case NodeType::LeafMergeType:
             FreeDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
             FreeDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
             delete (LeafMergeNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafMergeNode));
+            #endif
 
             // Leaf merge node is an ending node
             return;
           case NodeType::LeafRemoveType:
             delete (LeafRemoveNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafRemoveNode));
+            #endif
 
             // We never try to free those under remove node
             return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(LeafNode));
+            #endif
 
             // We have reached the end of delta chain
             return;
@@ -7002,32 +7033,50 @@ before_switch:
             next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
 
             delete (InnerInsertNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerInsertNode));
+            #endif
             break;
           case NodeType::InnerDeleteType:
             next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
 
             delete (InnerDeleteNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerDeleteNode));
+            #endif
             break;
           case NodeType::InnerSplitType:
             next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
 
             delete (InnerSplitNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerSplitNode));
+            #endif
             break;
           case NodeType::InnerMergeType:
             FreeDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
             FreeDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
             delete (InnerMergeNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerMergeNode));
+            #endif
 
             // Merge node is also an ending node
             return;
           case NodeType::InnerRemoveType:
             delete (InnerRemoveNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerRemoveNode));
+            #endif
 
             // We never free nodes under remove node
             return;
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
+            #ifdef BWTREE_DEBUG
+            freed_size.fetch_add(sizeof(InnerNode));
+            #endif
 
             return;
           default:
