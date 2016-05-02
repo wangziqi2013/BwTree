@@ -6784,6 +6784,10 @@ class EpochManager {
   // acceptable that allocations are delayed to the next epoch
   EpochNode *current_epoch_p;
 
+  bool exited_flag;
+
+  std::thread *thread_p;
+
   /*
    * Constructor - Initialize the epoch list to be a single node
    *
@@ -6800,6 +6804,33 @@ class EpochManager {
     current_epoch_p->next_p = nullptr;
 
     head_epoch_p = current_epoch_p;
+
+    // We allocate and run this later
+    thread_p = nullptr;
+
+    // This is used to notify the cleaner thread that it has ended
+    exited_flag = false;
+
+    return;
+  }
+
+  ~EpochManager() {
+    // Set stop flag and let thread terminate
+    exited_flag = true;
+    thread_p->join();
+
+    // Free memory
+    delete thread_p;
+
+    // So that in the following function the comparison
+    // would always fail, until we have cleaned all epoch nodes
+    current_epoch_p = nullptr;
+
+    // If all threads has exited then all thread counts are
+    // 0, and therefore this should proceed way to the end
+    ClearEpoch();
+
+    assert(head_epoch_p = nullptr);
 
     return;
   }
@@ -6996,6 +7027,7 @@ class EpochManager {
    */
   void ClearEpoch() {
     while(1) {
+      // Even if current_epoch_p is nullptr, this should work
       if(current_epoch_p == head_epoch_p) {
         break;
       }
@@ -7031,6 +7063,10 @@ class EpochManager {
       delete head_epoch_p;
 
       // Then advance to the next epoch
+      // It is possible that head_epoch_p becomes nullptr
+      // this happens during destruction, and should not
+      // cause any problem since that case we also set current epoch
+      // pointer to nullptr
       head_epoch_p = next_epoch_node_p;
     } // while(1) through epoch nodes
 
@@ -7039,9 +7075,15 @@ class EpochManager {
 
   /*
    * ThreadFunc() - The cleaner thread executes this every GC_INTERVAL ms
+   *
+   * This function exits when exit flag is set to true
    */
   void ThreadFunc() {
-    while(1) {
+    // While the parent is still running
+    // We do not worry about race condition here
+    // since even if we missed one we could always
+    // hit the correct value on next try
+    while(exited_flag == false) {
       CreateNewEpoch();
       ClearEpoch();
 
@@ -7060,7 +7102,9 @@ class EpochManager {
    * called manually
    */
   void StartThread() {
-    std::thread cleaner{ThreadFunc};
+    thread_p = new std::thread{ThreadFunc};
+
+    return;
   }
 
 };
