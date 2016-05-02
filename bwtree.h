@@ -34,6 +34,7 @@
 #include <map>
 #include <stack>
 #include <thread>
+#include <chrono>
 
 // Used for debugging
 #include <mutex>
@@ -6740,6 +6741,9 @@ class EpochManager {
   using NodeType = typename TreeType::NodeType;
   using BaseNode = typename TreeType::BaseNode;
 
+  // Garbage collection interval (milliseconds)
+  constexpr static int GC_INTERVAL = 50;
+
   /*
    * struct GarbageNode - A linked list of garbages
    */
@@ -7033,12 +7037,30 @@ class EpochManager {
     return;
   }
 
+  /*
+   * ThreadFunc() - The cleaner thread executes this every GC_INTERVAL ms
+   */
   void ThreadFunc() {
+    while(1) {
+      CreateNewEpoch();
+      ClearEpoch();
 
+      // Sleep for 50 ms
+      std::chrono::milliseconds duration(GC_INTERVAL);
+      std::this_thread::sleep_for(duration);
+    }
+
+    return;
   }
 
+  /*
+   * StartThread() - Start cleaner thread for garbage collection
+   *
+   * NOTE: This is not called in the constructor, and needs to be
+   * called manually
+   */
   void StartThread() {
-
+    std::thread cleaner{ThreadFunc};
   }
 
 };
