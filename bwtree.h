@@ -4697,7 +4697,9 @@ before_switch:
         // Update current snapshot using our best knowledge
         snapshot_p->SwitchPhysicalPointer(leaf_node_p);
 
-        // TODO: PUT OLD NODE CHAIN INTO EPOCH
+        // Add the old delta chain to garbage list and its
+        // deallocation is delayed
+        epoch_manager.AddGarbageNode(node_p);
       } else {
         bwt_printf("Leaf node consolidation CAS failed. NO ABORT\n");
 
@@ -4717,7 +4719,8 @@ before_switch:
 
         snapshot_p->SwitchPhysicalPointer(inner_node_p);
 
-        // TODO: PUT OLD NODE CHAIN INTO EPOCH
+        // Add the old delta into garbage list
+        epoch_manager.AddGarbageNode(node_p);
       } else {
         bwt_printf("Inner node consolidation CAS failed. NO ABORT\n");
 
@@ -5369,7 +5372,7 @@ before_switch:
 
     insert_op_count.fetch_add(1);
 
-
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
       Context context{key};
@@ -5389,6 +5392,8 @@ before_switch:
         auto it2 = it->second.find(value);
 
         if(it2 != it->second.end()) {
+          epoch_manager.LeaveEpoch(epoch_node_p);
+
           return false;
         }
       }
@@ -5439,6 +5444,8 @@ before_switch:
       bwt_printf("Retry installing leaf insert delta from the root\n");
     }
 
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
     return true;
   }
 
@@ -5460,6 +5467,8 @@ before_switch:
 
     update_op_count.fetch_add(1);
 
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
     while(1) {
       Context context{key};
 
@@ -5473,6 +5482,8 @@ before_switch:
       // if key does not exist return false
       typename KeyValueSet::iterator it = container.find(key);
       if(it == container.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
         return false;
       }
 
@@ -5481,6 +5492,8 @@ before_switch:
       // and if value does not exist return false
       auto it2 = it->second.find(old_value);
       if(it2 == it->second.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
         return false;
       }
 
@@ -5488,6 +5501,8 @@ before_switch:
       // we also will not do update and simply return false
       auto it3 = it->second.find(new_value);
       if(it3 != it->second.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
         return false;
       }
 
@@ -5534,6 +5549,8 @@ before_switch:
       bwt_printf("Retry installing leaf update delta from the root\n");
     }
 
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
     return true;
   }
 
@@ -5550,6 +5567,8 @@ before_switch:
 
     delete_op_count.fetch_add(1);
 
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
     while(1) {
       Context context{key};
 
@@ -5564,12 +5583,16 @@ before_switch:
       // return false
       typename KeyValueSet::iterator it = container.find(key);
       if(it == container.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
         return false;
       }
 
       // Look for value in consolidated leaf with the given key
       auto it2 = it->second.find(value);
       if(it2 == it->second.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
         return false;
       }
 
@@ -5616,6 +5639,8 @@ before_switch:
       bwt_printf("Retry installing leaf delete delta from the root\n");
     }
 
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
     return true;
   }
 
@@ -5630,6 +5655,8 @@ before_switch:
    */
   bool GetValue(const KeyType &search_key,
                 std::vector<ValueType> &value_list) {
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
     Context context{&search_key};
 
     Traverse(&context, true);
@@ -5642,7 +5669,13 @@ before_switch:
     if(it != container.end()) {
       value_list = std::move(std::vector<ValueType>{it->second.begin(),
                                                     it->second.end()});
+
+      epoch_manager.LeaveEpoch(epoch_node_p);
+
+      return true;
     } else {
+      epoch_manager.LeaveEpoch(epoch_node_p);
+
       return false;
     }
 
@@ -5658,6 +5691,8 @@ before_switch:
    * not construct a vector
    */
   ValueSet GetValue(const KeyType &search_key) {
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
     Context context{search_key};
 
     Traverse(&context, true);
@@ -5668,8 +5703,12 @@ before_switch:
 
     typename KeyValueSet::iterator it = container.find(search_key);
     if(it != container.end()) {
+      epoch_manager.LeaveEpoch(epoch_node_p);
+
       return ValueSet{it->second};
     } else {
+      epoch_manager.LeaveEpoch(epoch_node_p);
+
       return ValueSet{};
     }
   }
@@ -6890,13 +6929,13 @@ before_switch:
      * The effect is that all memory deallocated on and after
      * current epoch will not be freed before current thread leaves
      */
-    const EpochNode *JoinEpoch() {
+    EpochNode *JoinEpoch() {
       // We must make sure the epoch we join and the epoch we
       // return are the same one because the current point
       // could change in the middle of this function
-      const EpochNode *epoch_p = current_epoch_p;
+      EpochNode *epoch_p = current_epoch_p;
 
-      epoch_p->active_thread_count.fetch_add(1UL);
+      epoch_p->active_thread_count.fetch_add(1);
 
       return epoch_p;
     }
@@ -6907,8 +6946,8 @@ before_switch:
      * After an epoch has been cleared all memories allocated on
      * and before that epoch could safely be deallocated
      */
-    void LeaveEpoch(const EpochNode *epoch_p) {
-      epoch_p->active_thread_count.fetch_sub(1UL);
+    void LeaveEpoch(EpochNode *epoch_p) {
+      epoch_p->active_thread_count.fetch_sub(1);
 
       return;
     }
