@@ -6988,10 +6988,13 @@ before_switch:
             delete (LeafSplitNode *)node_p;
             break;
           case NodeType::LeafMergeType:
-            next_node_p = ((LeafMergeNode *)node_p)->child_node_p;
+            FreeDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
+            FreeDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
             delete (LeafMergeNode *)node_p;
-            break;
+
+            // Leaf merge node is an ending node
+            return;
           case NodeType::LeafRemoveType:
             next_node_p = ((LeafRemoveNode *)node_p)->child_node_p;
 
@@ -7018,10 +7021,13 @@ before_switch:
             delete (InnerSplitNode *)node_p;
             break;
           case NodeType::InnerMergeType:
-            next_node_p = ((InnerMergeNode *)node_p)->child_node_p;
+            FreeDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
+            FreeDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
             delete (InnerMergeNode *)node_p;
-            break;
+
+            // Merge node is also an ending node
+            return;
           case NodeType::InnerRemoveType:
             next_node_p = ((InnerRemoveNode *)node_p)->child_node_p;
 
