@@ -118,16 +118,6 @@ using NodeID = uint64_t;
 // We use uint64_t(-1) as invalid node ID
 constexpr NodeID INVALID_NODE_ID = NodeID(-1);
 
-/*
-template <typename RawKeyType,
-          typename ValueType,
-          typename KeyComparator,
-          typename KeyEqualityChecker,
-          typename ValueEqualityChecker,
-          typename ValueHashFunc>
-class EpochManager;
-*/
-
 bool print_flag = true;
 
 /*
@@ -5432,6 +5422,8 @@ before_switch:
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
+        context.abort_counter++;
+
         delete insert_node_p;
       }
 
@@ -5541,6 +5533,8 @@ before_switch:
         bwt_printf("Leaf update delta CAS failed\n");
 
         delete update_node_p;
+
+        context.abort_counter++;
       }
 
       update_abort_count.fetch_add(context.abort_counter);
@@ -5631,6 +5625,8 @@ before_switch:
         bwt_printf("Leaf Delete delta CAS failed\n");
 
         delete delete_node_p;
+
+        context.abort_counter++;
       }
 
       delete_abort_count.fetch_add(context.abort_counter);
@@ -6864,7 +6860,7 @@ before_switch:
      * This functions does not have to consider race conditions
      */
     void CreateNewEpoch() {
-      //printf("New Epoch()\n");
+      bwt_printf("Creating new epoch...\n");
 
       EpochNode *epoch_node_p = new EpochNode{};
 
@@ -6917,8 +6913,10 @@ before_switch:
         // If CAS succeeds then just return
         if(ret == true) {
           break;
+        } else {
+          bwt_printf("Add garbage node CAS failed. Retry\n");
         }
-      }
+      } // while 1
 
       return;
     }
@@ -6962,12 +6960,7 @@ before_switch:
 
       while(1) {
         node_p = next_node_p;
-
-        // Also if the child node pointer is nullptr as in some case
-        // we will just return
-        if(node_p == nullptr) {
-          return;
-        }
+        assert(node_p != nullptr);
 
         NodeType type = node_p->GetType();
 
@@ -6996,10 +6989,10 @@ before_switch:
             // Leaf merge node is an ending node
             return;
           case NodeType::LeafRemoveType:
-            next_node_p = ((LeafRemoveNode *)node_p)->child_node_p;
-
             delete (LeafRemoveNode *)node_p;
-            break;
+
+            // We never try to free those under remove node
+            return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
 
@@ -7029,10 +7022,10 @@ before_switch:
             // Merge node is also an ending node
             return;
           case NodeType::InnerRemoveType:
-            next_node_p = ((InnerRemoveNode *)node_p)->child_node_p;
-
             delete (InnerRemoveNode *)node_p;
-            break;
+
+            // We never free nodes under remove node
+            return;
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
 
@@ -7041,6 +7034,7 @@ before_switch:
             bwt_printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
+            return;
         } // switch
       } // while 1
 
@@ -7057,17 +7051,21 @@ before_switch:
      * only called by the cleaner thread
      */
     void ClearEpoch() {
-      //printf("Clear Epoch()\n");
+      bwt_printf("Start to clear epoch\n");
 
       while(1) {
         // Even if current_epoch_p is nullptr, this should work
         if(current_epoch_p == head_epoch_p) {
+          bwt_printf("Current epoch is head epoch. Do not clean\n");
+
           break;
         }
 
         // If we have seen an epoch whose count is not zero then all
         // epochs after that are protected and we stop
         if(head_epoch_p->active_thread_count.load() != 0UL) {
+          bwt_printf("Head epoch is not empty. Return\n");
+
           break;
         }
 
@@ -7075,6 +7073,7 @@ before_switch:
         // and then free each delta chain
 
         GarbageNode *next_garbage_node_p = nullptr;
+
         // Walk through its garbage chain
         for(GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
             garbage_node_p != nullptr;
@@ -7124,6 +7123,8 @@ before_switch:
         std::chrono::milliseconds duration(GC_INTERVAL);
         std::this_thread::sleep_for(duration);
       }
+
+      bwt_printf("exit flag is true; thread return\n");
 
       return;
     }
