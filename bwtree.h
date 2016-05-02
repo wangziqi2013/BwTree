@@ -118,6 +118,16 @@ using NodeID = uint64_t;
 // We use uint64_t(-1) as invalid node ID
 constexpr NodeID INVALID_NODE_ID = NodeID(-1);
 
+/*
+template <typename RawKeyType,
+          typename ValueType,
+          typename KeyComparator,
+          typename KeyEqualityChecker,
+          typename ValueEqualityChecker,
+          typename ValueHashFunc>
+class EpochManager;
+*/
+
 bool print_flag = true;
 
 /*
@@ -140,6 +150,8 @@ class BwTree {
 #endif
   class InteractiveDebugger;
   friend InteractiveDebugger;
+
+  class EpochManager;
 
  public:
   class BaseNode;
@@ -165,6 +177,8 @@ class BwTree {
 
   // This is used to hold key and NodeID ordered mapping relation
   using KeyNodeIDMap = std::map<KeyType, NodeID, WrappedKeyComparator>;
+
+  using EpochNode = typename EpochManager::EpochNode;
 
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
@@ -1845,18 +1859,22 @@ class BwTree {
       value_hash_obj{p_value_hash_obj},
       key_dup{p_key_dup},
       next_unused_node_id{0},
-      idb{this},
       insert_op_count{0},
       insert_abort_count{0},
       delete_op_count{0},
       delete_abort_count{0},
       update_op_count{0},
-      update_abort_count{0}{
+      update_abort_count{0},
+      idb{this},
+      epoch_manager{} {
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
 
     InitMappingTable();
     InitNodeLayout();
+
+    bwt_printf("Starting epoch manager thread...\n");
+    epoch_manager.StartThread();
 
     return;
   }
@@ -5351,6 +5369,8 @@ before_switch:
 
     insert_op_count.fetch_add(1);
 
+
+
     while(1) {
       Context context{key};
 
@@ -5700,6 +5720,8 @@ before_switch:
   std::atomic<uint64_t> update_abort_count;
 
   InteractiveDebugger idb;
+
+  EpochManager epoch_manager;
 
  /*
   * Debug function definition
@@ -6694,420 +6716,388 @@ before_switch:
     }
 
     ~InteractiveDebugger() {}
-  };
-};
+  };  // class Interactive Debugger
 
 
 
+  class EpochManager {
+   public:
+    // Garbage collection interval (milliseconds)
+    constexpr static int GC_INTERVAL = 50;
 
-/*
- * class EpochManager - Delays memory deallocation
- */
-template <typename RawKeyType,
-          typename ValueType,
-          typename KeyComparator,
-          typename KeyEqualityChecker,
-          typename ValueEqualityChecker,
-          typename ValueHashFunc>
-class EpochManager {
- public:
-  // This is the type of tree we are working on
-  using TreeType = BwTree<RawKeyType,
-                          ValueType,
-                          KeyComparator,
-                          KeyEqualityChecker,
-                          ValueEqualityChecker,
-                          ValueHashFunc>;
+    /*
+     * struct GarbageNode - A linked list of garbages
+     */
+    struct GarbageNode {
+      const BaseNode *node_p;
 
-  // The followings are types that will be needed during garbage collection
-  using LeafRemoveNode = typename TreeType::LeafRemoveNode;
-  using LeafInsertNode = typename TreeType::LeafInsertNode;
-  using LeafDeleteNode = typename TreeType::LeafDeleteNode;
-  using LeafSplitNode = typename TreeType::LeafSplitNode;
-  using LeafMergeNode = typename TreeType::LeafMergeNode;
-  using LeafAbortNode = typename TreeType::LeafAbortNode;
-  using LeafNode = typename TreeType::LeafNode;
+      // This does not have to be atomic, since we only
+      // insert at the head of garbage list
+      GarbageNode *next_p;
+    };
 
-  using InnerRemoveNode = typename TreeType::InnerRemoveNode;
-  using InnerInsertNode = typename TreeType::InnerInsertNode;
-  using InnerDeleteNode = typename TreeType::InnerDeleteNode;
-  using InnerSplitNode = typename TreeType::InnerSplitNode;
-  using InnerMergeNode = typename TreeType::InnerMergeNode;
-  using InnerAbortNode = typename TreeType::InnerAbortNode;
-  using InnerNode = typename TreeType::InnerNode;
+    /*
+     * struct EpochNode - A linked list of epoch node that records thread count
+     *
+     * This struct is also the head of garbage node linked list, which must
+     * be made atomic since different worker threads will contend to insert
+     * garbage into the head of the list
+     */
+    struct EpochNode {
+      // We need this to be atomic in order to accurately
+      // counter the number of threads
+      std::atomic<size_t> active_thread_count;
+      // We need this to be atomic to be able to
+      // add garbage nodes without any race condition
+      std::atomic<GarbageNode *> garbage_list_p;
 
-  using DeltaNode = typename TreeType::DeltaNode;
+      // This does not need to be atomic since it is
+      // only maintained by the epoch thread
+      EpochNode *next_p;
+    };
 
-  using NodeType = typename TreeType::NodeType;
-  using BaseNode = typename TreeType::BaseNode;
+    // The head pointer does not need to be atomic
+    // since it is only accessed by epoch manager
+    EpochNode *head_epoch_p;
 
-  // Garbage collection interval (milliseconds)
-  constexpr static int GC_INTERVAL = 50;
+    // This does not need to be atomic because it is only written
+    // by the epoch manager and read by worker threads. But it is
+    // acceptable that allocations are delayed to the next epoch
+    EpochNode *current_epoch_p;
 
-  /*
-   * struct GarbageNode - A linked list of garbages
-   */
-  struct GarbageNode {
-    const BaseNode *node_p;
+    bool exited_flag;
 
-    // This does not have to be atomic, since we only
-    // insert at the head of garbage list
-    GarbageNode *next_p;
-  };
+    std::thread *thread_p;
 
-  /*
-   * struct EpochNode - A linked list of epoch node that records thread count
-   *
-   * This struct is also the head of garbage node linked list, which must
-   * be made atomic since different worker threads will contend to insert
-   * garbage into the head of the list
-   */
-  struct EpochNode {
-    // We need this to be atomic in order to accurately
-    // counter the number of threads
-    std::atomic<size_t> active_thread_count;
-    // We need this to be atomic to be able to
-    // add garbage nodes without any race condition
-    std::atomic<GarbageNode *> garbage_list_p;
+    /*
+     * Constructor - Initialize the epoch list to be a single node
+     *
+     * NOTE: We do not start thread here since the init of bw-tree itself
+     * might take a long time
+     */
+    EpochManager() {
+      current_epoch_p = new EpochNode{};
+      // These two are atomic variables but we could
+      // simply assign to them
+      current_epoch_p->active_thread_count = 0UL;
+      current_epoch_p->garbage_list_p = nullptr;
 
-    // This does not need to be atomic since it is
-    // only maintained by the epoch thread
-    EpochNode *next_p;
-  };
+      current_epoch_p->next_p = nullptr;
 
-  // The head pointer does not need to be atomic
-  // since it is only accessed by epoch manager
-  EpochNode *head_epoch_p;
+      head_epoch_p = current_epoch_p;
 
-  // This does not need to be atomic because it is only written
-  // by the epoch manager and read by worker threads. But it is
-  // acceptable that allocations are delayed to the next epoch
-  EpochNode *current_epoch_p;
+      // We allocate and run this later
+      thread_p = nullptr;
 
-  bool exited_flag;
+      // This is used to notify the cleaner thread that it has ended
+      exited_flag = false;
 
-  std::thread *thread_p;
-
-  /*
-   * Constructor - Initialize the epoch list to be a single node
-   *
-   * NOTE: We do not start thread here since the init of bw-tree itself
-   * might take a long time
-   */
-  EpochManager() {
-    current_epoch_p = new EpochNode{};
-    // These two are atomic variables but we could
-    // simply assign to them
-    current_epoch_p->active_thread_count = 0UL;
-    current_epoch_p->garbage_list_p = nullptr;
-
-    current_epoch_p->next_p = nullptr;
-
-    head_epoch_p = current_epoch_p;
-
-    // We allocate and run this later
-    thread_p = nullptr;
-
-    // This is used to notify the cleaner thread that it has ended
-    exited_flag = false;
-
-    return;
-  }
-
-  ~EpochManager() {
-    // Set stop flag and let thread terminate
-    exited_flag = true;
-    thread_p->join();
-
-    // Free memory
-    delete thread_p;
-
-    // So that in the following function the comparison
-    // would always fail, until we have cleaned all epoch nodes
-    current_epoch_p = nullptr;
-
-    // If all threads has exited then all thread counts are
-    // 0, and therefore this should proceed way to the end
-    ClearEpoch();
-
-    assert(head_epoch_p = nullptr);
-
-    return;
-  }
-
-  /*
-   * CreateNewEpoch() - Create a new epoch node
-   *
-   * This functions does not have to consider race conditions
-   */
-  void CreateNewEpoch() {
-    EpochNode *epoch_node_p = new EpochNode{};
-
-    epoch_node_p->active_thread_count = 0UL;
-    epoch_node_p->garbage_list_p = nullptr;
-
-    // We always append to the tail of the linked list
-    // so this field for new node is always nullptr
-    epoch_node_p->next_p = nullptr;
-
-    // Update its previous node (current tail)
-    current_epoch_p->next_p = epoch_node_p;
-
-    // And then switch current epoch pointer
-    current_epoch_p = epoch_node_p;
-
-    return;
-  }
-
-  /*
-   * AddGarbageNode() - Add garbage node into the current epoch
-   *
-   * NOTE: This function is called by worker threads so it has
-   * to consider race conditions
-   */
-  void AddGarbageNode(const BaseNode *node_p) {
-    // We need to keep a copy of current epoch node
-    // in case that this pointer is increased during
-    // the execution of this function
-    //
-    // NOTE: Current epoch must not be recycled, since
-    // the current thread calling this function must
-    // come from an epoch <= current epoch
-    // in which case all epochs before that one should
-    // remain valid
-    EpochNode *epoch_p = current_epoch_p;
-
-    // These two could be predetermined
-    GarbageNode *garbage_node_p = new GarbageNode{};
-    garbage_node_p->node_p = node_p;
-
-    while(1) {
-      garbage_node_p->next_p = epoch_p->garbage_list_p.load();
-
-      // Then CAS previous node with new garbage node
-      bool ret = \
-        epoch_p->garbage_list_p.compare_exchange_strong(garbage_node_p->next_p,
-                                                        garbage_node_p);
-
-      // If CAS succeeds then just return
-      if(ret == true) {
-        break;
-      }
+      return;
     }
 
-    return;
-  }
+    ~EpochManager() {
+      // Set stop flag and let thread terminate
+      exited_flag = true;
 
-  /*
-   * JoinEpoch() - Let current thread join this epoch
-   *
-   * The effect is that all memory deallocated on and after
-   * current epoch will not be freed before current thread leaves
-   */
-  const EpochNode *JoinEpoch() {
-    // We must make sure the epoch we join and the epoch we
-    // return are the same one because the current point
-    // could change in the middle of this function
-    const EpochNode *epoch_p = current_epoch_p;
+      bwt_printf("Waiting for thread\n");
+      thread_p->join();
 
-    epoch_p->active_thread_count.fetch_add(1UL);
+      // Free memory
+      delete thread_p;
 
-    return epoch_p;
-  }
+      // So that in the following function the comparison
+      // would always fail, until we have cleaned all epoch nodes
+      current_epoch_p = nullptr;
 
-  /*
-   * LeaveEpoch() - Leave epoch a thread has once joined
-   *
-   * After an epoch has been cleared all memories allocated on
-   * and before that epoch could safely be deallocated
-   */
-  void LeaveEpoch(const EpochNode *epoch_p) {
-    epoch_p->active_thread_count.fetch_sub(1UL);
-
-    return;
-  }
-
-  /*
-   * FreeDeltaChain() - Free a delta chain according to node type
-   *
-   * This node calls destructor according to the type of the node
-   */
-  void FreeDeltaChain(const BaseNode *node_p) {
-    const BaseNode *next_node_p = node_p;
-
-    while(1) {
-      node_p = next_node_p;
-
-      // Also if the child node pointer is nullptr as in some case
-      // we will just return
-      if(node_p == nullptr) {
-        return;
-      }
-
-      NodeType type = node_p->GetType();
-
-      switch(type) {
-        case NodeType::LeafInsertType:
-          next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
-
-          delete (LeafInsertNode *)node_p;
-          break;
-        case NodeType::LeafDeleteType:
-          next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
-
-          delete (LeafDeleteNode *)node_p;
-          break;
-        case NodeType::LeafSplitType:
-          next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
-
-          delete (LeafSplitNode *)node_p;
-          break;
-        case NodeType::LeafMergeType:
-          next_node_p = ((LeafMergeNode *)node_p)->child_node_p;
-
-          delete (LeafMergeNode *)node_p;
-          break;
-        case NodeType::LeafRemoveType:
-          next_node_p = ((LeafRemoveNode *)node_p)->child_node_p;
-
-          delete (LeafRemoveNode *)node_p;
-          break;
-        case NodeType::LeafType:
-          delete (LeafNode *)node_p;
-
-          // We have reached the end of delta chain
-          return;
-        case NodeType::InnerInsertType:
-          next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
-
-          delete (InnerInsertNode *)node_p;
-          break;
-        case NodeType::InnerDeleteType:
-          next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
-
-          delete (InnerDeleteNode *)node_p;
-          break;
-        case NodeType::InnerSplitType:
-          next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
-
-          delete (InnerSplitNode *)node_p;
-          break;
-        case NodeType::InnerMergeType:
-          next_node_p = ((InnerMergeNode *)node_p)->child_node_p;
-
-          delete (InnerMergeNode *)node_p;
-          break;
-        case NodeType::InnerRemoveType:
-          next_node_p = ((InnerRemoveNode *)node_p)->child_node_p;
-
-          delete (InnerRemoveNode *)node_p;
-          break;
-        case NodeType::InnerType:
-          delete (InnerNode *)node_p;
-
-          return;
-        default:
-          bwt_printf("Unknown node type: %d\n", (int)type);
-
-          assert(false);
-      } // switch
-    } // while 1
-
-    return;
-  }
-
-  /*
-   * ClearEpoch() - Sweep the chain of epoch and free memory
-   *
-   * The minimum number of epoch we must maintain is 1 which means
-   * when current epoch is the head epoch we should stop scanning
-   *
-   * NOTE: There is no race condition in this function since it is
-   * only called by the cleaner thread
-   */
-  void ClearEpoch() {
-    while(1) {
-      // Even if current_epoch_p is nullptr, this should work
-      if(current_epoch_p == head_epoch_p) {
-        break;
-      }
-
-      // If we have seen an epoch whose count is not zero then all
-      // epochs after that are protected and we stop
-      if(head_epoch_p->active_thread_count.load() != 0UL) {
-        break;
-      }
-
-      // If the epoch has cleared we just loop through its garbage chain
-      // and then free each delta chain
-
-      GarbageNode *next_garbage_node_p = nullptr;
-      // Walk through its garbage chain
-      for(GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
-          garbage_node_p != nullptr;
-          garbage_node_p = next_garbage_node_p) {
-        FreeDeltaChain(garbage_node_p->node_p);
-
-        // Save the next pointer so that we could
-        // delete current node directly
-        next_garbage_node_p = garbage_node_p->next_p;
-
-        // This invalidates any further reference to its
-        // members (so we saved next pointer above)
-        delete garbage_node_p;
-      } // for
-
-      // First need to save this in order to delete current node
-      // safely
-      EpochNode *next_epoch_node_p = head_epoch_p->next_p;
-      delete head_epoch_p;
-
-      // Then advance to the next epoch
-      // It is possible that head_epoch_p becomes nullptr
-      // this happens during destruction, and should not
-      // cause any problem since that case we also set current epoch
-      // pointer to nullptr
-      head_epoch_p = next_epoch_node_p;
-    } // while(1) through epoch nodes
-
-    return;
-  }
-
-  /*
-   * ThreadFunc() - The cleaner thread executes this every GC_INTERVAL ms
-   *
-   * This function exits when exit flag is set to true
-   */
-  void ThreadFunc() {
-    // While the parent is still running
-    // We do not worry about race condition here
-    // since even if we missed one we could always
-    // hit the correct value on next try
-    while(exited_flag == false) {
-      CreateNewEpoch();
+      // If all threads has exited then all thread counts are
+      // 0, and therefore this should proceed way to the end
       ClearEpoch();
 
-      // Sleep for 50 ms
-      std::chrono::milliseconds duration(GC_INTERVAL);
-      std::this_thread::sleep_for(duration);
+      assert(head_epoch_p == nullptr);
+      bwt_printf("Clean up for garbage collector\n");
+
+      return;
     }
 
-    return;
-  }
+    /*
+     * CreateNewEpoch() - Create a new epoch node
+     *
+     * This functions does not have to consider race conditions
+     */
+    void CreateNewEpoch() {
+      //printf("New Epoch()\n");
 
-  /*
-   * StartThread() - Start cleaner thread for garbage collection
-   *
-   * NOTE: This is not called in the constructor, and needs to be
-   * called manually
-   */
-  void StartThread() {
-    thread_p = new std::thread{ThreadFunc};
+      EpochNode *epoch_node_p = new EpochNode{};
 
-    return;
-  }
+      epoch_node_p->active_thread_count = 0UL;
+      epoch_node_p->garbage_list_p = nullptr;
 
-};
+      // We always append to the tail of the linked list
+      // so this field for new node is always nullptr
+      epoch_node_p->next_p = nullptr;
+
+      // Update its previous node (current tail)
+      current_epoch_p->next_p = epoch_node_p;
+
+      // And then switch current epoch pointer
+      current_epoch_p = epoch_node_p;
+
+      return;
+    }
+
+    /*
+     * AddGarbageNode() - Add garbage node into the current epoch
+     *
+     * NOTE: This function is called by worker threads so it has
+     * to consider race conditions
+     */
+    void AddGarbageNode(const BaseNode *node_p) {
+      // We need to keep a copy of current epoch node
+      // in case that this pointer is increased during
+      // the execution of this function
+      //
+      // NOTE: Current epoch must not be recycled, since
+      // the current thread calling this function must
+      // come from an epoch <= current epoch
+      // in which case all epochs before that one should
+      // remain valid
+      EpochNode *epoch_p = current_epoch_p;
+
+      // These two could be predetermined
+      GarbageNode *garbage_node_p = new GarbageNode{};
+      garbage_node_p->node_p = node_p;
+
+      while(1) {
+        garbage_node_p->next_p = epoch_p->garbage_list_p.load();
+
+        // Then CAS previous node with new garbage node
+        bool ret = \
+          epoch_p->garbage_list_p.compare_exchange_strong(garbage_node_p->next_p,
+                                                          garbage_node_p);
+
+        // If CAS succeeds then just return
+        if(ret == true) {
+          break;
+        }
+      }
+
+      return;
+    }
+
+    /*
+     * JoinEpoch() - Let current thread join this epoch
+     *
+     * The effect is that all memory deallocated on and after
+     * current epoch will not be freed before current thread leaves
+     */
+    const EpochNode *JoinEpoch() {
+      // We must make sure the epoch we join and the epoch we
+      // return are the same one because the current point
+      // could change in the middle of this function
+      const EpochNode *epoch_p = current_epoch_p;
+
+      epoch_p->active_thread_count.fetch_add(1UL);
+
+      return epoch_p;
+    }
+
+    /*
+     * LeaveEpoch() - Leave epoch a thread has once joined
+     *
+     * After an epoch has been cleared all memories allocated on
+     * and before that epoch could safely be deallocated
+     */
+    void LeaveEpoch(const EpochNode *epoch_p) {
+      epoch_p->active_thread_count.fetch_sub(1UL);
+
+      return;
+    }
+
+    /*
+     * FreeDeltaChain() - Free a delta chain according to node type
+     *
+     * This node calls destructor according to the type of the node
+     */
+    void FreeDeltaChain(const BaseNode *node_p) {
+      const BaseNode *next_node_p = node_p;
+
+      while(1) {
+        node_p = next_node_p;
+
+        // Also if the child node pointer is nullptr as in some case
+        // we will just return
+        if(node_p == nullptr) {
+          return;
+        }
+
+        NodeType type = node_p->GetType();
+
+        switch(type) {
+          case NodeType::LeafInsertType:
+            next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
+
+            delete (LeafInsertNode *)node_p;
+            break;
+          case NodeType::LeafDeleteType:
+            next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
+
+            delete (LeafDeleteNode *)node_p;
+            break;
+          case NodeType::LeafSplitType:
+            next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
+
+            delete (LeafSplitNode *)node_p;
+            break;
+          case NodeType::LeafMergeType:
+            next_node_p = ((LeafMergeNode *)node_p)->child_node_p;
+
+            delete (LeafMergeNode *)node_p;
+            break;
+          case NodeType::LeafRemoveType:
+            next_node_p = ((LeafRemoveNode *)node_p)->child_node_p;
+
+            delete (LeafRemoveNode *)node_p;
+            break;
+          case NodeType::LeafType:
+            delete (LeafNode *)node_p;
+
+            // We have reached the end of delta chain
+            return;
+          case NodeType::InnerInsertType:
+            next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
+
+            delete (InnerInsertNode *)node_p;
+            break;
+          case NodeType::InnerDeleteType:
+            next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
+
+            delete (InnerDeleteNode *)node_p;
+            break;
+          case NodeType::InnerSplitType:
+            next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
+
+            delete (InnerSplitNode *)node_p;
+            break;
+          case NodeType::InnerMergeType:
+            next_node_p = ((InnerMergeNode *)node_p)->child_node_p;
+
+            delete (InnerMergeNode *)node_p;
+            break;
+          case NodeType::InnerRemoveType:
+            next_node_p = ((InnerRemoveNode *)node_p)->child_node_p;
+
+            delete (InnerRemoveNode *)node_p;
+            break;
+          case NodeType::InnerType:
+            delete (InnerNode *)node_p;
+
+            return;
+          default:
+            bwt_printf("Unknown node type: %d\n", (int)type);
+
+            assert(false);
+        } // switch
+      } // while 1
+
+      return;
+    }
+
+    /*
+     * ClearEpoch() - Sweep the chain of epoch and free memory
+     *
+     * The minimum number of epoch we must maintain is 1 which means
+     * when current epoch is the head epoch we should stop scanning
+     *
+     * NOTE: There is no race condition in this function since it is
+     * only called by the cleaner thread
+     */
+    void ClearEpoch() {
+      //printf("Clear Epoch()\n");
+
+      while(1) {
+        // Even if current_epoch_p is nullptr, this should work
+        if(current_epoch_p == head_epoch_p) {
+          break;
+        }
+
+        // If we have seen an epoch whose count is not zero then all
+        // epochs after that are protected and we stop
+        if(head_epoch_p->active_thread_count.load() != 0UL) {
+          break;
+        }
+
+        // If the epoch has cleared we just loop through its garbage chain
+        // and then free each delta chain
+
+        GarbageNode *next_garbage_node_p = nullptr;
+        // Walk through its garbage chain
+        for(GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
+            garbage_node_p != nullptr;
+            garbage_node_p = next_garbage_node_p) {
+          FreeDeltaChain(garbage_node_p->node_p);
+
+          // Save the next pointer so that we could
+          // delete current node directly
+          next_garbage_node_p = garbage_node_p->next_p;
+
+          // This invalidates any further reference to its
+          // members (so we saved next pointer above)
+          delete garbage_node_p;
+        } // for
+
+        // First need to save this in order to delete current node
+        // safely
+        EpochNode *next_epoch_node_p = head_epoch_p->next_p;
+        delete head_epoch_p;
+
+        // Then advance to the next epoch
+        // It is possible that head_epoch_p becomes nullptr
+        // this happens during destruction, and should not
+        // cause any problem since that case we also set current epoch
+        // pointer to nullptr
+        head_epoch_p = next_epoch_node_p;
+      } // while(1) through epoch nodes
+
+      return;
+    }
+
+    /*
+     * ThreadFunc() - The cleaner thread executes this every GC_INTERVAL ms
+     *
+     * This function exits when exit flag is set to true
+     */
+    void ThreadFunc() {
+      // While the parent is still running
+      // We do not worry about race condition here
+      // since even if we missed one we could always
+      // hit the correct value on next try
+      while(exited_flag == false) {
+        CreateNewEpoch();
+        ClearEpoch();
+
+        // Sleep for 50 ms
+        std::chrono::milliseconds duration(GC_INTERVAL);
+        std::this_thread::sleep_for(duration);
+      }
+
+      return;
+    }
+
+    /*
+     * StartThread() - Start cleaner thread for garbage collection
+     *
+     * NOTE: This is not called in the constructor, and needs to be
+     * called manually
+     */
+    void StartThread() {
+      thread_p = new std::thread{[this](){this->ThreadFunc();}};
+
+      return;
+    }
+
+  }; // Epoch manager
+
+}; // class BwTree
 
 }  // End index namespace
 }  // End peloton namespace
