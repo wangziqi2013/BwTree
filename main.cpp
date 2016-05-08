@@ -1,5 +1,6 @@
 
 #include "bwtree.h"
+#include "time_measurer.h"
 
 using namespace peloton::index;
 
@@ -624,7 +625,11 @@ int main() {
   tree_size = 0;
   print_flag = false;
 
+  TimeMeasurer timer;
+  timer.StartTimer();
   LaunchParallelTestID(thread_num, InsertTest2, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
   //print_flag = true;
   printf("Finished inserting all keys\n");
 
@@ -649,7 +654,10 @@ int main() {
   //debug_stop_mutex.unlock();
 
   //print_flag = true;
+  timer.StartTimer();
   LaunchParallelTestID(thread_num, InsertTest1, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
   printf("Finished inserting all keys\n");
 
   PrintStat(t1);

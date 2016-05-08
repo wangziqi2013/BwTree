@@ -8,5 +8,5 @@ main.o: main.cpp bwtree.h
 	g++ main.cpp -c -pthread --std=gnu++11 -o main.o -O3 -g
 
 clean:
-	rm -f *.o *.log
+	rm -f *.o *.log main
 	
