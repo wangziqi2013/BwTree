@@ -635,7 +635,7 @@ int main() {
 
   PrintStat(t1);
 
-  printf("per-core throughput = %lld op/s\n", t1->insert_op_count.load() / timer.GetElapsedMilliSeconds());
+  printf("per-core throughput = %lld K op/s\n", t1->insert_op_count.load() / thread_num / timer.GetElapsedMilliSeconds());
 
   //LaunchParallelTestID(thread_num, UpdateTest2, t1);
   //printf("Finished updating all keys\n");
