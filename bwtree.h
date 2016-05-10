@@ -5096,6 +5096,10 @@ before_switch:
     // the ABORT delta on parent node
     assert(ret == true);
 
+    // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
+    // UNINSTALLING IT FROM THE PARENT NODE
+    delete (InnerAbortNode *)abort_node_p;
+
     return;
   }
 
