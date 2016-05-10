@@ -1621,12 +1621,23 @@ class BwTree {
      *
      * This function will delete the current logical node for this node
      * and replace it with the pointer on RHS
+     *
+     * NOTE: This function destroys logical node pointer for the move-in
+     * node first, and when we delete the logical node pointer we need
+     * to first convert it to the correct type
      */
     NodeSnapshot &operator=(NodeSnapshot &&snapshot) {
       // We do not allow any NodeSnapshot object to have non-empty
       // logical pointer
       assert(logical_node_p != nullptr);
-      delete logical_node_p;
+
+      // NOTE: We need to delete the correct type of logical node
+      // pointer since we called child class constructor
+      if(is_leaf == true) {
+        delete (LogicalLeafNode *)logical_node_p;
+      } else {
+        delete (LogicalInnerNode *)logical_node_p;
+      }
 
       node_id = snapshot.node_id;
       node_p = snapshot.node_p;
@@ -1651,10 +1662,23 @@ class BwTree {
      * NOTE: It is possible for LogicalNode to have an empty logical node
      * pointer (being moved out), so we check for pointer emptiness before
      * deleting
+     *
+     * NOTE 2: When deleting the base class pointer, we need to
+     * convert it to the appropriate child class type first in order
+     * to call the child type destructor to free all associated
+     * resources
      */
     ~NodeSnapshot() {
       if(logical_node_p) {
-        delete logical_node_p;
+        // We need to call derived class destructor
+        // to properly destroy all associated resources
+        // Same think needs to be done whenever destroying
+        // logical_node_p in other contexts
+        if(is_leaf == true) {
+          delete (LogicalLeafNode *)logical_node_p;
+        } else {
+          delete (LogicalInnerNode *)logical_node_p;
+        }
       }
 
       return;
