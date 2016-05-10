@@ -6838,6 +6838,13 @@ before_switch:
       return;
     }
 
+    /*
+     * Destructor - Stop the worker thread and cleanup resources not freed
+     *
+     * This function waits for the worker thread using join() method. After the
+     * worker thread has exited, it synchronously clears all epochs that have
+     * not been recycled by calling ClearEpoch()
+     */
     ~EpochManager() {
       // Set stop flag and let thread terminate
       exited_flag = true;
