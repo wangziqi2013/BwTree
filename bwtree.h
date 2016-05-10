@@ -6755,6 +6755,12 @@ before_switch:
 
 
 
+  /*
+   * class EpochManager - Maintains a linked list of deleted nodes
+   *                      for threads to access until all threads
+   *                      entering epochs before the deletion of
+   *                      nodes have exited
+   */
   class EpochManager {
    public:
     // Garbage collection interval (milliseconds)
@@ -6804,8 +6810,14 @@ before_switch:
 
     std::thread *thread_p;
 
+    // The counter that counts how many free() is called
+    // inside the epoch manager
+    // NOTE: We cannot precisely count the size of memory freed
+    // since sizeof(Node) does not reflect the true size, since
+    // some nodes are embedded with complicated data structure that
+    // maintains its own memory
     #ifdef BWTREE_DEBUG
-    std::atomic<size_t> freed_size;
+    std::atomic<size_t> freed_count;
     #endif
 
     /*
@@ -6831,8 +6843,10 @@ before_switch:
       // This is used to notify the cleaner thread that it has ended
       exited_flag = false;
 
+      // Initialize atomic counter to record how many
+      // freed has been called inside epoch manager
       #ifdef BWTREE_DEBUG
-      freed_size = 0UL;
+      freed_count = 0UL;
       #endif
 
       return;
@@ -6867,8 +6881,8 @@ before_switch:
       bwt_printf("Clean up for garbage collector\n");
 
       #ifdef BWTREE_DEBUG
-      bwt_printf("Stat: Cleared %lu bytes of memory\n",
-                 freed_size.load());
+      bwt_printf("Stat: Freed %lu nodes by epoch manager\n",
+                 freed_count.load());
       #endif
 
       return;
@@ -6990,7 +7004,7 @@ before_switch:
 
             delete (LeafInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafInsertNode));
+            freed_count.fetch_add(sizeof(LeafInsertNode));
             #endif
             break;
           case NodeType::LeafDeleteType:
@@ -6998,7 +7012,7 @@ before_switch:
 
             delete (LeafDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafDeleteNode));
+            freed_count.fetch_add(sizeof(LeafDeleteNode));
             #endif
             break;
           case NodeType::LeafSplitType:
@@ -7006,7 +7020,7 @@ before_switch:
 
             delete (LeafSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafSplitNode));
+            freed_count.fetch_add(sizeof(LeafSplitNode));
             #endif
             break;
           case NodeType::LeafMergeType:
@@ -7015,7 +7029,7 @@ before_switch:
 
             delete (LeafMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafMergeNode));
+            freed_count.fetch_add(sizeof(LeafMergeNode));
             #endif
 
             // Leaf merge node is an ending node
@@ -7023,15 +7037,18 @@ before_switch:
           case NodeType::LeafRemoveType:
             delete (LeafRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafRemoveNode));
+            freed_count.fetch_add(sizeof(LeafRemoveNode));
             #endif
 
             // We never try to free those under remove node
+            // since they will be freed by recursive call from
+            // merge node
+            // TODO: WHAT IF MERGE NODE HAS NOT BEEN POSTED??
             return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafNode));
+            freed_count.fetch_add(sizeof(LeafNode));
             #endif
 
             // We have reached the end of delta chain
@@ -7041,7 +7058,7 @@ before_switch:
 
             delete (InnerInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerInsertNode));
+            freed_count.fetch_add(sizeof(InnerInsertNode));
             #endif
             break;
           case NodeType::InnerDeleteType:
@@ -7049,7 +7066,7 @@ before_switch:
 
             delete (InnerDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerDeleteNode));
+            freed_count.fetch_add(sizeof(InnerDeleteNode));
             #endif
             break;
           case NodeType::InnerSplitType:
@@ -7057,7 +7074,7 @@ before_switch:
 
             delete (InnerSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerSplitNode));
+            freed_count.fetch_add(sizeof(InnerSplitNode));
             #endif
             break;
           case NodeType::InnerMergeType:
@@ -7066,7 +7083,7 @@ before_switch:
 
             delete (InnerMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerMergeNode));
+            freed_count.fetch_add(sizeof(InnerMergeNode));
             #endif
 
             // Merge node is also an ending node
@@ -7074,7 +7091,7 @@ before_switch:
           case NodeType::InnerRemoveType:
             delete (InnerRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerRemoveNode));
+            freed_count.fetch_add(sizeof(InnerRemoveNode));
             #endif
 
             // We never free nodes under remove node
@@ -7082,11 +7099,12 @@ before_switch:
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerNode));
+            freed_count.fetch_add(sizeof(InnerNode));
             #endif
 
             return;
           default:
+            // This includes ABORT node for both leaf and inner nodes
             bwt_printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
