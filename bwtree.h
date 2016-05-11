@@ -2941,6 +2941,8 @@ class BwTree {
       return;
     }
 
+    assert(snapshot_p->has_data == false);
+
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
                                    snapshot_p->GetLogicalInnerNode(),
                                    true,
@@ -3150,8 +3152,10 @@ class BwTree {
           return;
         } // case InnerMergeType
         default: {
-          bwt_printf("ERROR: Unknown inner node type\n");
+          bwt_printf("ERROR: Unknown inner node type = %d\n",
+                 static_cast<int>(type));
 
+          assert(false);
           return;
         }
       } // switch type
@@ -5098,7 +5102,15 @@ before_switch:
 
     // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
     // UNINSTALLING IT FROM THE PARENT NODE
-    delete (InnerAbortNode *)abort_node_p;
+    // NOTE 2: WE COULD NOT DIRECTLY DELETE THIS NODE
+    // SINCE SOME OTHER NODES MIGHT HAVE TAKEN A SNAOSHOP
+    // AND IF ABORT NODE WAS REMOVED, THE TYPE INFORMATION
+    // CANNOT BE PRESERVED AND IT DOES NOT ABORT; INSTEAD
+    // IT WILL TRY TO CALL CONSOLIDATE ON ABORT
+    // NODE, CAUSING TYPE ERROR
+    //delete (InnerAbortNode *)abort_node_p;
+
+    epoch_manager.AddGarbageNode(abort_node_p);
 
     return;
   }
@@ -7032,7 +7044,7 @@ before_switch:
 
             delete (LeafInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafInsertNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafDeleteType:
@@ -7040,7 +7052,7 @@ before_switch:
 
             delete (LeafDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafDeleteNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafSplitType:
@@ -7048,7 +7060,7 @@ before_switch:
 
             delete (LeafSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafSplitNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafMergeType:
@@ -7057,7 +7069,7 @@ before_switch:
 
             delete (LeafMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafMergeNode));
+            freed_count.fetch_add(1);
             #endif
 
             // Leaf merge node is an ending node
@@ -7065,7 +7077,7 @@ before_switch:
           case NodeType::LeafRemoveType:
             delete (LeafRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafRemoveNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We never try to free those under remove node
@@ -7076,7 +7088,7 @@ before_switch:
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(LeafNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We have reached the end of delta chain
@@ -7086,7 +7098,7 @@ before_switch:
 
             delete (InnerInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerInsertNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerDeleteType:
@@ -7094,7 +7106,7 @@ before_switch:
 
             delete (InnerDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerDeleteNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerSplitType:
@@ -7102,7 +7114,7 @@ before_switch:
 
             delete (InnerSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerSplitNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerMergeType:
@@ -7111,7 +7123,7 @@ before_switch:
 
             delete (InnerMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerMergeNode));
+            freed_count.fetch_add(1);
             #endif
 
             // Merge node is also an ending node
@@ -7119,7 +7131,7 @@ before_switch:
           case NodeType::InnerRemoveType:
             delete (InnerRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerRemoveNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We never free nodes under remove node
@@ -7127,9 +7139,24 @@ before_switch:
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(sizeof(InnerNode));
+            freed_count.fetch_add(1);
             #endif
 
+            return;
+          case NodeType::InnerAbortType:
+            // NOTE: Deleted abort node is also appended to the
+            // garbage list, to prevent other threads reading the
+            // wrong type after the node has been put into the
+            // list (if we delete it directly then this will be
+            // a problem)
+            delete (InnerAbortNode *)node_p;
+
+            #ifdef BWTREE_DEBUG
+            freed_count.fetch_add(1);
+            #endif
+
+            // Inner abort node is also a terminating node
+            // so we do not delete the beneath nodes, but just return
             return;
           default:
             // This includes ABORT node for both leaf and inner nodes
