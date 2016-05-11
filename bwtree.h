@@ -7159,7 +7159,7 @@ before_switch:
             // so we do not delete the beneath nodes, but just return
             return;
           default:
-            // This includes ABORT node for both leaf and inner nodes
+            // This does not include INNER ABORT node
             bwt_printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
