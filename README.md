@@ -26,3 +26,4 @@ Our approach to avoid this problem is to post a special ABORT node on the parent
 Compile and Run
 ===============
 This Bw-Tree implementation heavily makes use of template, but is flexible enough for those data types that have a default comparator and hasher. In order to test, you will have to include bwtree.h into your source file, and instancicate a Bw-Tree with appropriate template arguments. After that it is ready to use.
+
