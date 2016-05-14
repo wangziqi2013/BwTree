@@ -4631,6 +4631,10 @@ before_switch:
 
             // Invalidate cached version of logical node
             parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
+
+            context_p->abort_flag = true;
+
+            return;
           } else {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. ABORT\n",
                        node_id,
