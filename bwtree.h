@@ -40,7 +40,7 @@
 #include <mutex>
 
 #define BWTREE_DEBUG
-#define INTERACTIVE_DEBUG
+//#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -1669,7 +1669,7 @@ class BwTree {
      * resources
      */
     ~NodeSnapshot() {
-      if(logical_node_p) {
+      if(logical_node_p != nullptr) {
         // We need to call derived class destructor
         // to properly destroy all associated resources
         // Same think needs to be done whenever destroying
@@ -4442,6 +4442,8 @@ before_switch:
           merge_key_p = &merge_node_p->merge_key;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n", type);
+
+          assert(false);
         } // If on type of merge node
 
         // if this is false then we have already deleted the index term
@@ -4485,6 +4487,11 @@ before_switch:
 
           // Update in parent snapshot
           parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
+
+          // NOTE: We also abort here
+          context_p->abort_flag = true;
+
+          return;
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
