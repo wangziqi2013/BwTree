@@ -438,8 +438,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 256 * 256;
-constexpr int thread_num = 4;
+constexpr int key_num = 1024;
+constexpr int thread_num = 1024;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
@@ -514,26 +514,32 @@ void DeleteTest2(uint64_t thread_id, TreeType *t) {
   return;
 }
 
-
+bool delete_get_value_print = false;
 void DeleteGetValueTest(TreeType *t) {
   for(int i = 0;i < key_num * thread_num;i ++) {
     auto value_set = t->GetValue(i);
 
-    //printf("i = %d\n    Values = ", i);
+    if(delete_get_value_print) {
+      printf("i = %d\n    Values = ", i);
+    }
+
+    for(auto it : value_set) {
+      if(delete_get_value_print) {
+        printf("%lf ", it);
+      }
+    }
 
     assert(value_set.size() == 0);
 
-    for(auto it : value_set) {
-      //printf("%lf ", it);
+    if(delete_get_value_print) {
+      putchar('\n');
     }
-
-    //putchar('\n');
   }
 
   return;
 }
 
-bool insert_get_value_print = true;
+bool insert_get_value_print = false;
 void InsertGetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
@@ -596,43 +602,27 @@ void PrintStat(TreeType *t) {
   return;
 }
 
+#define END_TEST do{ \
+                  print_flag = true; \
+                  delete t1; \
+                  \
+                  return 0; \
+                 }while(0);
+
 int main() {
   TreeType *t1 = new BwTree<int, double>{};
-  //BwTree<long, double> *t2 = new BwTree<long, double>{};
 
-  //BwTree<int, double>::KeyType k1 = t1->GetWrappedKey(3);
-  //BwTree<int, double>::KeyType k2 = t1->GetWrappedKey(2);
-  //BwTree<int, double>::KeyType k3 = t1->GetNegInfKey();
-
-  //bwt_printf("KeyComp: %d\n", t1->KeyCmpLess(k2, k3));
-  //bwt_printf("sizeof(class BwTree) = %lu\n", sizeof(BwTree<long double, long double>));
-
-  //GetNextNodeIDTest(t1);
-  //BwTree<int, double>::PathHistory ph{};
-  //t1->TraverseDownInnerNode(k1, &ph);
-
-  //LocateLeftSiblingTest(t1);
-  //CollectNewNodeSinceLastSnapshotTest(t1);
-
-  //TestNavigateInnerNode(t1);
-  //TestCollectAllValuesOnLeaf(t1);
-  //TestNavigateLeafNode(t1);
-  //TestCollectAllSepsOnInner(t1);
-  //TestNavigateInnerNode(t1);
-
-  //InsertTest(t1);
   tree_size = 0;
   print_flag = false;
 
   LaunchParallelTestID(thread_num, InsertTest2, t1);
-  //print_flag = true;
   printf("Finished inserting all keys\n");
 
   PrintStat(t1);
+
   //LaunchParallelTestID(thread_num, UpdateTest2, t1);
   //printf("Finished updating all keys\n");
 
-  insert_get_value_print = false;
   InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
@@ -644,11 +634,8 @@ int main() {
   DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
-  //debug_stop_mutex.lock();
-  //t1->idb.Start();
-  //debug_stop_mutex.unlock();
+  END_TEST
 
-  //print_flag = true;
   LaunchParallelTestID(thread_num, InsertTest1, t1);
   printf("Finished inserting all keys\n");
 
@@ -697,8 +684,7 @@ int main() {
   DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
-  // We print statistics at the end
-
+  END_TEST
 
   return 0;
 }
