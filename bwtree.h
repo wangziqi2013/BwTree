@@ -40,7 +40,7 @@
 #include <mutex>
 
 #define BWTREE_DEBUG
-#define INTERACTIVE_DEBUG
+//#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
 
 namespace peloton {
@@ -1621,12 +1621,23 @@ class BwTree {
      *
      * This function will delete the current logical node for this node
      * and replace it with the pointer on RHS
+     *
+     * NOTE: This function destroys logical node pointer for the move-in
+     * node first, and when we delete the logical node pointer we need
+     * to first convert it to the correct type
      */
     NodeSnapshot &operator=(NodeSnapshot &&snapshot) {
       // We do not allow any NodeSnapshot object to have non-empty
       // logical pointer
       assert(logical_node_p != nullptr);
-      delete logical_node_p;
+
+      // NOTE: We need to delete the correct type of logical node
+      // pointer since we called child class constructor
+      if(is_leaf == true) {
+        delete (LogicalLeafNode *)logical_node_p;
+      } else {
+        delete (LogicalInnerNode *)logical_node_p;
+      }
 
       node_id = snapshot.node_id;
       node_p = snapshot.node_p;
@@ -1651,10 +1662,23 @@ class BwTree {
      * NOTE: It is possible for LogicalNode to have an empty logical node
      * pointer (being moved out), so we check for pointer emptiness before
      * deleting
+     *
+     * NOTE 2: When deleting the base class pointer, we need to
+     * convert it to the appropriate child class type first in order
+     * to call the child type destructor to free all associated
+     * resources
      */
     ~NodeSnapshot() {
-      if(logical_node_p) {
-        delete logical_node_p;
+      if(logical_node_p != nullptr) {
+        // We need to call derived class destructor
+        // to properly destroy all associated resources
+        // Same think needs to be done whenever destroying
+        // logical_node_p in other contexts
+        if(is_leaf == true) {
+          delete (LogicalLeafNode *)logical_node_p;
+        } else {
+          delete (LogicalInnerNode *)logical_node_p;
+        }
       }
 
       return;
@@ -2917,6 +2941,8 @@ class BwTree {
       return;
     }
 
+    assert(snapshot_p->has_data == false);
+
     CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
                                    snapshot_p->GetLogicalInnerNode(),
                                    true,
@@ -3126,8 +3152,10 @@ class BwTree {
           return;
         } // case InnerMergeType
         default: {
-          bwt_printf("ERROR: Unknown inner node type\n");
+          bwt_printf("ERROR: Unknown inner node type = %d\n",
+                 static_cast<int>(type));
 
+          assert(false);
           return;
         }
       } // switch type
@@ -4414,6 +4442,8 @@ before_switch:
           merge_key_p = &merge_node_p->merge_key;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n", type);
+
+          assert(false);
         } // If on type of merge node
 
         // if this is false then we have already deleted the index term
@@ -4457,6 +4487,11 @@ before_switch:
 
           // Update in parent snapshot
           parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
+
+          // NOTE: We also abort here
+          context_p->abort_flag = true;
+
+          return;
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
@@ -4596,6 +4631,10 @@ before_switch:
 
             // Invalidate cached version of logical node
             parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
+
+            context_p->abort_flag = true;
+
+            return;
           } else {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. ABORT\n",
                        node_id,
@@ -5071,6 +5110,18 @@ before_switch:
     // This CAS must succeed since nobody except this thread could remove
     // the ABORT delta on parent node
     assert(ret == true);
+
+    // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
+    // UNINSTALLING IT FROM THE PARENT NODE
+    // NOTE 2: WE COULD NOT DIRECTLY DELETE THIS NODE
+    // SINCE SOME OTHER NODES MIGHT HAVE TAKEN A SNAOSHOP
+    // AND IF ABORT NODE WAS REMOVED, THE TYPE INFORMATION
+    // CANNOT BE PRESERVED AND IT DOES NOT ABORT; INSTEAD
+    // IT WILL TRY TO CALL CONSOLIDATE ON ABORT
+    // NODE, CAUSING TYPE ERROR
+    //delete (InnerAbortNode *)abort_node_p;
+
+    epoch_manager.AddGarbageNode(abort_node_p);
 
     return;
   }
@@ -6755,6 +6806,12 @@ before_switch:
 
 
 
+  /*
+   * class EpochManager - Maintains a linked list of deleted nodes
+   *                      for threads to access until all threads
+   *                      entering epochs before the deletion of
+   *                      nodes have exited
+   */
   class EpochManager {
    public:
     // Garbage collection interval (milliseconds)
@@ -6804,8 +6861,14 @@ before_switch:
 
     std::thread *thread_p;
 
+    // The counter that counts how many free() is called
+    // inside the epoch manager
+    // NOTE: We cannot precisely count the size of memory freed
+    // since sizeof(Node) does not reflect the true size, since
+    // some nodes are embedded with complicated data structure that
+    // maintains its own memory
     #ifdef BWTREE_DEBUG
-    std::atomic<size_t> freed_size;
+    std::atomic<size_t> freed_count;
     #endif
 
     /*
@@ -6831,13 +6894,22 @@ before_switch:
       // This is used to notify the cleaner thread that it has ended
       exited_flag = false;
 
+      // Initialize atomic counter to record how many
+      // freed has been called inside epoch manager
       #ifdef BWTREE_DEBUG
-      freed_size = 0UL;
+      freed_count = 0UL;
       #endif
 
       return;
     }
 
+    /*
+     * Destructor - Stop the worker thread and cleanup resources not freed
+     *
+     * This function waits for the worker thread using join() method. After the
+     * worker thread has exited, it synchronously clears all epochs that have
+     * not been recycled by calling ClearEpoch()
+     */
     ~EpochManager() {
       // Set stop flag and let thread terminate
       exited_flag = true;
@@ -6860,8 +6932,8 @@ before_switch:
       bwt_printf("Clean up for garbage collector\n");
 
       #ifdef BWTREE_DEBUG
-      bwt_printf("Stat: Cleared %lu bytes of memory\n",
-                 freed_size.load());
+      bwt_printf("Stat: Freed %lu nodes by epoch manager\n",
+                 freed_count.load());
       #endif
 
       return;
@@ -6983,7 +7055,7 @@ before_switch:
 
             delete (LeafInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafInsertNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafDeleteType:
@@ -6991,7 +7063,7 @@ before_switch:
 
             delete (LeafDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafDeleteNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafSplitType:
@@ -6999,7 +7071,7 @@ before_switch:
 
             delete (LeafSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafSplitNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::LeafMergeType:
@@ -7008,7 +7080,7 @@ before_switch:
 
             delete (LeafMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafMergeNode));
+            freed_count.fetch_add(1);
             #endif
 
             // Leaf merge node is an ending node
@@ -7016,15 +7088,18 @@ before_switch:
           case NodeType::LeafRemoveType:
             delete (LeafRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafRemoveNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We never try to free those under remove node
+            // since they will be freed by recursive call from
+            // merge node
+            // TODO: WHAT IF MERGE NODE HAS NOT BEEN POSTED??
             return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(LeafNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We have reached the end of delta chain
@@ -7034,7 +7109,7 @@ before_switch:
 
             delete (InnerInsertNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerInsertNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerDeleteType:
@@ -7042,7 +7117,7 @@ before_switch:
 
             delete (InnerDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerDeleteNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerSplitType:
@@ -7050,7 +7125,7 @@ before_switch:
 
             delete (InnerSplitNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerSplitNode));
+            freed_count.fetch_add(1);
             #endif
             break;
           case NodeType::InnerMergeType:
@@ -7059,7 +7134,7 @@ before_switch:
 
             delete (InnerMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerMergeNode));
+            freed_count.fetch_add(1);
             #endif
 
             // Merge node is also an ending node
@@ -7067,7 +7142,7 @@ before_switch:
           case NodeType::InnerRemoveType:
             delete (InnerRemoveNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerRemoveNode));
+            freed_count.fetch_add(1);
             #endif
 
             // We never free nodes under remove node
@@ -7075,11 +7150,27 @@ before_switch:
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_size.fetch_add(sizeof(InnerNode));
+            freed_count.fetch_add(1);
             #endif
 
             return;
+          case NodeType::InnerAbortType:
+            // NOTE: Deleted abort node is also appended to the
+            // garbage list, to prevent other threads reading the
+            // wrong type after the node has been put into the
+            // list (if we delete it directly then this will be
+            // a problem)
+            delete (InnerAbortNode *)node_p;
+
+            #ifdef BWTREE_DEBUG
+            freed_count.fetch_add(1);
+            #endif
+
+            // Inner abort node is also a terminating node
+            // so we do not delete the beneath nodes, but just return
+            return;
           default:
+            // This does not include INNER ABORT node
             bwt_printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
