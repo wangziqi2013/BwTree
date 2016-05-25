@@ -642,7 +642,7 @@ int main(int argc, char *argv[]) {
 
   PrintStat(t1);
 
-  long long insert_throughput = t1->insert_op_count.load() / time.GetElapsedMilliSeconds();
+  long long insert_throughput = t1->insert_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
   printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", insert_throughput, insert_throughput / thread_num);
 
   //LaunchParallelTestID(thread_num, UpdateTest2, t1);
@@ -663,7 +663,7 @@ int main(int argc, char *argv[]) {
 
   PrintStat(t1);
 
-  long long delete_throughput = t1->delete_op_count.load() / time.GetElapsedMilliSeconds();
+  long long delete_throughput = t1->delete_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
   printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", delete_throughput, delete_throughput / thread_num);
   
   DeleteGetValueTest(t1);
