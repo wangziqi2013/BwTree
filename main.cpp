@@ -642,7 +642,8 @@ int main(int argc, char *argv[]) {
 
   PrintStat(t1);
 
-  printf("per-core throughput = %lld K op/s\n", t1->insert_op_count.load() / thread_num / timer.GetElapsedMilliSeconds());
+  long long insert_throughput = t1->insert_op_count.load() / time.GetElapsedMilliSeconds();
+  printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", insert_throughput, insert_throughput / thread_num);
 
   //LaunchParallelTestID(thread_num, UpdateTest2, t1);
   //printf("Finished updating all keys\n");
@@ -662,8 +663,9 @@ int main(int argc, char *argv[]) {
 
   PrintStat(t1);
 
-  printf("per-core throughput = %lld K op/s\n", t1->insert_op_count.load() / thread_num / timer.GetElapsedMilliSeconds());
-
+  long long delete_throughput = t1->delete_op_count.load() / time.GetElapsedMilliSeconds();
+  printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", delete_throughput, delete_throughput / thread_num);
+  
   DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
