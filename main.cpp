@@ -1,6 +1,7 @@
 
 #include "bwtree.h"
 #include "time_measurer.h"
+#include "fast_random.h"
 
 using namespace peloton::index;
 
@@ -445,6 +446,22 @@ int thread_num = 1;
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
 
+void ReadTest(uint64_t thread_id, TreeType *t) {
+  fast_random rand_gen(time(0));
+  int max_key = thread_num * key_num;
+
+  std::vector<double> ret_values;
+  for(int i = 0;i < key_num; i++) {
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+  }
+
+  return;
+}
+
+
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
     t->Insert(i, 1.11L * i);
@@ -643,13 +660,22 @@ int main(int argc, char *argv[]) {
   PrintStat(t1);
 
   long long insert_throughput = t1->insert_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
-  printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", insert_throughput, insert_throughput / thread_num);
+  printf("INSERT: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", insert_throughput, insert_throughput / thread_num);
 
-  //LaunchParallelTestID(thread_num, UpdateTest2, t1);
-  //printf("Finished updating all keys\n");
-
+  
   InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
+
+  printf("=============== READ =============\n");
+  timer.StartTimer();
+  LaunchParallelTestID(thread_num, ReadTest, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
+  
+  printf("Finished reading all keys\n");
+
+  long long read_throughput = t1->insert_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
+  printf("READ: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", read_throughput, read_throughput / thread_num);
 
 
 
@@ -664,7 +690,7 @@ int main(int argc, char *argv[]) {
   PrintStat(t1);
 
   long long delete_throughput = t1->delete_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
-  printf("total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", delete_throughput, delete_throughput / thread_num);
+  printf("DELETE: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", delete_throughput, delete_throughput / thread_num);
   
   DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
