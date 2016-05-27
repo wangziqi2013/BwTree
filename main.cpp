@@ -1,5 +1,7 @@
 
 #include "bwtree.h"
+#include "time_measurer.h"
+#include "fast_random.h"
 
 using namespace peloton::index;
 
@@ -40,7 +42,7 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
 
   // Launch a group of threads
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
-    thread_group.push_back(std::thread(fn, thread_itr, args...));
+    thread_group.push_back(std::move(std::thread(fn, thread_itr, args...)));
   }
 
   // Join the threads with the main thread
@@ -438,11 +440,27 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 1024;
-constexpr int thread_num = 1024;
+int key_num = 1024;
+int thread_num = 1;
 
 std::mutex tree_size_mutex;
 size_t tree_size = 0;
+
+void ReadTest(uint64_t thread_id, TreeType *t) {
+  fast_random rand_gen(time(0));
+  int max_key = thread_num * key_num;
+
+  std::vector<double> ret_values;
+  for(int i = 0;i < key_num; i++) {
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+    t->GetValue(int(rand_gen.next() % max_key), ret_values);
+  }
+
+  return;
+}
+
 
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
@@ -476,6 +494,7 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+// insert test with no contention.
 void InsertTest2(uint64_t thread_id, TreeType *t) {
   for(int i = 0;i < key_num;i++) {
     int key = thread_num * i + thread_id;
@@ -575,6 +594,7 @@ void InsertGetValueTest(TreeType *t) {
   return;
 }
 
+// update test with no contention.
 void UpdateTest2(uint64_t thread_id, TreeType *t) {
   for(int i = 0;i < key_num;i++) {
     int key = thread_num * i + thread_id;
@@ -609,34 +629,79 @@ void PrintStat(TreeType *t) {
                   return 0; \
                  }while(0);
 
-int main() {
+int main(int argc, char *argv[]) {
+
+  if (argc != 3) {
+    printf("usage: %s num_threads num_keys\n", argv[0]);
+    return -1;
+  }
+
+  thread_num = atoi(argv[1]);
+  key_num = atoi(argv[2]);
+  
+  printf("thread count = %d, key count = %d\n", thread_num, key_num);
+
   TreeType *t1 = new BwTree<int, double>{};
 
   tree_size = 0;
   print_flag = false;
 
+  TimeMeasurer timer;
+
+
+  printf("=============== INSERTION =============\n");
+  timer.StartTimer();
   LaunchParallelTestID(thread_num, InsertTest2, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
+  
   printf("Finished inserting all keys\n");
 
   PrintStat(t1);
 
-  //LaunchParallelTestID(thread_num, UpdateTest2, t1);
-  //printf("Finished updating all keys\n");
+  long long insert_throughput = t1->insert_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
+  printf("INSERT: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", insert_throughput, insert_throughput / thread_num);
 
+  
   InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
+  printf("=============== READ =============\n");
+  timer.StartTimer();
+  LaunchParallelTestID(thread_num, ReadTest, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
+  
+  printf("Finished reading all keys\n");
+
+  long long read_throughput = t1->insert_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
+  printf("READ: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", read_throughput, read_throughput / thread_num);
+
+
+
+  printf("=============== DELETION =============\n");
+  timer.StartTimer();
   LaunchParallelTestID(thread_num, DeleteTest1, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
+  
   printf("Finished deleting all keys\n");
 
   PrintStat(t1);
 
+  long long delete_throughput = t1->delete_op_count.load() * 1.0 / timer.GetElapsedMilliSeconds();
+  printf("DELETE: total throughput = %lld K op/s, per-core throughput = %lld K op/s\n", delete_throughput, delete_throughput / thread_num);
+  
   DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
   END_TEST
 
+  //print_flag = true;
+  timer.StartTimer();
   LaunchParallelTestID(thread_num, InsertTest1, t1);
+  timer.EndTimer();
+  printf("elapsed milliseconds = %lld ms\n", timer.GetElapsedMilliSeconds());
   printf("Finished inserting all keys\n");
 
   PrintStat(t1);

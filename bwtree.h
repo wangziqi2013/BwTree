@@ -5736,7 +5736,7 @@ before_switch:
                 std::vector<ValueType> &value_list) {
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{&search_key};
+    Context context{search_key};
 
     Traverse(&context, true);
 
