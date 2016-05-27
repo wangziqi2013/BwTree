@@ -122,6 +122,32 @@ bool print_flag = true;
 
 /*
  * class BwTree() - Lock-free BwTree index implementation
+ *
+ * Template arguments:
+ *  - RawKeyType: Key type of the map
+ *                *** DO NOT CONFUSE THIS WITH WRAPPED KEY TYPE
+ *
+ *  - ValueType: Value type of the map. Note that it is possible
+ *               that a single key is mapped to multiple values
+ *
+ *  - KeyComparator: "less than" relation comparator for RawKeyType
+ *                   Returns true if "less than" relation holds
+ *                   *** NOTE: THIS OBJECT DO NOT NEED TO HAVE A DEFAULT
+ *                   CONSTRUCTOR. THIS MODIFICATION WAS MADE TO FIT
+ *                   INTO Peloton's ARCHITECTURE
+ *
+ *  - KeyEqualityChecker: Equality checker for RawKeyType
+ *                        Returns true if two keys are equal
+ *
+ *  - ValueEqualityChecker: Equality checker for value type
+ *                          Returns true for ValueTypes that are equal
+ *
+ *  - ValueHashFunc: Hashes ValueType into a 32 bit integer
+ *                   This is used in unordered_map
+ *
+ * If not specified, then by default all arguments except the first two will
+ * default to the standard operator in C++ (i.e. the operator for primitive types
+ * AND/OR overloaded operators for derived types)
  */
 template <typename RawKeyType,
           typename ValueType,
@@ -4482,7 +4508,7 @@ before_switch:
                                         delete_node_p,
                                         parent_snapshot_p->node_p);
         if(ret == true) {
-          bwt_printf("Index term delete delta installed, ID = %lu\n",
+          bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
                      parent_snapshot_p->node_id);
 
           // Update in parent snapshot
