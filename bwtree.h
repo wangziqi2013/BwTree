@@ -121,7 +121,7 @@ constexpr NodeID INVALID_NODE_ID = NodeID(-1);
 bool print_flag = true;
 
 /*
- * class BwTree() - Lock-free BwTree index implementation
+ * class BwTree - Lock-free BwTree index implementation
  *
  * Template arguments:
  *  - RawKeyType: Key type of the map
@@ -167,6 +167,7 @@ class BwTree {
   class InteractiveDebugger;
   friend InteractiveDebugger;
 
+  // This does not have to be the friend class of BwTree
   class EpochManager;
 
  public:
@@ -1893,10 +1894,10 @@ class BwTree {
    * Any tree instance must start with an intermediate node as root, together
    * with an empty leaf node as child
    */
-  BwTree(KeyComparator p_key_cmp_obj = std::less<RawKeyType>{},
-         KeyEqualityChecker p_key_eq_obj = std::equal_to<RawKeyType>{},
-         ValueEqualityChecker p_value_eq_obj = std::equal_to<ValueType>{},
-         ValueHashFunc p_value_hash_obj = std::hash<ValueType>{},
+  BwTree(KeyComparator p_key_cmp_obj = KeyComparator{},
+         KeyEqualityChecker p_key_eq_obj = KeyEqualityChecker{},
+         ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
+         ValueHashFunc p_value_hash_obj = ValueHashFunc{},
          bool p_key_dup = false) :
       key_cmp_obj{p_key_cmp_obj},
       key_eq_obj{p_key_eq_obj},
