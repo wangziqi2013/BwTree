@@ -304,6 +304,9 @@ class BwTree {
   class WrappedKeyComparator {
    public:
     bool operator()(const KeyType &key1, const KeyType &key2) {
+      // TODO: If the key comparator is not trivially constructible
+      // then this would fail compilation - need to find a way to pass
+      // the object into the comparator function
       static KeyComparator key_less_obj{};
 
       // As long as the second operand is not -Inf then
