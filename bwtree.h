@@ -146,7 +146,7 @@ bool print_flag = true;
  *                   This is used in unordered_map
  *
  * If not specified, then by default all arguments except the first two will
- * default to the standard operator in C++ (i.e. the operator for primitive types
+ * be set as the standard operator in C++ (i.e. the operator for primitive types
  * AND/OR overloaded operators for derived types)
  */
 template <typename RawKeyType,
@@ -224,7 +224,7 @@ class BwTree {
     LeafUpdateType,
     LeafRemoveType,
     LeafMergeType,
-    LeafAbortType, // Unconditional abort
+    LeafAbortType, // Unconditional abort (this type is not used)
 
     // Only valid for inner
     InnerInsertType,
@@ -250,7 +250,7 @@ class BwTree {
    * for arbitrary key types
    *
    * NOTE: Comparison between +Inf and +Inf, comparison between
-   * -Inf and -Inf, and equality check between them are not defined
+   * -Inf and -Inf, and equality check between them are also defined
    * If they occur at run time, then just fail
    */
   class KeyType {
@@ -283,14 +283,14 @@ class BwTree {
     /*
      * IsNegInf() - Whether the key value is -Inf
      */
-    bool IsNegInf() const {
+    inline bool IsNegInf() const {
       return type == ExtendedKeyValue::NegInf;
     }
 
     /*
      * IsPosInf() - Whether the key value is +Inf
      */
-    bool IsPosInf() const {
+    inline bool IsPosInf() const {
       return type == ExtendedKeyValue::PosInf;
     }
   };
