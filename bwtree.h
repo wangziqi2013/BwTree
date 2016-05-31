@@ -288,6 +288,15 @@ class BwTree {
     }
 
     /*
+     * Copy Constructoe - copy construct a KeyType with exactly the same
+     *                    raw key and key type
+     */
+    KeyType(const KeyType &p_key) :
+      key{p_key.key},
+      type{p_key.type}
+    {}
+
+    /*
      * IsNegInf() - Whether the key value is -Inf
      */
     inline bool IsNegInf() const {
@@ -1973,6 +1982,13 @@ class BwTree {
     const BaseNode *next_node_p = node_p;
     int freed_count = 0;
 
+    // These two tells whether we have seen InnerSplitNode
+    // NOTE: ubound does not need to be passed between function calls
+    // since ubound is only used to prevent InnerNode containing
+    // SepItem that has been invalidated by a split
+    bool has_ubound = false;
+    KeyType ubound{RawKeyType{}};
+
     while(1) {
       node_p = next_node_p;
       assert(node_p != nullptr);
@@ -2030,13 +2046,30 @@ class BwTree {
           freed_count++;
 
           break;
-        case NodeType::InnerSplitType:
-          next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
+        case NodeType::InnerSplitType: {
+          const InnerSplitNode *split_node_p = \
+            static_cast<const InnerSplitNode *>(node_p);
+
+          next_node_p = split_node_p->child_node_p;
+
+          // We only save ubound for the first split delta from top
+          // to bottom
+          // Since the first is always the most up-to-date one
+          if(has_ubound == false) {
+            // Save the upper bound of the node such that we do not
+            // free child nodes that no longer belong to this inner
+            // node when we see the InnerNode
+            // NOTE: Cannot just save pointer since the pointer
+            // will be invalidated after deleting node
+            ubound = split_node_p->split_key;
+            has_ubound = true;
+          }
 
           delete (InnerSplitNode *)node_p;
           freed_count++;
 
           break;
+        }
         case NodeType::InnerMergeType:
           FreeAllNodes(((InnerMergeNode *)node_p)->child_node_p);
           FreeAllNodes(((InnerMergeNode *)node_p)->right_merge_p);
@@ -2058,6 +2091,13 @@ class BwTree {
 
             // Load the node pointer using child node ID of the inner node
             const BaseNode *child_node_p = GetNode(node_id);
+
+            // If there is a split node and the item key >= split key
+            // then we know the item has been invalidated by the split
+            if((has_ubound == true) && \
+               (KeyCmpGreaterEqual(sep_item.key, ubound))) {
+              break;
+            }
 
             // Then free all nodes in the child node (which is
             // recursively defined as a tree)
