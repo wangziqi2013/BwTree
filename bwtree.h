@@ -41,7 +41,7 @@
 
 // This contains IndexMetadata definition
 // It uses peloton::index namespace
-#include "backend/index/index.h"
+//#include "backend/index/index.h"
 
 #define BWTREE_DEBUG
 //#define INTERACTIVE_DEBUG
@@ -219,7 +219,7 @@ class BwTree {
    */
   enum class NodeType {
     // Data page type
-    LeafType,
+    LeafType = 0,
     InnerType,
 
     // Only valid for leaf
@@ -1934,8 +1934,157 @@ class BwTree {
 
   /*
    * Destructor - Destroy BwTree instance
+   *
+   * NOTE: object member's destructor is called first prior to
+   * the destructor of the container. So epoch manager's destructor
+   * has been called before we free the whole tree
    */
   ~BwTree() {
+    bwt_printf("Constructor: Free tree nodes\n");
+
+    // Free all nodes recursively
+    FreeAllNodes(GetNode(root_id.load()));
+
+    return;
+  }
+
+  /*
+   * FreeAllNodes() - Free all nodes currently in the tree
+   *
+   * For normal destruction, we do not accept InnerAbortNode,
+   * InnerRemoveNode, and LeafRemoveNode, since these three types
+   * only appear as temporary states, and must be completed before
+   * a thread could finish its job and exit (after posting remove delta
+   * the thread always aborts and restarts traversal from the root)
+   *
+   * NOTE: Do not confuse this function with FreeEpochDeltaChain
+   * in EpochManager. These two functions differs in details (see above)
+   * and could not be used interchangeably.
+   *
+   * NOTE 2: This function should only be called in single threaded
+   * environment since it assumes sole ownership of the entire tree
+   * This is trivial during normal destruction, but care must be taken
+   * when this is not true.
+   *
+   * This node calls destructor according to the type of the node, considering
+   * that there is not virtual destructor defined for sake of running speed.
+   */
+  void FreeAllNodes(const BaseNode *node_p) {
+    const BaseNode *next_node_p = node_p;
+    int freed_count = 0;
+
+    while(1) {
+      node_p = next_node_p;
+      assert(node_p != nullptr);
+
+      NodeType type = node_p->GetType();
+      bwt_printf("type = %d\n", (int)type);
+
+      switch(type) {
+        case NodeType::LeafInsertType:
+          next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
+
+          delete (LeafInsertNode *)node_p;
+          freed_count++;
+
+          break;
+        case NodeType::LeafDeleteType:
+          next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
+
+          delete (LeafDeleteNode *)node_p;
+
+          break;
+        case NodeType::LeafSplitType:
+          next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
+
+          delete (LeafSplitNode *)node_p;
+          freed_count++;
+
+          break;
+        case NodeType::LeafMergeType:
+          FreeAllNodes(((LeafMergeNode *)node_p)->child_node_p);
+          FreeAllNodes(((LeafMergeNode *)node_p)->right_merge_p);
+
+          delete (LeafMergeNode *)node_p;
+          freed_count++;
+
+          // Leaf merge node is an ending node
+          return;
+        case NodeType::LeafType:
+          delete (LeafNode *)node_p;
+          freed_count++;
+
+          // We have reached the end of delta chain
+          return;
+        case NodeType::InnerInsertType:
+          next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
+
+          delete (InnerInsertNode *)node_p;
+          freed_count++;
+
+          break;
+        case NodeType::InnerDeleteType:
+          next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
+
+          delete (InnerDeleteNode *)node_p;
+          freed_count++;
+
+          break;
+        case NodeType::InnerSplitType:
+          next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
+
+          delete (InnerSplitNode *)node_p;
+          freed_count++;
+
+          break;
+        case NodeType::InnerMergeType:
+          FreeAllNodes(((InnerMergeNode *)node_p)->child_node_p);
+          FreeAllNodes(((InnerMergeNode *)node_p)->right_merge_p);
+
+          delete (InnerMergeNode *)node_p;
+          freed_count++;
+
+          // Merge node is also an ending node
+          return;
+        case NodeType::InnerType: { // Need {} since we initialized a variable
+          const InnerNode *inner_node_p = \
+            static_cast<const InnerNode *>(node_p);
+
+          // Grammar issue: Since the inner node is const, all its members
+          // are const, and so we could only declare const iterator on
+          // the vector member, and therefore ":" only returns const reference
+          for(const SepItem &sep_item : inner_node_p->sep_list) {
+            NodeID node_id = sep_item.node;
+
+            // Load the node pointer using child node ID of the inner node
+            const BaseNode *child_node_p = GetNode(node_id);
+
+            // Then free all nodes in the child node (which is
+            // recursively defined as a tree)
+            FreeAllNodes(child_node_p);
+          }
+
+          // Access its content first and then delete the node itself
+          delete inner_node_p;
+          freed_count++;
+
+          // Since we free nodes recursively, after processing an inner
+          // node and recursively with its child nodes we could return here
+          return;
+        }
+        default:
+          // This does not include INNER ABORT node
+          bwt_printf("Unknown node type: %d\n", (int)type);
+
+          assert(false);
+          return;
+      } // switch
+
+      bwt_printf("Freed node of type %d\n", (int)type);
+    } // while 1
+
+    bwt_printf("Freed %d nodes during destruction\n", freed_count);
+
     return;
   }
 
@@ -5284,8 +5433,8 @@ before_switch:
    * Also the node ID of its previous key is collected
    *
    * NOTE: There is possibility that the index term has already been
-   * deleted in the parent node, in which case this function will not
-   * merge key.
+   * deleted in the parent node, in which case this function does not
+   * fill in the given pointer but returns false instead.
    *
    * NOTE 2: This function assumes the snapshot already has data and metadata
    *
@@ -5522,8 +5671,11 @@ before_switch:
       }
 
       // Update abort counter
-      // We could not do this before return since the context
+      // NOTW 1: We could not do this before return since the context
       // object is cleared at the end of loop
+      // NOTE 2: Since Traverse() might abort due to other CAS failures
+      // context.abort_counter might be larger than 1 when
+      // LeafInsertNode installation fails
       insert_abort_count.fetch_add(context.abort_counter);
 
       // We reach here only because CAS failed
@@ -7083,11 +7235,16 @@ before_switch:
     }
 
     /*
-     * FreeDeltaChain() - Free a delta chain according to node type
+     * FreeEpochDeltaChain() - Free a delta chain (used by EpochManager)
      *
-     * This node calls destructor according to the type of the node
+     * This function differs from the one of the same name in BwTree definition
+     * in the sense that for tree destruction there are certain node
+     * types not being accepted. But in EpochManager we must support a wider
+     * range of node types.
+     *
+     * For more details please refer to FreeDeltaChain in BwTree class definition
      */
-    void FreeDeltaChain(const BaseNode *node_p) {
+    void FreeEpochDeltaChain(const BaseNode *node_p) {
       const BaseNode *next_node_p = node_p;
 
       while(1) {
@@ -7122,8 +7279,8 @@ before_switch:
             #endif
             break;
           case NodeType::LeafMergeType:
-            FreeDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
-            FreeDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
+            FreeEpochDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
+            FreeEpochDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
             delete (LeafMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
@@ -7141,7 +7298,10 @@ before_switch:
             // We never try to free those under remove node
             // since they will be freed by recursive call from
             // merge node
-            // TODO: WHAT IF MERGE NODE HAS NOT BEEN POSTED??
+            //
+            // TODO: Put remove node into garbage list after
+            // IndexTermDeleteDelta was posted (this could only be done
+            // by one thread that succeeds CAS)
             return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
@@ -7176,8 +7336,8 @@ before_switch:
             #endif
             break;
           case NodeType::InnerMergeType:
-            FreeDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
-            FreeDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
+            FreeEpochDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
+            FreeEpochDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
             delete (InnerMergeNode *)node_p;
             #ifdef BWTREE_DEBUG
@@ -7265,7 +7425,7 @@ before_switch:
         for(GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
             garbage_node_p != nullptr;
             garbage_node_p = next_garbage_node_p) {
-          FreeDeltaChain(garbage_node_p->node_p);
+          FreeEpochDeltaChain(garbage_node_p->node_p);
 
           // Save the next pointer so that we could
           // delete current node directly
