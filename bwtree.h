@@ -39,6 +39,10 @@
 // Used for debugging
 #include <mutex>
 
+// This contains IndexMetadata definition
+// It uses peloton::index namespace
+#include "backend/index/index.h"
+
 #define BWTREE_DEBUG
 //#define INTERACTIVE_DEBUG
 #define ALL_PUBLIC
@@ -1819,8 +1823,11 @@ class BwTree {
 
     /*
      * GetNextNodeID() - Return the NodeID of its right sibling
+     *
+     * NOTE: Do not use const NodeID as return type - it will be ignored
+     * by compiler and induce an error
      */
-    inline const NodeID GetNextNodeID() {
+    inline NodeID GetNextNodeID() {
       if(is_leaf == true) {
         return GetLogicalLeafNode()->next_node_id;
       } else {
@@ -5146,13 +5153,15 @@ before_switch:
     // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
     // UNINSTALLING IT FROM THE PARENT NODE
     // NOTE 2: WE COULD NOT DIRECTLY DELETE THIS NODE
-    // SINCE SOME OTHER NODES MIGHT HAVE TAKEN A SNAOSHOP
+    // SINCE SOME OTHER NODES MIGHT HAVE TAKEN A SNAPSHOT
     // AND IF ABORT NODE WAS REMOVED, THE TYPE INFORMATION
     // CANNOT BE PRESERVED AND IT DOES NOT ABORT; INSTEAD
     // IT WILL TRY TO CALL CONSOLIDATE ON ABORT
     // NODE, CAUSING TYPE ERROR
     //delete (InnerAbortNode *)abort_node_p;
 
+    // This delays the deletion of abort node until all threads has exited
+    // so that existing pointers to ABORT node remain valid
     epoch_manager.AddGarbageNode(abort_node_p);
 
     return;
@@ -5163,12 +5172,14 @@ before_switch:
    *
    * This function blocks all accesses to the parent node, and blocks
    * all CAS efforts for threads that took snapshots before the CAS
-   * of this functions.
+   * in this function.
    *
    * Return false if CAS failed. In that case the memory is freed
    * by this function
    *
-   * This function DOES NOT ABORT. Do not have to check for abort flag
+   * This function DOES NOT ABORT. Do not have to check for abort flag. But
+   * if CAS fails then returns false, and caller needs to abort after
+   * checking the return value.
    */
   bool PostAbortOnParent(Context *context_p,
                          NodeID *parent_node_id_p,
@@ -6889,6 +6900,10 @@ before_switch:
     // acceptable that allocations are delayed to the next epoch
     EpochNode *current_epoch_p;
 
+    // This flag will be set to true sometime after the bwtree destructor is
+    // called - no synchronization is guaranteed, but it is acceptable
+    // since this flag is checked by the epoch thread periodically
+    // so even if it missed one, it will not miss the next
     bool exited_flag;
 
     std::thread *thread_p;
