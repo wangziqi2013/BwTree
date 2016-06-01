@@ -5,7 +5,27 @@
 using namespace peloton::index;
 #endif
 
-using TreeType = BwTree<int, double>;
+/*
+ * class KeyComparator - Test whether BwTree supports context
+ *                       sensitive key comparator
+ */
+class KeyComparator {
+ public:
+  bool operator()(const int k1, const int k2) const {
+    return k1 < k2;
+  }
+
+  KeyComparator(int dummy) {
+    assert(dummy != 12345);
+
+    return;
+  }
+
+  KeyComparator() = delete;
+  //KeyComparator(const KeyComparator &p_key_cmp_obj) = delete;
+};
+
+using TreeType = BwTree<int, double, KeyComparator>;
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
 using LeafDeleteNode = typename TreeType::LeafDeleteNode;
@@ -213,7 +233,7 @@ void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
 
 void TestCollectAllValuesOnLeaf(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeLeaf(t);
-  NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+  NodeSnapshot *snapshot_p = new NodeSnapshot{true, t};
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
@@ -240,7 +260,7 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
 
   bwt_printf("========== Test CollectMetaDataOnLeaf ==========\n");
 
-  snapshot_p = new NodeSnapshot{true};
+  snapshot_p = new NodeSnapshot{true, t};
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
@@ -277,7 +297,7 @@ void TestNavigateLeafNode(TreeType *t) {
 
   // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
   for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
-    NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+    NodeSnapshot *snapshot_p = new NodeSnapshot{true, t};
     snapshot_p->node_id = 1000;
     snapshot_p->node_p = node_p;
 
@@ -304,7 +324,7 @@ void TestNavigateLeafNode(TreeType *t) {
   bwt_printf("              With split delta             \n");
 
   for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
-    NodeSnapshot *snapshot_p = new NodeSnapshot{true};
+    NodeSnapshot *snapshot_p = new NodeSnapshot{true, t};
     snapshot_p->node_id = 1000;
     // Points to split node
     snapshot_p->node_p = \
@@ -337,7 +357,7 @@ void TestNavigateLeafNode(TreeType *t) {
 void TestCollectAllSepsOnInner(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeInner(t);
 
-  NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+  NodeSnapshot *snapshot_p = new NodeSnapshot{false, t};
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
@@ -361,7 +381,7 @@ void TestCollectAllSepsOnInner(TreeType *t) {
 
   bwt_printf("========== Test CollectMetadataOnInner ==========\n");
 
-  snapshot_p = new NodeSnapshot{false};
+  snapshot_p = new NodeSnapshot{false, t};
   snapshot_p->node_id = 1000;
   snapshot_p->node_p = node_p;
 
@@ -393,7 +413,7 @@ void TestNavigateInnerNode(TreeType *t) {
 
   // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
   for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
-    NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+    NodeSnapshot *snapshot_p = new NodeSnapshot{false, t};
     snapshot_p->node_id = 1000;
     snapshot_p->node_p = node_p;
 
@@ -417,7 +437,7 @@ void TestNavigateInnerNode(TreeType *t) {
 
   // NOTE: CANNOT USE 10 SINCE 10 IS OUT OF BOUND
   for(auto i : std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
-    NodeSnapshot *snapshot_p = new NodeSnapshot{false};
+    NodeSnapshot *snapshot_p = new NodeSnapshot{false, t};
     snapshot_p->node_id = 1000;
     snapshot_p->node_p = \
       ((DeltaNode *)(((DeltaNode *)node_p)->child_node_p))->child_node_p;
@@ -610,8 +630,10 @@ void PrintStat(TreeType *t) {
                   return 0; \
                  }while(0);
 
+
+
 int main() {
-  TreeType *t1 = new BwTree<int, double>{};
+  TreeType *t1 = new TreeType{KeyComparator{1}};
 
   tree_size = 0;
   print_flag = false;
@@ -621,12 +643,12 @@ int main() {
 
   PrintStat(t1);
 
-  END_TEST
+  //END_TEST
 
   //LaunchParallelTestID(thread_num, UpdateTest2, t1);
   //printf("Finished updating all keys\n");
 
-  //InsertGetValueTest(t1);
+  InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
   LaunchParallelTestID(thread_num, DeleteTest1, t1);
@@ -634,7 +656,7 @@ int main() {
 
   PrintStat(t1);
 
-  //DeleteGetValueTest(t1);
+  DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
   LaunchParallelTestID(thread_num, InsertTest1, t1);
@@ -642,7 +664,7 @@ int main() {
 
   PrintStat(t1);
 
-  //InsertGetValueTest(t1);
+  InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
   LaunchParallelTestID(thread_num, DeleteTest2, t1);
@@ -650,7 +672,7 @@ int main() {
 
   PrintStat(t1);
 
-  //DeleteGetValueTest(t1);
+  DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
   LaunchParallelTestID(thread_num, InsertTest1, t1);
@@ -658,7 +680,7 @@ int main() {
 
   PrintStat(t1);
 
-  //InsertGetValueTest(t1);
+  InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
   LaunchParallelTestID(thread_num, DeleteTest1, t1);
@@ -666,7 +688,7 @@ int main() {
 
   PrintStat(t1);
 
-  //DeleteGetValueTest(t1);
+  DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
   LaunchParallelTestID(thread_num, InsertTest2, t1);
@@ -674,7 +696,7 @@ int main() {
 
   PrintStat(t1);
 
-  //InsertGetValueTest(t1);
+  InsertGetValueTest(t1);
   printf("Finished verifying all inserted values\n");
 
   LaunchParallelTestID(thread_num, DeleteTest2, t1);
@@ -682,7 +704,7 @@ int main() {
 
   PrintStat(t1);
 
-  //DeleteGetValueTest(t1);
+  DeleteGetValueTest(t1);
   printf("Finished verifying all deleted values\n");
 
   END_TEST
