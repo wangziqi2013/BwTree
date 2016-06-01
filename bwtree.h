@@ -75,6 +75,16 @@
  */
 #define ALL_PUBLIC
 
+/*
+ * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
+ */
+#define BWTREE_TEMPLATE_ARGUMENTS template <typename KeyType, \
+                                            typename ValueType, \
+                                            typename KeyComparator, \
+                                            typename KeyEqualityChecker, \
+                                            typename ValueEqualityChecker, \
+                                            typename ValueHashFunc>
+
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
@@ -157,7 +167,17 @@ bool print_flag = true;
 /*
  * class BwTree - Lock-free BwTree index implementation
  *
- * Template arguments:
+ * Template Arguments:
+ *
+ * template <typename RawKeyType,
+ *          typename ValueType,
+ *          typename KeyComparator = std::less<RawKeyType>,
+ *          typename KeyEqualityChecker = std::equal_to<RawKeyType>,
+ *          typename ValueEqualityChecker = std::equal_to<ValueType>,
+ *          typename ValueHashFunc = std::hash<ValueType>>
+ *
+ * Explanation:
+ *
  *  - RawKeyType: Key type of the map
  *                *** DO NOT CONFUSE THIS WITH WRAPPED KEY TYPE
  *
