@@ -169,6 +169,8 @@ bool print_flag = true;
  *                   *** NOTE: THIS OBJECT DO NOT NEED TO HAVE A DEFAULT
  *                   CONSTRUCTOR. THIS MODIFICATION WAS MADE TO FIT
  *                   INTO Peloton's ARCHITECTURE
+ *                   Please refer to main.cpp, class KeyComparator for more
+ *                   information on how to define a proper key comparator
  *
  *  - KeyEqualityChecker: Equality checker for RawKeyType
  *                        Returns true if two keys are equal

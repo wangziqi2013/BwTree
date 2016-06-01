@@ -8,6 +8,13 @@ using namespace peloton::index;
 /*
  * class KeyComparator - Test whether BwTree supports context
  *                       sensitive key comparator
+ *
+ * If a context-sensitive KeyComparator object is being used
+ * then it should follow rules like:
+ *   1. There could be no default constructor
+ *   2. There MUST be a copy constructor
+ *   3. operator() must be const
+ *
  */
 class KeyComparator {
  public:
