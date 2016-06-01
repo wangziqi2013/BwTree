@@ -36,19 +36,49 @@
 #include <thread>
 #include <chrono>
 
+/*
+ * BWTREE_PELOTON - Specifies whether Peloton-specific features are
+ *                  Compiled or not
+ *                  We strive to make BwTree a standalone and independent
+ *                  module that can be plugged-and-played into any situation
+ */
+//#define BWTREE_PELOTON
+
 // Used for debugging
 #include <mutex>
 
+#ifdef BWTREE_PELOTON
 // This contains IndexMetadata definition
 // It uses peloton::index namespace
-//#include "backend/index/index.h"
+#include "backend/index/index.h"
+#endif
 
+/*
+ * BWTREE_DEBUG - This flag enables assertions that check for
+ *                structural consistency
+ *                DO NOT RECOMMEND REMOVING
+ */
 #define BWTREE_DEBUG
+
+/*
+ * INTERACTIVE_DEBUG - This flag enables interactive debugger
+ *                     which serializes CAS operation using a
+ *                     lock, halting all threads before starting
+ *                     the interactive debugger when assertion fails
+ *                     RECOMMEND DEACTIVATING WHEN RELASING
+ */
 //#define INTERACTIVE_DEBUG
+
+/*
+ * ALL_PUBLIC - This flag makes all private members become public
+ *              to simplify debugging
+ */
 #define ALL_PUBLIC
 
+#ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
+#endif
 
 #ifdef INTERACTIVE_DEBUG
 
@@ -7532,7 +7562,9 @@ before_switch:
 
 }; // class BwTree
 
+#ifdef BWTREE_PELOTON
 }  // End index namespace
 }  // End peloton namespace
+#endif
 
 
