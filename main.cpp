@@ -473,7 +473,7 @@ std::mutex tree_size_mutex;
 size_t tree_size = 0;
 
 void InsertTest1(uint64_t thread_id, TreeType *t) {
-  for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
+  for(int i = thread_id * key_num;i < (int)(thread_id + 1) * key_num;i++) {
     t->Insert(i, 1.11L * i);
     t->Insert(i, 1.111L * i);
     t->Insert(i, 1.1111L * i);
@@ -488,7 +488,7 @@ void InsertTest1(uint64_t thread_id, TreeType *t) {
 }
 
 void DeleteTest1(uint64_t thread_id, TreeType *t) {
-  for(int i = thread_id * key_num;i < (thread_id + 1) * key_num;i++) {
+  for(int i = thread_id * key_num;i < (int)(thread_id + 1) * key_num;i++) {
     t->Delete(i, 1.11L * i);
     t->Delete(i, 1.111L * i);
     t->Delete(i, 1.1111L * i);
