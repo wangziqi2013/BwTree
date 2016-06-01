@@ -910,7 +910,7 @@ class BwTree {
         new LeafNode{split_key, ubound, next_node_id};
 
       // Copy data item into the new node
-      for(int i = split_key_index;i < node_size;i++) {
+      for(int i = split_key_index;i < (int)node_size;i++) {
         leaf_node_p->data_list.push_back(data_list[i]);
       }
 
@@ -1127,7 +1127,7 @@ class BwTree {
         new InnerNode{split_key, ubound, next_node_id};
 
       // Copy data item into the new node
-      for(int i = split_key_index;i < node_size;i++) {
+      for(int i = split_key_index;i < (int)node_size;i++) {
         inner_node_p->sep_list.push_back(sep_list[i]);
       }
 
@@ -3407,6 +3407,9 @@ class BwTree {
                 typename decltype(logical_node_p->key_value_map)::value_type( \
                   delete_node_p->delete_key,
                   INVALID_NODE_ID));
+                  
+              // We might want to use the return value to validate?
+              (void)ret;
             }
           }
 
@@ -4597,7 +4600,7 @@ before_switch:
 
         // If this aborts then we propagate this to the state machine driver
         if(context_p->abort_flag == true) {
-          bwt_printf("Jump to left sibling in Remove helo along ABORT\n");
+          bwt_printf("Jump to left sibling in Remove help along ABORT\n");
 
           return;
         }
@@ -4618,7 +4621,7 @@ before_switch:
         // Update current node information
         // NOTE: node_p will not be used here since we have already
         // saved merge sibling in merge_right_branch
-        node_p = left_snapshot_p->node_p;
+        node_p = left_sibling_p;
         node_id = left_snapshot_p->node_id;
         lbound_p = left_snapshot_p->lbound_p;
 
@@ -6158,7 +6161,7 @@ before_switch:
     assert(raw_key_list.size() == node_id_list.size());
 
     // Push item into the node 1 by 1
-    for(int i = 0;i < raw_key_list.size();i++) {
+    for(int i = 0;i < (int)raw_key_list.size();i++) {
       SepItem item{KeyType{raw_key_list[i]}, node_id_list[i]};
 
       temp_node_p->sep_list.push_back(item);
@@ -6183,7 +6186,7 @@ before_switch:
 
     assert(raw_key_list.size() == value_list_list.size());
 
-    for(int i = 0;i < raw_key_list.size();i++) {
+    for(int i = 0;i < (int)raw_key_list.size();i++) {
       // Construct the data item using a key and a list of values
       DataItem item{KeyType{raw_key_list[i]},
                     value_list_list[i]};
