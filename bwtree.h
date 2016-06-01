@@ -2021,7 +2021,7 @@ class BwTree {
     bwt_printf("Constructor: Free tree nodes\n");
 
     // Free all nodes recursively
-    FreeAllNodes(GetNode(root_id.load()));
+    //FreeAllNodes(GetNode(root_id.load()));
 
     return;
   }
