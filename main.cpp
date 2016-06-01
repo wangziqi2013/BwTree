@@ -23,7 +23,7 @@ class KeyComparator {
   }
 
   KeyComparator(int dummy) {
-    assert(dummy != 12345);
+    (void)dummy;
 
     return;
   }
@@ -32,7 +32,34 @@ class KeyComparator {
   //KeyComparator(const KeyComparator &p_key_cmp_obj) = delete;
 };
 
-using TreeType = BwTree<int, double, KeyComparator>;
+/*
+ * class KeyEqualityChecker - Tests context sensitive key equality
+ *                            checker inside BwTree
+ *
+ * NOTE: This class is only used in KeyEqual() function, and is not
+ * used as STL template argument, it is not necessary to provide
+ * the object everytime a container is initialized
+ */
+class KeyEqualityChecker {
+ public:
+  bool operator()(const int k1, const int k2) const {
+    return k1 == k2;
+  }
+  
+  KeyEqualityChecker(int dummy) {
+    (void)dummy;
+    
+    return;
+  }
+  
+  KeyEqualityChecker() = delete;
+  //KeyEqualityChecker(const KeyEqualityChecker &p_key_eq_obj) = delete;
+};
+
+using TreeType = BwTree<int,
+                        double,
+                        KeyComparator,
+                        KeyEqualityChecker>;
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
 using LeafDeleteNode = typename TreeType::LeafDeleteNode;
@@ -640,7 +667,8 @@ void PrintStat(TreeType *t) {
 
 
 int main() {
-  TreeType *t1 = new TreeType{KeyComparator{1}};
+  TreeType *t1 = new TreeType{KeyComparator{1},
+                              KeyEqualityChecker{1}};
 
   tree_size = 0;
   print_flag = false;
