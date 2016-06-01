@@ -223,7 +223,9 @@ class BwTree {
 #endif
 
   // This is used to hold values in a set
-  using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
+  using ValueSet = std::unordered_set<ValueType,
+                                      ValueHashFunc,
+                                      ValueEqualityChecker>;
 
   // This is used to hold mapping from key to a set of values
   // NOTE: Wherever this is used, we need also to pass in the
@@ -1499,7 +1501,8 @@ class BwTree {
             break;
           } // case LeafUpdateType
           default: {
-            bwt_printf("ERROR: Unknown delta node type: %d\n", type);
+            bwt_printf("ERROR: Unknown delta node type: %d\n",
+                       static_cast<int>(type));
 
             assert(false);
           } // default
@@ -2670,7 +2673,7 @@ class BwTree {
         } // case Abort
         default: {
           bwt_printf("ERROR: Unknown State: %d\n",
-                     context_p->current_state);
+                     static_cast<int>(context_p->current_state));
           assert(false);
           break;
         }
@@ -3140,7 +3143,8 @@ class BwTree {
           break;
         } // InnerMergeType
         default: {
-          bwt_printf("ERROR: Unknown node type = %d", type);
+          bwt_printf("ERROR: Unknown node type = %d",
+                     static_cast<int>(type));
 
           assert(false);
         }
@@ -3726,7 +3730,7 @@ class BwTree {
         } // case LeafSplitType
         default: {
           bwt_printf("ERROR: Unknown leaf delta node type: %d\n",
-                     node_p->GetType());
+                     static_cast<int>(node_p->GetType()));
 
           assert(false);
         } // default
@@ -3993,7 +3997,8 @@ class BwTree {
           return;
         } // case LeafMergeType
         default: {
-          bwt_printf("ERROR: Unknown node type: %d\n", type);
+          bwt_printf("ERROR: Unknown node type: %d\n",
+                     static_cast<int>(type));
 
           assert(false);
         } // default
@@ -4741,7 +4746,8 @@ before_switch:
 
           merge_key_p = &merge_node_p->merge_key;
         } else {
-          bwt_printf("ERROR: Illegal node type: %d\n", type);
+          bwt_printf("ERROR: Illegal node type: %d\n",
+                     static_cast<int>(type));
 
           assert(false);
         } // If on type of merge node
