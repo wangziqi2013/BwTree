@@ -2,9 +2,9 @@
 //
 //                         PelotonDB
 //
-// BWTree.h
+// bwTree.h
 //
-// Identification: src/backend/index/BWTree.h
+// Identification: src/backend/index/bwtree.h
 //
 // Copyright (c) 2015, Carnegie Mellon University Database Group
 //
