@@ -224,9 +224,12 @@ class BwTree {
   using ValueSet = std::unordered_set<ValueType, ValueHashFunc, ValueEqualityChecker>;
 
   // This is used to hold mapping from key to a set of values
+  // NOTE: Wherever this is used, we need also to pass in the
+  // wrapped key comparator object as constructor argument
   using KeyValueSet = std::map<KeyType, ValueSet, WrappedKeyComparator>;
 
   // This is used to hold key and NodeID ordered mapping relation
+  // NOTE: For constructing WrappedKeyComparator please refer to KeyValueSet
   using KeyNodeIDMap = std::map<KeyType, NodeID, WrappedKeyComparator>;
 
   using EpochNode = typename EpochManager::EpochNode;
@@ -347,12 +350,26 @@ class BwTree {
    */
   class WrappedKeyComparator {
    public:
-    bool operator()(const KeyType &key1, const KeyType &key2) {
-      // TODO: If the key comparator is not trivially constructible
-      // then this would fail compilation - need to find a way to pass
-      // the object into the comparator function
-      static KeyComparator key_less_obj{};
+    // A pointer to the "less than" comparator object that might be
+    // context sensitive
+    KeyComparator *key_cmp_obj_p;
 
+    /*
+     * Constructor - Takes a pointer to raw key comparator object
+     */
+    WrappedKeyComparator(KeyComparator *p_key_cmp_obj_p) :
+      key_cmp_obj_p{p_key_cmp_obj_p}
+    {}
+
+    /*
+     * Default Constructor - Deleted
+     *
+     * This is defined to emphasize the face that a key comparator
+     * is always needed to construct this object
+     */
+    WrappedKeyComparator() = delete;
+
+    bool operator()(const KeyType &key1, const KeyType &key2) {
       // As long as the second operand is not -Inf then
       // we return true
       if(key1.IsNegInf()) {
@@ -383,7 +400,12 @@ class BwTree {
       }
 
       // Then we need to compare real key
-      return key_less_obj(key1.key, key2.key);
+      // NOTE: We use the comparator object passed as constructor argument
+      // This might not be necessary if the comparator is trivially
+      // constructible, but in the case of Peloton, tuple key comparison
+      // requires knowledge of the tuple schema which cannot be achieved
+      // without a comparator object that is not trivially constructible
+      return (*key_cmp_obj_p)(key1.key, key2.key);
     }
   };
 
@@ -452,9 +474,9 @@ class BwTree {
    * could be used as separator/high key
    */
   bool KeyCmpLess(const KeyType &key1, const KeyType &key2) const {
-    WrappedKeyComparator key_less_obj{};
-
-    return key_less_obj(key1, key2);
+    // The wrapped key comparator object is defined as a object member
+    // since we need it to be passed in std::map as the comparator
+    return wrapped_key_cmp_obj(key1, key2);
   }
 
   /*
@@ -673,6 +695,8 @@ class BwTree {
    *
    * NOTE: Since we could not instanciate object comparator so in order
    * to construct this object we need to pass in the object
+   *
+   * TODO: This is not used currently. And the implementation is problematic
    */
   class DataItemComparator {
    public:
@@ -1299,11 +1323,18 @@ class BwTree {
      * Constructor - Initialize logical ID and physical pointer
      *               as the tree snapshot
      */
-    LogicalLeafNode() :
+    LogicalLeafNode(BwTree *tree_p) :
       BaseLogicalNode{},
-      key_value_set{},
+      // We need to use the given object to initialize std::map
+      key_value_set{tree_p->wrapped_key_cmp_obj},
       pointer_list{}
     {}
+
+    /*
+     * Deleted Constructor - To explicitly state that an argument
+     *                       must be given
+     */
+    LogicalLeafNode() = delete;
 
     /*
      * GetContainter() - Reuturn the container that holds key - multi value
@@ -1543,9 +1574,9 @@ class BwTree {
     /*
      * Constructor - Accept an initial starting point and init others
      */
-    LogicalInnerNode() :
+    LogicalInnerNode(BwTree *tree_p) :
       BaseLogicalNode{},
-      key_value_map{}
+      key_value_map{tree_p->wrapped_key_cmp_obj}
     {}
 
     /*
@@ -1945,7 +1976,10 @@ class BwTree {
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
          ValueHashFunc p_value_hash_obj = ValueHashFunc{},
          bool p_key_dup = false) :
-      key_cmp_obj{p_key_cmp_obj},
+      key_cmp_obj{p_key_cmp_obj},        // Raw key comparator
+                                         // (copy construct)
+      wrapped_key_cmp_obj{&key_cmp_obj}, // Wrapped key comparator
+                                         // (needs raw key comparator)
       key_eq_obj{p_key_eq_obj},
       value_eq_obj{p_value_eq_obj},
       value_hash_obj{p_value_hash_obj},
@@ -6043,7 +6077,16 @@ before_switch:
  public:
 #endif
   // Compare key in a less than manner
+  // NOTE: We need this being passed around to do tuple comparison
+  // in Peloton
   const KeyComparator key_cmp_obj;
+
+  // Wrapped key comparator
+  // We use this in general to compare wrapped keys. This object should
+  // also be passed around for std::map to use as the key comparator since
+  // it could not be trivially constructed
+  const WrappedKeyComparator wrapped_key_cmp_obj;
+
   // It is faster to compare equality using this than using two <
   const KeyEqualityChecker key_eq_obj;
   // Check whether values are equivalent
@@ -6171,7 +6214,7 @@ before_switch:
    */
   class InteractiveDebugger {
    public:
-    BwTree* tree;
+    BwTree *tree;
 
     NodeID current_node_id;
 
@@ -6213,6 +6256,34 @@ before_switch:
     Context *context_p;
 
     std::mutex key_map_mutex;
+
+    /*
+     * Constructor - Takes BwTree object pointer as argument
+     *
+     * NOTE: key_map is an std::map object which uses WrappedKeyComparator
+     * to compare keys. However, WrappedKeyComparator cannot be trivially
+     * constructed. As a solution, we pass comparator object to std::map
+     * as construction argument to force std::map to use our
+     * given constructor instead of trying to construct one itself
+     */
+    InteractiveDebugger(BwTree *p_tree)
+        : tree(p_tree),
+          current_node_id(0),
+          current_node_p(nullptr),
+          next_key_id(0),
+          next_value_id(0),
+          // The map object could take a comparator as argument
+          // and use the given comparator to compare keys
+          key_map{p_tree->wrapped_key_cmp_obj} {
+      InitKeyMap();
+
+      return;
+    }
+
+    /*
+     * Destructor
+     */
+    ~InteractiveDebugger() {}
 
     /*
      * AddKey() - Record the key in its map such that we could sort them
@@ -7054,19 +7125,6 @@ before_switch:
 
       return;
     }
-
-    InteractiveDebugger(BwTree *p_tree)
-        : tree(p_tree),
-          current_node_id(0),
-          current_node_p(nullptr),
-          next_key_id(0),
-          next_value_id(0) {
-      InitKeyMap();
-
-      return;
-    }
-
-    ~InteractiveDebugger() {}
   };  // class Interactive Debugger
 
 
