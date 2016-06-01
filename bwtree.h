@@ -352,12 +352,12 @@ class BwTree {
    public:
     // A pointer to the "less than" comparator object that might be
     // context sensitive
-    KeyComparator *key_cmp_obj_p;
+    const KeyComparator *key_cmp_obj_p;
 
     /*
      * Constructor - Takes a pointer to raw key comparator object
      */
-    WrappedKeyComparator(KeyComparator *p_key_cmp_obj_p) :
+    WrappedKeyComparator(const KeyComparator *p_key_cmp_obj_p) :
       key_cmp_obj_p{p_key_cmp_obj_p}
     {}
 
@@ -369,7 +369,7 @@ class BwTree {
      */
     WrappedKeyComparator() = delete;
 
-    bool operator()(const KeyType &key1, const KeyType &key2) {
+    bool operator()(const KeyType &key1, const KeyType &key2) const {
       // As long as the second operand is not -Inf then
       // we return true
       if(key1.IsNegInf()) {
@@ -1312,6 +1312,9 @@ class BwTree {
    */
   class LogicalLeafNode : public BaseLogicalNode {
    public:
+    // We need to access wrapped key comparator later
+    BwTree *tree_p;
+
     // These fields are filled by callee
     KeyValueSet key_value_set;
 
@@ -1323,8 +1326,9 @@ class BwTree {
      * Constructor - Initialize logical ID and physical pointer
      *               as the tree snapshot
      */
-    LogicalLeafNode(BwTree *tree_p) :
+    LogicalLeafNode(BwTree *p_tree_p) :
       BaseLogicalNode{},
+      tree_p{p_tree_p},
       // We need to use the given object to initialize std::map
       key_value_set{tree_p->wrapped_key_cmp_obj},
       pointer_list{}
@@ -1382,7 +1386,7 @@ class BwTree {
      * NOTE: DO NOT REMOVE DIRECTLY ON THE MAP USING ITERATOR
      */
     void RemoveEmptyValueSet() {
-      KeyValueSet temp_map{};
+      KeyValueSet temp_map{tree_p->wrapped_key_cmp_obj};
 
       // Move every non-empty ValueSet into container
       for(auto &item : GetContainer()) {
@@ -1673,7 +1677,8 @@ class BwTree {
      * during construction, so when replacing logical nodes please
      * remember to destroy the previous one
      */
-    NodeSnapshot(bool p_is_leaf) :
+    NodeSnapshot(bool p_is_leaf,
+                 BwTree *tree_p) :
       node_id{INVALID_NODE_ID},
       node_p{nullptr},
       logical_node_p{nullptr},
@@ -1685,9 +1690,9 @@ class BwTree {
       lbound_p{nullptr} {
       // Allocate a logical node
       if(is_leaf == true) {
-        logical_node_p = new LogicalLeafNode{};
+        logical_node_p = new LogicalLeafNode{tree_p};
       } else {
-        logical_node_p = new LogicalInnerNode{};
+        logical_node_p = new LogicalInnerNode{tree_p};
       }
 
       assert(logical_node_p != nullptr);
@@ -3186,7 +3191,8 @@ class BwTree {
                                    true,
                                    true);
 
-    KeyNodeIDMap temp_map{};
+    // NOTE: We need to provide a comparator object in the tree
+    KeyNodeIDMap temp_map{wrapped_key_cmp_obj};
 
     // Remove all key with INVALID_NODE_ID placeholder
     // since they are deleted nodes. This could not be
@@ -4334,7 +4340,7 @@ class BwTree {
     // NOTE: EVEN IF IT IS A LeafAbortNode WE STILL NEED
     // TO CALL THIS FUNCTION TO KNOW WE ARE ON LEAF
     bool is_leaf = node_p->IsOnLeafDeltaChain();
-    NodeSnapshot snapshot{is_leaf};
+    NodeSnapshot snapshot{is_leaf, this};
 
     snapshot.node_id = node_id;
     // This makes sure the cached version of logical node is removed
