@@ -6360,7 +6360,8 @@ before_switch:
       value_set_p{nullptr},
       key_it{},
       value_it{},
-      next_key{}
+      next_key{},
+      is_end{false}
     {}
     
    private:
@@ -6402,15 +6403,28 @@ before_switch:
     //         If this key is +Inf, then this is an end() iterator
     KeyType next_key;
     
+    // We use this flag to indicate whether we have reached the end of
+    // iteration.
+    // NOTE: We could not directly check for next_key being +Inf, since
+    // there might still be keys not scanned yet even if next_key is +Inf
+    bool is_end;
+    
     /*
-     * LoadNextKey()
+     * LoadNextKey() - Load logical leaf page whose low key <= next_key
+     *
+     * NOTE: Consider the case where there are two nodes [1, 2, 3] [4, 5, 6]
+     * after we have scanned [1, 2, 3] (i.e. got its logical leaf node object)
+     * the node [4, 5, 6] is merged into [1, 2, 3], forming [1, 2, 3, 4, 5, 6]
+     * then when we query again using the saved high key = 4, we would still
+     * be reading [1, 2, 3] first, which is not consistent (duplicated values)
+     *
+     * To address this problem, after loading a logical node, we need to advance
+     * the key iterator to locate the first key that >= next_key
      */
     void LoadNextKey() {
-      // If the next key is +Inf then there is no next page for us
-      // to load
-      // In that case assertion fails
-      // and we need to check for this condition before calling this function
-      assert(next_key.IsPosInf() == false);
+      // Caller needs to guarantee this function not being called if
+      // we have already reached the end
+      assert(is_end == false);
       
       // Special case: If the next key is NegInf
       // then we know this is begin() iterator
@@ -6449,15 +6463,38 @@ before_switch:
       // in path histoty
       logical_node_p = snapshot_p->MoveLogicalLeafNode();
       
+      // It is a map interator
+      key_it = logical_node_p->key_value_set.begin();
+      while(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
+        key_it++;
+        
+        // This way we could hit the end of key value set
+        // Consider the case [1, 2, 3] [4, 5, 6], after we
+        // have scanned [1, 2, 3], all keys were deleted except 1
+        // then we query the tree with next key = 4. In that case
+        // we cannot find a key >= 4, and will hit end iterator
+        if(key_it != logical_node_p->key_value_set.end()) {
+          // Set next key as +Inf to indicate we have reached the end
+          next_key = tree_p->GetPosInfKey();
+          
+          // And also set the flag to direcyly indicate caller that we
+          // have reached the end of iteration
+          is_end = true;
+          
+          return;
+        }
+      }
+
+      // It is the first value associated with the key
+      value_it = key_it.second.begin();
+      
       // Then prepare for next key
       // NOTE: Must copy the key, since the key needs to be preserved
       // across many query sessions
+      // NOTE 2: Once we have reached the last logical leaf page, next_key
+      // would be +Inf. That is the reason we could not check for next_key
+      // being +Inf to decide whether end has been reached
       next_key = *logical_node_p->ubound_p;
-      
-      // It is a map interator
-      key_it = logical_node_p->key_value_set.begin();
-      // It is the first value associated with the key
-      value_it = key_it.second.begin();
       
       // Set the two shortcut pointers (they are not really needed
       // but we keep them as a shortcut)
