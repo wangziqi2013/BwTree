@@ -1322,6 +1322,15 @@ class BwTree {
       ubound_p{nullptr},
       next_node_id{INVALID_NODE_ID}
     {}
+    
+    /*
+     * Copy Constructor - Copies three members
+     */
+    BaseLogicalNode(const BaseLogicalNode &node) :
+      lbound_p{node.lbound_p},
+      ubound_p{node.ubound_p},
+      next_node_id{node.next_node_id}
+    {}
   };
 
   /*
