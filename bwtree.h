@@ -6401,6 +6401,77 @@ before_switch:
     // NOTE 3: If this key is -Inf, then this is a begin() iterator
     //         If this key is +Inf, then this is an end() iterator
     KeyType next_key;
+    
+    /*
+     * LoadNextKey()
+     */
+    void LoadNextKey() {
+      // If the next key is +Inf then there is no next page for us
+      // to load
+      // In that case assertion fails
+      // and we need to check for this condition before calling this function
+      assert(next_key.IsPosInf() == false);
+      
+      // Special case: If the next key is NegInf
+      // then we know this is begin() iterator
+      // and the other members are either nullptr or empty
+      if(next_key.IsNegInf() == true) {
+        assert(logical_node_p == nullptr);
+        assert(raw_key_p == nullptr);
+        assert(value_set_p == nullptr);
+      }
+      
+      // First join the epoch to prevent physical nodes being deallocated
+      // too early
+      EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
+      
+      Context context{next_key};
+      
+      // Traverse to the leaf page whose range includes the key
+      // NOTE: We do not collect values associated with the key
+      // by setting the second argument to false
+      // Since we are actually just using the low key to find page
+      // rather than trying to collect its values
+      Traverse(&context, false);
+      
+      // Then collect all data in the logical leaf node
+      NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+      if(snapshot_p->has_data == true) {
+        assert(snapshot_p->has_metadata == true);
+      } else {
+        CollectAllValuesOnLeaf(snapshot_p);
+        
+        assert(snapshot_p->has_data == true);
+        assert(snapshot_p->has_metadata == true);
+      }
+      
+      // First move out the logical leaf node from the last snaoshot
+      // in path histoty
+      logical_node_p = snapshot_p->MoveLogicalLeafNode();
+      
+      // Then prepare for next key
+      // NOTE: Must copy the key, since the key needs to be preserved
+      // across many query sessions
+      next_key = *logical_node_p->ubound_p;
+      
+      // It is a map interator
+      key_it = logical_node_p->key_value_set.begin();
+      // It is the first value associated with the key
+      value_it = key_it.second.begin();
+      
+      // Set the two shortcut pointers (they are not really needed
+      // but we keep them as a shortcut)
+      raw_key_p = &key_it.first.key;
+      value_set_p = &key_it.second;
+      
+      // Leave the epoch, since we have already had all information
+      // NOTE: Before this point we need to collect all data inside
+      // shared data structure since after this point they might be
+      // deallocated by other threads
+      tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
+      
+      return;
+    }
   };
 
   /*
