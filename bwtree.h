@@ -1362,6 +1362,42 @@ class BwTree {
      *                       must be given
      */
     LogicalLeafNode() = delete;
+    
+    /*
+     * Copy Constructor - Copies metadata and data associated with the
+     *                    logical leaf node into a newly allocated instance
+     *
+     * NOTE: It is reauired that the pointer list being empty, since it makes
+     * no sense copy constructing a logical leaf node object using another
+     * instance in its intermediate state.
+     * This also helps catching some bugs
+     */
+    LogicalLeafNode(const LogicalLeafNode &node) :
+      // Parent copy constructor
+      BaseLogicalNode{node},
+      tree_p{node.tree_p},
+      // This is the most important one
+      key_value_set{node.key_value_set},
+      pointer_list{} {
+      // We cannot copy construct a logical leaf node in its intermediate
+      // state (i.e. pointer list not being empty)
+      assert(pointer_list.size() == 0UL);
+      
+      return;
+    }
+    
+    /*
+     * Destructor
+     *
+     * The destructor checks the size of pointer list to make sure we do not
+     * destroy a logical leaf node in its intermediate state. It is required
+     * that pointer list being empty on destruction.
+     */
+    ~LogicalLeafNode() {
+      assert(pointer_list.size() == 0UL);
+      
+      return;
+    }
 
     /*
      * GetContainter() - Reuturn the container that holds key - multi value
@@ -1531,6 +1567,8 @@ class BwTree {
         replay_count--;
 
         // Get rid of the last delta node
+        // TODO: This is inefficient, and we could use a more effective
+        // way to replay the log
         pointer_list.pop_back();
       } // for node_p in node_list
 
