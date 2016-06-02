@@ -159,10 +159,9 @@ static std::mutex debug_stop_mutex;
 #endif
 
 using NodeID = uint64_t;
-// We use uint64_t(-1) as invalid node ID
-constexpr NodeID INVALID_NODE_ID = NodeID(-1);
 
-bool print_flag = true;
+extern NodeID INVALID_NODE_ID;
+extern bool print_flag;
 
 /*
  * class BwTree - Lock-free BwTree index implementation
@@ -2378,6 +2377,7 @@ class BwTree {
 
     // So using nullptr to CAS must succeed
     assert(ret == true);
+    (void)ret;
 
     return;
   }
