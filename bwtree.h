@@ -1322,7 +1322,7 @@ class BwTree {
       ubound_p{nullptr},
       next_node_id{INVALID_NODE_ID}
     {}
-    
+
     /*
      * Copy Constructor - Copies three members
      */
@@ -1371,7 +1371,7 @@ class BwTree {
      *                       must be given
      */
     LogicalLeafNode() = delete;
-    
+
     /*
      * Copy Constructor - Copies metadata and data associated with the
      *                    logical leaf node into a newly allocated instance
@@ -1391,10 +1391,10 @@ class BwTree {
       // We cannot copy construct a logical leaf node in its intermediate
       // state (i.e. pointer list not being empty)
       assert(pointer_list.size() == 0UL);
-      
+
       return;
     }
-    
+
     /*
      * Destructor
      *
@@ -1404,7 +1404,7 @@ class BwTree {
      */
     ~LogicalLeafNode() {
       assert(pointer_list.size() == 0UL);
-      
+
       return;
     }
 
@@ -2033,7 +2033,7 @@ class BwTree {
 
       return;
     }
-    
+
     /*
      * MoveLogicalNode() - Move out the logical node
      *
@@ -2050,15 +2050,15 @@ class BwTree {
      */
     inline BaseLogicalNode *MoveLogicalNode() {
       BaseLogicalNode *temp = logical_node_p;
-      
+
       // Need to save original value before setting this to nullptr
       // After setting this to nullptr, the destruction of NodeSnaoshot
       // does not call logical node's destructor
       logical_node_p = nullptr;
-      
+
       return temp;
     }
-    
+
     /*
      * MoveLogicalLeafNode() - Move out logical node as a logical leaf node
      *
@@ -2070,10 +2070,10 @@ class BwTree {
         static_cast<LogicalLeafNode *>(logical_node_p);
 
       logical_node_p = nullptr;
-      
+
       return temp;
     }
-    
+
     /*
      * MoveLogicalInnerNode() - Move out logical node as a logical inner node
      *
@@ -2084,7 +2084,7 @@ class BwTree {
         static_cast<LogicalInnerNode *>(logical_node_p);
 
       logical_node_p = nullptr;
-      
+
       return temp;
     }
   };
@@ -3528,7 +3528,7 @@ class BwTree {
                 typename decltype(logical_node_p->key_value_map)::value_type( \
                   delete_node_p->delete_key,
                   INVALID_NODE_ID));
-                  
+
               // We might want to use the return value to validate?
               (void)ret;
             }
@@ -6342,7 +6342,7 @@ before_switch:
 
     return context_p;
   }
-  
+
   /*
    * Iterators
    */
@@ -6350,9 +6350,22 @@ before_switch:
   /*
    * class ForwardIterator - Iterator that supports forward iteration of
    *                         tree elements
+   *
+   * NOTE: An iterator could be begin() and end() iterator at the same time,
+   * as long as the container is empty. To correctly identify this case, we
+   * need to try loading the first page with key = -Inf to test whether
+   * there is any element stored in the tree. And if not then the iterator
+   * is both begin() and end() iterator at the same time
    */
   class ForwardIterator {
    public:
+    /*
+     * Constructor
+     *
+     * NOTE: We try to load the first page using -Inf as the next key
+     * during construction in order to correctly identify the case where
+     * the tree is empty, and such that begin() iterator equals end() iterator
+     */
     ForwardIterator(BwTree *p_tree_p) :
       tree_p{p_tree_p},
       logical_node_p{nullptr},
@@ -6360,15 +6373,39 @@ before_switch:
       value_set_p{nullptr},
       key_it{},
       value_it{},
-      next_key{},
-      is_end{false}
-    {}
-    
+      // On initialization, next key is set to -Inf
+      // to indicate it is begin() vector
+      next_key{tree_p->GetNegInfKey()},
+      is_end{false} {
+      // 1. If the tree is not empty then this prepares the first page
+      // 2. If the tree is empty, then this set is_end flag
+      // and now the iterator is a begin() and end() iterator at the same time
+      LoadNextKey();
+
+      return;
+    }
+
+    /*
+     * Destructor
+     *
+     * NOTE: Since we always make copies of logical node object when copy
+     * constructing the iterator, we could always safely delete the logical
+     * node, because its memory is not shared between iterators
+     */
+    ~ForwardIterator() {
+      // This holds even if the tree is empty
+      assert(logical_node_p != nullptr);
+
+      delete logical_node_p;
+
+      return;
+    }
+
    private:
     // We need access to the tree in order to traverse down using
     // a low key to leaf node level
     BwTree *tree_p;
-    
+
     // The consolidated version of current leaf node
     // the following four members all refer to objects inside this
     // logical node
@@ -6379,15 +6416,15 @@ before_switch:
     // NOTE 2: However, as an optimization we move the logical leaf node
     // out of NodeSnapshot to save unnecessary memory (de)allocation
     LogicalLeafNode *logical_node_p;
-    
+
     // Pointers tracking current key and value set
     RawKeyType *raw_key_p;
     ValueSet *value_set_p;
-    
+
     // Iterators tracking current position inside the bwtree leaf node
     typename KeyValueSet::iterator key_it;
     typename ValueSet::iterator value_it;
-    
+
     // The upper bound of current logical leaf node. Used to access the next
     // position (i.e. leaf node) inside bwtree
     // NOTE: We cannot use next_node_id to access next node since
@@ -6402,13 +6439,13 @@ before_switch:
     // NOTE 3: If this key is -Inf, then this is a begin() iterator
     //         If this key is +Inf, then this is an end() iterator
     KeyType next_key;
-    
+
     // We use this flag to indicate whether we have reached the end of
     // iteration.
     // NOTE: We could not directly check for next_key being +Inf, since
     // there might still be keys not scanned yet even if next_key is +Inf
     bool is_end;
-    
+
     /*
      * LoadNextKey() - Load logical leaf page whose low key <= next_key
      *
@@ -6425,7 +6462,7 @@ before_switch:
       // Caller needs to guarantee this function not being called if
       // we have already reached the end
       assert(is_end == false);
-      
+
       // Special case: If the next key is NegInf
       // then we know this is begin() iterator
       // and the other members are either nullptr or empty
@@ -6434,40 +6471,40 @@ before_switch:
         assert(raw_key_p == nullptr);
         assert(value_set_p == nullptr);
       }
-      
+
       // First join the epoch to prevent physical nodes being deallocated
       // too early
       EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
-      
+
       Context context{next_key};
-      
+
       // Traverse to the leaf page whose range includes the key
       // NOTE: We do not collect values associated with the key
       // by setting the second argument to false
       // Since we are actually just using the low key to find page
       // rather than trying to collect its values
       Traverse(&context, false);
-      
+
       // Then collect all data in the logical leaf node
       NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
       if(snapshot_p->has_data == true) {
         assert(snapshot_p->has_metadata == true);
       } else {
         CollectAllValuesOnLeaf(snapshot_p);
-        
+
         assert(snapshot_p->has_data == true);
         assert(snapshot_p->has_metadata == true);
       }
-      
-      // First move out the logical leaf node from the last snaoshot
+
+      // First move out the logical leaf node from the last snapshot
       // in path histoty
       logical_node_p = snapshot_p->MoveLogicalLeafNode();
-      
+
       // It is a map interator
       key_it = logical_node_p->key_value_set.begin();
       while(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
         key_it++;
-        
+
         // This way we could hit the end of key value set
         // Consider the case [1, 2, 3] [4, 5, 6], after we
         // have scanned [1, 2, 3], all keys were deleted except 1
@@ -6476,18 +6513,18 @@ before_switch:
         if(key_it != logical_node_p->key_value_set.end()) {
           // Set next key as +Inf to indicate we have reached the end
           next_key = tree_p->GetPosInfKey();
-          
+
           // And also set the flag to direcyly indicate caller that we
           // have reached the end of iteration
           is_end = true;
-          
+
           return;
         }
       }
 
       // It is the first value associated with the key
       value_it = key_it.second.begin();
-      
+
       // Then prepare for next key
       // NOTE: Must copy the key, since the key needs to be preserved
       // across many query sessions
@@ -6495,18 +6532,18 @@ before_switch:
       // would be +Inf. That is the reason we could not check for next_key
       // being +Inf to decide whether end has been reached
       next_key = *logical_node_p->ubound_p;
-      
+
       // Set the two shortcut pointers (they are not really needed
       // but we keep them as a shortcut)
       raw_key_p = &key_it.first.key;
       value_set_p = &key_it.second;
-      
+
       // Leave the epoch, since we have already had all information
       // NOTE: Before this point we need to collect all data inside
       // shared data structure since after this point they might be
       // deallocated by other threads
       tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
-      
+
       return;
     }
   };
