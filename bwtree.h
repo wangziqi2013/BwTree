@@ -40,7 +40,7 @@
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
  *                  We strive to make BwTree a standalone and independent
- *                  module that can be plugged-and-played into any situation
+ *                  module that can be plugged-and-played in any situation
  */
 //#define BWTREE_PELOTON
 
@@ -1985,6 +1985,60 @@ class BwTree {
       lbound_p = p_lbound_p;
 
       return;
+    }
+    
+    /*
+     * MoveLogicalNode() - Move out the logical node
+     *
+     * This function returns the base logical node pointer to caller,
+     * and set the pointer inside this instance as nullptr. The semantics
+     * is similar to the move semantics in a sense that the "read" of
+     * base logical node pointer is destructive and will cause the container
+     * to drop ownership of that pointer.
+     *
+     * After calling this function, the destruction of NodeSnapshot instance
+     * does not free memory allocated for logical node. Caller needs to track
+     * the correct type of logical node returned, and call corresponding
+     * destructors accordingly
+     */
+    inline BaseLogicalNode *MoveLogicalNode() {
+      BaseLogicalNode *temp = logical_node_p;
+      
+      // Need to save original value before setting this to nullptr
+      // After setting this to nullptr, the destruction of NodeSnaoshot
+      // does not call logical node's destructor
+      logical_node_p = nullptr;
+      
+      return temp;
+    }
+    
+    /*
+     * MoveLogicalLeafNode() - Move out logical node as a logical leaf node
+     *
+     * Please refer to MoveLogicalNode for more information about how the
+     * semantics being similar to the move semantics
+     */
+    inline LogicalLeafNode *MoveLogicalLeafNode() {
+      LogicalLeafNode *temp = \
+        static_cast<LogicalLeafNode *>(logical_node_p);
+
+      logical_node_p = nullptr;
+      
+      return temp;
+    }
+    
+    /*
+     * MoveLogicalInnerNode() - Move out logical node as a logical inner node
+     *
+     * Please refer to MoveLogicalNode for more information
+     */
+    inline LogicalInnerNode *MoveLogicalInnerNode() {
+      LogicalInnerNode *temp = \
+        static_cast<LogicalInnerNode *>(logical_node_p);
+
+      logical_node_p = nullptr;
+      
+      return temp;
     }
   };
 
