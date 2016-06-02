@@ -6295,6 +6295,60 @@ before_switch:
 
     return context_p;
   }
+  
+  /*
+   * Iterators
+   */
+
+  /*
+   * class ForwardIterator - Iterator that supports forward iteration of
+   *                         tree elements
+   */
+  class ForwardIterator {
+   public:
+    ForwardIterator(BwTree *p_tree_p) :
+      tree_p{p_tree_p},
+      logical_node_p{nullptr},
+      raw_key_p{nullptr},
+      value_set_p{nullptr},
+      key_it{},
+      value_it{},
+      next_key{}
+    {}
+    
+   private:
+    // We need access to the tree in order to traverse down using
+    // a low key to leaf node level
+    BwTree *tree_p;
+    
+    // The consolidated version of current leaf node
+    // the following four members all refer to objects inside this
+    // logical node
+    LogicalLeafNode *logical_node_p;
+    
+    // Pointers tracking current key and value set
+    RawKeyType *raw_key_p;
+    ValueSet *value_set_p;
+    
+    // Iterators tracking current position inside the bwtree leaf node
+    typename KeyValueSet::iterator key_it;
+    typename ValueSet::iterator value_it;
+    
+    // The upper bound of current logical leaf node. Used to access the next
+    // position (i.e. leaf node) inside bwtree
+    // NOTE 1: We cannot use next_node_id to access next node since
+    // it might become invalid since the logical node was created. The only
+    // pivotal point we could rely on is the high key, which indicates a
+    // lowerbound of keys we have not seen
+    // NOTE 2: This has to be an object rather than pointer. The reason is that
+    // after this iterator is returned to the user, the actual bwtree node
+    // might be recycled by the epoch manager since thread has exited current
+    // epoch. Therefore we need to copy the wrapped key from bwtree physical
+    // node into the iterator
+    // NOTE 3: If this key is -Inf, then this is a begin() iterator
+    //         If this key is +Inf, then this is an end() iterator
+    KeyType next_key;
+  };
 
   /*
    * Interactive Debugger
