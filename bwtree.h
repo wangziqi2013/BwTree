@@ -6324,6 +6324,12 @@ before_switch:
     // The consolidated version of current leaf node
     // the following four members all refer to objects inside this
     // logical node
+    // NOTE: If iterator is copy constructed, then we need to allocate a new
+    // logical node and copy-construct the new logical leaf node using this one
+    // since iterator is responsible for deallocating memory of the logical
+    // leaf node, we need to prevent sharing of logical node pointers.
+    // NOTE 2: However, as an optimization we move the logical leaf node
+    // out of NodeSnapshot to save unnecessary memory (de)allocation
     LogicalLeafNode *logical_node_p;
     
     // Pointers tracking current key and value set
@@ -6336,7 +6342,7 @@ before_switch:
     
     // The upper bound of current logical leaf node. Used to access the next
     // position (i.e. leaf node) inside bwtree
-    // NOTE 1: We cannot use next_node_id to access next node since
+    // NOTE: We cannot use next_node_id to access next node since
     // it might become invalid since the logical node was created. The only
     // pivotal point we could rely on is the high key, which indicates a
     // lowerbound of keys we have not seen
