@@ -6390,7 +6390,7 @@ before_switch:
   class ForwardIterator {
    public:
     /*
-     * Constructor
+     * Default Constructor
      *
      * NOTE: We try to load the first page using -Inf as the next key
      * during construction in order to correctly identify the case where
@@ -6415,6 +6415,35 @@ before_switch:
       // 2. If LoadNextKey() sees +Inf on the page, then it set is_end flag
       // 3. If LoadNextKey() sees next_key being -Inf then it set is_begin flag
       // and now the iterator is a begin() and end() iterator at the same time
+      LoadNextKey();
+
+      return;
+    }
+    
+    /*
+     * Constructor - Construct an iterator given a key
+     *
+     * The given key would locate the iterator on an data item whose
+     * key is >= the given key. This is useful in range query if
+     * a starting key could be derived according to conditions
+     */
+    ForwardIterator(BwTree *p_tree_p,
+                    const KeyType start_key) :
+      tree_p{p_tree_p},
+      logical_node_p{nullptr},
+      raw_key_p{nullptr},
+      value_set_p{nullptr},
+      key_it{},
+      value_it{},
+      // We set next_key here, and it will be loaded by LoadNextKey()
+      next_key{start_key},
+      // These two will be set in LoadNextKey()
+      is_begin{false},
+      is_end{false},
+      key_distance{0},
+      value_distance{0} {
+      // For a given key rather than -Inf, noe we have an iterator
+      // whose first element is on a key >= given start key
       LoadNextKey();
 
       return;
