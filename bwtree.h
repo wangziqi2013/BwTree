@@ -6372,6 +6372,33 @@ before_switch:
 
     return context_p;
   }
+  
+  /*
+   * Iterator Interface
+   */
+  class ForwardIterator;
+  
+  /*
+   * Begin() - Return an iterator pointing the first element in the tree
+   *
+   * If the tree is currently empty, then the iterator is both a begin
+   * iterator and an end iterator (i.e. both flags are set to true). This
+   * is a valid state.
+   */
+  ForwardIterator Begin() {
+    return ForwardIterator{this};
+  }
+  
+  /*
+   * Begin() - Return an iterator using a given key
+   *
+   * The iterator returned will points to a data item whose key is greater than
+   * or equal to the given start key. If such key does not exist then it will
+   * be the smallest key that is greater than start_key
+   */
+  ForwardIterator Begin(KeyType start_key) {
+    return ForwardIterator{this, start_key};
+  }
 
   /*
    * Iterators
