@@ -6521,6 +6521,24 @@ before_switch:
       
       return *this;
     }
+    
+    /*
+     * Postfix operator++ - Move the iterator ahead, and return the old one
+     *
+     * For end() iterator we do not do anything but return the same iterator
+     */
+    ForwardIterator operator++(int) {
+      if(is_end == true) {
+        return *this;
+      }
+      
+      // Make a copy of the current one before advancing
+      ForwardIterator temp = *this;
+      
+      MoveAheadByOne();
+      
+      return temp;
+    }
 
    private:
     // We need access to the tree in order to traverse down using
