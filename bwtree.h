@@ -6451,7 +6451,7 @@ before_switch:
     /*
      * operator= - Assigns one object to another
      *
-     * TODO: As an optimization we could define an assignment operation
+     * DONE: As an optimization we could define an assignment operation
      * for logical leaf node, and direct assign the logical leaf node from
      * the source object to the current object
      */
@@ -6502,6 +6502,17 @@ before_switch:
       delete logical_node_p;
 
       return;
+    }
+    
+    /*
+     * Prefix operator++ - Move the iterator ahead and return the new iterator
+     *
+     * This operator moves iterator first, and then return the operator itself
+     * as value of expression
+     */
+    ForwardIterator &operator++() {
+      
+      return *this;
     }
 
    private:
@@ -6615,6 +6626,8 @@ before_switch:
 
       // It is a map interator
       key_it = logical_node_p->key_value_set.begin();
+      key_distance = 0;
+      
       while(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
         // These two should always be increamented together
         key_it++;
@@ -6640,6 +6653,7 @@ before_switch:
 
       // It is the first value associated with the key
       value_it = key_it.second.begin();
+      value_distance = 0;
 
       // Then prepare for next key
       // NOTE: Must copy the key, since the key needs to be preserved
@@ -6660,6 +6674,56 @@ before_switch:
       // deallocated by other threads
       tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
+      return;
+    }
+    
+    /*
+     * IsLastLeafPage() - Return true if the leaf page is the last one
+     *
+     * We check for last page by checking whether the next key is +Inf
+     * If it is true then we know we are now on the last page, and if keys
+     * run out then we further know we are at the end of iteration
+     */
+    bool IsLastLeafPage() {
+      // If the next key is +Inf then we are on the last page
+      return next_key.IsPosInf();
+    }
+    
+    /*
+     * MoveAheadByOne() - Move the iterator ahead by one
+     *
+     * The caller is responsible for checking whether the iterator has reached
+     * its end. If iterator has reached end then assertion fails.
+     */
+    void MoveAheadByOne() {
+      value_it++;
+      value_distance++;
+      
+      // If we have reached the last element for a given key,
+      // then change to the next key (in key order)
+      // and readjust value iterator to the first element
+      if(value_it == key_it.second.end()) {
+        value_distance = 0;
+        
+        // Try to increament the key iterator first, and if we
+        // run out of keys we know this is the end of page
+        key_it++;
+        key_distance++;
+        
+        if(key_it == logical_node_p->key_value_set.end()) {
+          // If we ran out of keys, and we are on the last page
+          if(IsLastLeafPage() == true) {
+            is_end = true;
+            
+            return;
+          } else {
+            // This will set value_distance to 0
+            // but not sure about key distance
+            LoadNextKey();
+          } // if is last leaf page == true
+        } // if key_it == end()
+      } // if value_it == end()
+      
       return;
     }
   };
