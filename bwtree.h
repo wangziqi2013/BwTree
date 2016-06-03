@@ -1834,6 +1834,11 @@ class BwTree {
      * to first convert it to the correct type
      */
     NodeSnapshot &operator=(NodeSnapshot &&snapshot) {
+      // Need to prevent self move assignment
+      if(this == &snapshot) {
+        return *this;
+      }
+      
       // We do not allow any NodeSnapshot object to have non-empty
       // logical pointer
       assert(logical_node_p != nullptr);
