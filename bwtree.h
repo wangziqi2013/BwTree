@@ -6376,12 +6376,45 @@ before_switch:
       // On initialization, next key is set to -Inf
       // to indicate it is begin() vector
       next_key{tree_p->GetNegInfKey()},
-      is_end{false} {
+      is_end{false},
+      key_distance{0},
+      value_distance{0} {
       // 1. If the tree is not empty then this prepares the first page
       // 2. If the tree is empty, then this set is_end flag
       // and now the iterator is a begin() and end() iterator at the same time
       LoadNextKey();
 
+      return;
+    }
+    
+    /*
+     * Copy Constructor - Constructs a new iterator instance from existing one
+     *
+     * In ForwardIterator we always maintain the property that logical leaf node
+     * is not shared between iterators. This implies we need to also copy the
+     * logical leaf node during copy construction.
+     */
+    ForwardIterator(const ForwardIterator &it) :
+      tree_p{it.p_tree_p},
+      // We allocate memory here
+      logical_node_p{new LogicalLeafNode{it.logical_leaf_node}},
+      // On initialization, next key is set to -Inf
+      // to indicate it is begin() vector
+      next_key{it.next_p},
+      key_distance{it.key_distance},
+      value_distance{it.value_distance} {
+      // First locate key using key distance
+      key_it = logical_node_p->key_value_set.begin();
+      std::advance(key_it, key_distance);
+      
+      // Next locate value using value distance
+      value_it = key_it.second.begin();
+      std::advance(value_it, value_distance);
+      
+      // This refers to the raw key pointer in the new object
+      raw_key_p = &key_it.first.key;
+      value_set_p = &key_it.second;
+      
       return;
     }
 
@@ -6445,6 +6478,16 @@ before_switch:
     // NOTE: We could not directly check for next_key being +Inf, since
     // there might still be keys not scanned yet even if next_key is +Inf
     bool is_end;
+    
+    // The following two variables are used in copy construction
+    // since copy construction would invaidate the key and value
+    // iterator in the object being copied from for the new object,
+    // we need numerical values to record current position
+    
+    // How many ++ operations have been performed on key-value set map
+    int key_distance;
+    // How many ++ operations have been performed on value set
+    int value_distance;
 
     /*
      * LoadNextKey() - Load logical leaf page whose low key <= next_key
@@ -6503,15 +6546,18 @@ before_switch:
       // It is a map interator
       key_it = logical_node_p->key_value_set.begin();
       while(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
+        // These two should always be increamented together
         key_it++;
+        key_distance++;
 
         // This way we could hit the end of key value set
         // Consider the case [1, 2, 3] [4, 5, 6], after we
         // have scanned [1, 2, 3], all keys were deleted except 1
         // then we query the tree with next key = 4. In that case
         // we cannot find a key >= 4, and will hit end iterator
-        if(key_it != logical_node_p->key_value_set.end()) {
+        if(key_it == logical_node_p->key_value_set.end()) {
           // Set next key as +Inf to indicate we have reached the end
+          // (not necessary but we do it for consistency)
           next_key = tree_p->GetPosInfKey();
 
           // And also set the flag to direcyly indicate caller that we
