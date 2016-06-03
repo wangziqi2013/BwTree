@@ -1390,9 +1390,34 @@ class BwTree {
       pointer_list{} {
       // We cannot copy construct a logical leaf node in its intermediate
       // state (i.e. pointer list not being empty)
-      assert(pointer_list.size() == 0UL);
+      assert(node.pointer_list.size() == 0UL);
 
       return;
+    }
+    
+    /*
+     * operator= - Copies from source to current instance
+     */
+    LogicalLeafNode &operator=(const LogicalLeafNode &node) {
+      // Self-assignment prevention
+      if(this == &node) {
+        return *this;
+      }
+      
+      // To access parent class's member we use scope resolution operator "::"
+      BaseLogicalNode::lbound_p = node.lbound_p;
+      BaseLogicalNode::ubound_p = node.ubound_p;
+      BaseLogicalNode::next_node_id = node.next_node_id;
+      
+      // Same reason; do not copy assign logcal leaf node in its
+      // intermediate state
+      assert(node.pointer_list.size() == 0UL);
+      assert(pointer_list.size() == 0UL);
+      
+      tree_p = node.tree_p;
+      key_value_set = node.key_value_set;
+      
+      return *this;
     }
 
     /*
@@ -6426,10 +6451,15 @@ before_switch:
      * the source object to the current object
      */
     ForwardIterator &operator=(const ForwardIterator &it) {
+      // It is crucial to prevent self assignment since we do pointer
+      // operation here
+      if(this == &it) {
+        return *this;
+      }
+      
       // First copy the logical node into current instance
       assert(logical_node_p != nullptr);
-      delete logical_node_p;
-      logical_node_p = new LogicalLeafNode{*it.logical_node_p};
+      logical_node_p = *it.logical_node_p;
       
       // Copy everything that could be copied
       tree_p = it.tree_p;
