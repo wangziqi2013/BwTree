@@ -29,3 +29,10 @@
 
 *.asm
 *~
+
+# Misc
+main
+*.log
+*.txt
+*.doc
+*.swp
