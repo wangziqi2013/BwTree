@@ -6509,8 +6509,15 @@ before_switch:
      *
      * This operator moves iterator first, and then return the operator itself
      * as value of expression
+     *
+     * If the iterator is end() iterator then we do nothing
      */
     ForwardIterator &operator++() {
+      if(is_end == true) {
+        return *this;
+      }
+      
+      MoveAheadByOne();
       
       return *this;
     }
@@ -6550,8 +6557,6 @@ before_switch:
     // might be recycled by the epoch manager since thread has exited current
     // epoch. Therefore we need to copy the wrapped key from bwtree physical
     // node into the iterator
-    // NOTE 3: If this key is -Inf, then this is a begin() iterator
-    //         If this key is +Inf, then this is an end() iterator
     KeyType next_key;
 
     // We use this flag to indicate whether we have reached the end of
@@ -6629,11 +6634,7 @@ before_switch:
       key_it = logical_node_p->key_value_set.begin();
       key_distance = 0;
       
-      while(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
-        // These two should always be increamented together
-        key_it++;
-        key_distance++;
-
+      do {
         // This way we could hit the end of key value set
         // Consider the case [1, 2, 3] [4, 5, 6], after we
         // have scanned [1, 2, 3], all keys were deleted except 1
@@ -6658,7 +6659,15 @@ before_switch:
             goto load_next_key;
           }
         }
-      }
+        
+        if(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
+          // These two should always be increamented together
+          key_it++;
+          key_distance++;
+        } else {
+          break;
+        }
+      } while(1);
 
       // It is the first value associated with the key
       value_it = key_it.second.begin();
@@ -6728,6 +6737,7 @@ before_switch:
           } else {
             // This will set value_distance to 0
             // but not sure about key distance
+            // NOTE: This function could result in reaching the end iterator
             LoadNextKey();
           } // if is last leaf page == true
         } // if key_it == end()
