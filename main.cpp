@@ -643,6 +643,62 @@ void UpdateTest2(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+std::atomic<size_t> insert_success;
+std::atomic<size_t> delete_success;
+std::atomic<size_t> delete_attempt;
+
+void MixedTest1(uint64_t thread_id, TreeType *t) {
+  if((thread_id % 2) == 0) {
+    for(int i = 0;i < key_num;i++) {
+      int key = thread_num * i + thread_id;
+
+      if(t->Insert(key, 1.11L * key)) insert_success.fetch_add(1);
+      //if(t->Insert(key, 1.111L * key)) insert_success.fetch_add(1);
+      //if(t->Insert(key, 1.1111L * key)) insert_success.fetch_add(1);
+      //if(t->Insert(key, 1.11111L * key)) insert_success.fetch_add(1);
+    }
+    
+    printf("Finish inserting\n");
+  } else {
+    for(int i = 0;i < key_num;i++) {
+      int key = thread_num * i + thread_id - 1;
+
+      while(t->Delete(key, 1.11L * key) == false) ;
+      delete_success.fetch_add(1);
+      //while(t->Delete(key, 1.111L * key) == false) ;
+      //while(t->Delete(key, 1.1111L * key) == false) ;
+      //while(t->Delete(key, 1.11111L * key) == false) ;
+
+      //if(t->Delete(key, 1.11L * key)) delete_success.fetch_add(1);
+      //if(t->Delete(key, 1.111L * key)) delete_success.fetch_add(1);
+      //if(t->Delete(key, 1.1111L * key)) delete_success.fetch_add(1);
+      //if(t->Delete(key, 1.11111L * key)) delete_success.fetch_add(1);
+      
+      delete_attempt.fetch_add(1UL);
+    }
+  }
+  
+  return;
+}
+
+void MixedGetValueTest(TreeType *t) {
+  size_t value_count = 0UL;
+  
+  for(int i = 0;i < key_num * thread_num;i ++) {
+    auto value_set = t->GetValue(i);
+
+    value_count += value_set.size();
+  }
+  
+  printf("Finished counting values: %lu\n", value_count);
+  printf("    insert success = %lu; delete success = %lu\n",
+         insert_success.load(),
+         delete_success.load());
+  printf("    delete attempt = %lu\n", delete_attempt.load());
+
+  return;
+}
+
 void PrintStat(TreeType *t) {
   printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
          t->insert_op_count.load(),
@@ -672,6 +728,17 @@ int main() {
 
   tree_size = 0;
   print_flag = false;
+  
+  insert_success = 0UL;
+  delete_success = 0UL;
+  delete_attempt = 0UL;
+  
+  LaunchParallelTestID(thread_num, MixedTest1, t1);
+  printf("Finished mixed testing\n");
+  
+  PrintStat(t1);
+  
+  MixedGetValueTest(t1);
 
   LaunchParallelTestID(thread_num, InsertTest2, t1);
   printf("Finished inserting all keys\n");
