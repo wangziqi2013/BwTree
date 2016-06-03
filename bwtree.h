@@ -6499,6 +6499,28 @@ before_switch:
       
       return *this;
     }
+    
+    /*
+     * operator*() - Return the value reference currently pointed to by this
+     *               iterator
+     *
+     * NOTE: We need to return a constant reference to both save a value copy
+     * and also to prevent caller modifying value using the reference
+     */
+    inline const ValueType &operator*() {
+      // This itself is a ValueType reference
+      return (*value_it);
+    }
+    
+    /*
+     * operator->() - Returns the value pointer pointed to by this iterator
+     *
+     * Note that this function returns a contsnat pointer which can be used
+     * to access members of the value, but cannot modify
+     */
+    inline const ValueType *operator->() {
+      return &(*value_it);
+    }
 
     /*
      * Destructor
