@@ -6406,11 +6406,14 @@ before_switch:
       // On initialization, next key is set to -Inf
       // to indicate it is begin() vector
       next_key{tree_p->GetNegInfKey()},
+      // These two will be set in LoadNextKey()
+      is_begin{false},
       is_end{false},
       key_distance{0},
       value_distance{0} {
       // 1. If the tree is not empty then this prepares the first page
-      // 2. If the tree is empty, then this set is_end flag
+      // 2. If LoadNextKey() sees +Inf on the page, then it set is_end flag
+      // 3. If LoadNextKey() sees next_key being -Inf then it set is_begin flag
       // and now the iterator is a begin() and end() iterator at the same time
       LoadNextKey();
 
@@ -6426,11 +6429,12 @@ before_switch:
      */
     ForwardIterator(const ForwardIterator &it) :
       tree_p{it.p_tree_p},
-      // We allocate memory here
+      // We allocate memory here and call copy constructor
       logical_node_p{new LogicalLeafNode{it.logical_leaf_node}},
-      // On initialization, next key is set to -Inf
-      // to indicate it is begin() vector
       next_key{it.next_p},
+      // These two also need to be copied from the source
+      is_begin{it.is_begin},
+      is_end{it.is_end},
       key_distance{it.key_distance},
       value_distance{it.value_distance} {
       // First locate key using key distance
@@ -6438,12 +6442,12 @@ before_switch:
       std::advance(key_it, key_distance);
       
       // Next locate value using value distance
-      value_it = key_it.second.begin();
+      value_it = key_it->second.begin();
       std::advance(value_it, value_distance);
       
       // This refers to the raw key pointer in the new object
-      raw_key_p = &key_it.first.key;
-      value_set_p = &key_it.second;
+      raw_key_p = &key_it->first.key;
+      value_set_p = &key_it->second;
       
       return;
     }
@@ -6463,25 +6467,33 @@ before_switch:
       }
       
       // First copy the logical node into current instance
+      // DO NOT NEED delete; JUST DO A VALUE COPY
       assert(logical_node_p != nullptr);
       logical_node_p = *it.logical_node_p;
       
       // Copy everything that could be copied
       tree_p = it.tree_p;
       next_key = it.next_key;
+      
+      is_begin = it.is_begin;
+      is_end = it.is_end;
+      
       key_distance = it.key_distance;
       value_distance = it.value_distance;
       
       // The following is copied from the copy constructor
       
+      // NOTE: It is possible that for an empty container
+      // the key value set is empty. In that case key_distance
+      // and value_distance must be 0
       key_it = logical_node_p->key_value_set.begin();
       std::advance(key_it, key_distance);
 
-      value_it = key_it.second.begin();
+      value_it = key_it->second.begin();
       std::advance(value_it, value_distance);
 
-      raw_key_p = &key_it.first.key;
-      value_set_p = &key_it.second;
+      raw_key_p = &key_it->first.key;
+      value_set_p = &key_it->second;
       
       // The above is copied from the copy constructor
       
@@ -6512,11 +6524,12 @@ before_switch:
      *
      * If the iterator is end() iterator then we do nothing
      */
-    ForwardIterator &operator++() {
+    inline ForwardIterator &operator++() {
       if(is_end == true) {
         return *this;
       }
       
+      is_begin = false;
       MoveAheadByOne();
       
       return *this;
@@ -6527,7 +6540,7 @@ before_switch:
      *
      * For end() iterator we do not do anything but return the same iterator
      */
-    ForwardIterator operator++(int) {
+    inline ForwardIterator operator++(int) {
       if(is_end == true) {
         return *this;
       }
@@ -6535,9 +6548,23 @@ before_switch:
       // Make a copy of the current one before advancing
       ForwardIterator temp = *this;
       
+      // Since it is forward iterator, it is sufficient
+      // to set begin flag to false everytime the iterator is advanced
+      // But this has to be done after saving temp
+      is_begin = false;
+      
       MoveAheadByOne();
       
       return temp;
+    }
+    
+    /*
+     * IsEnd() - Returns true if we have reached the end of iteration
+     *
+     * This is just a wrapper of the private member is_end
+     */
+    inline bool IsEnd() const {
+      return is_end;
     }
 
    private:
@@ -6577,10 +6604,21 @@ before_switch:
     // node into the iterator
     KeyType next_key;
 
+    // The flag indicating whether the iterator is the begin() iterator
+    // This flag is set by LoadNextKey() when the function sees next_key being
+    // -Inf (which implies we are scanning pages from the left most one)
+    // And on each ++ or ++(int) operation, this flag is set back to false
+    // since this is a forward iterator, any operation would make it
+    // unqualified for begin iterator
+    bool is_begin;
+    
     // We use this flag to indicate whether we have reached the end of
     // iteration.
     // NOTE: We could not directly check for next_key being +Inf, since
     // there might still be keys not scanned yet even if next_key is +Inf
+    // LoadNextKey() checks whether the current page has no key >= next_key
+    // and the next key is +Inf for current page. If these two conditions hold
+    // then we know we have reached the last key of the last page
     bool is_end;
     
     // The following two variables are used in copy construction
@@ -6617,6 +6655,12 @@ before_switch:
         assert(logical_node_p == nullptr);
         assert(raw_key_p == nullptr);
         assert(value_set_p == nullptr);
+        
+        // When we load -Inf then we know it is the first time
+        // we load a page, from the first page
+        is_begin = true;
+      } else {
+        assert(is_begin == false);
       }
 
       // First join the epoch to prevent physical nodes being deallocated
@@ -6678,7 +6722,7 @@ before_switch:
           }
         }
         
-        if(tree_p->KeyCmpLess(key_it.first, next_key) == true) {
+        if(tree_p->KeyCmpLess(key_it->first, next_key) == true) {
           // These two should always be increamented together
           key_it++;
           key_distance++;
@@ -6688,7 +6732,7 @@ before_switch:
       } while(1);
 
       // It is the first value associated with the key
-      value_it = key_it.second.begin();
+      value_it = key_it->second.begin();
       value_distance = 0;
 
       // Then prepare for next key
@@ -6701,8 +6745,8 @@ before_switch:
 
       // Set the two shortcut pointers (they are not really needed
       // but we keep them as a shortcut)
-      raw_key_p = &key_it.first.key;
-      value_set_p = &key_it.second;
+      raw_key_p = &key_it->first.key;
+      value_set_p = &key_it->second;
 
       // Leave the epoch, since we have already had all information
       // NOTE: Before this point we need to collect all data inside
@@ -6732,15 +6776,16 @@ before_switch:
      * its end. If iterator has reached end then assertion fails.
      */
     void MoveAheadByOne() {
+      // This invalidates the iterator as the begin iterator
+      is_begin = false;
+      
       value_it++;
       value_distance++;
       
       // If we have reached the last element for a given key,
       // then change to the next key (in key order)
       // and readjust value iterator to the first element
-      if(value_it == key_it.second.end()) {
-        value_distance = 0;
-        
+      if(value_it == key_it->second.end()) {
         // Try to increament the key iterator first, and if we
         // run out of keys we know this is the end of page
         key_it++;
@@ -6753,12 +6798,30 @@ before_switch:
             
             return;
           } else {
-            // This will set value_distance to 0
+            // This will set key_it to the first key >= next_key
             // but not sure about key distance
             // NOTE: This function could result in reaching the end iterator
+            // in that case key_it is invalid
             LoadNextKey();
+            
+            // If current page is not last page, but load next key
+            // sets is_end flag, then we know the page after this page
+            // has been merged into current page, and all keys >= next_key
+            // has been deleted
+            // This is an extremely complicated case, and it worth that many
+            // lines of comments to make it clear
+            if(is_end == true) {
+              return;
+            }
           } // if is last leaf page == true
         } // if key_it == end()
+        
+        // If we switched to the next key in current page
+        // or we have loaded a new page and readjusted the key to be
+        // the first element in the page, we need also to readjust the
+        // value iterator to the first element for the current key
+        value_it = key_it->second.begin();
+        value_distance = 0;
       } // if value_it == end()
       
       return;
@@ -7720,10 +7783,12 @@ before_switch:
      */
     struct EpochNode {
       // We need this to be atomic in order to accurately
-      // counter the number of threads
+      // counte the number of threads
       std::atomic<size_t> active_thread_count;
+      
       // We need this to be atomic to be able to
       // add garbage nodes without any race condition
+      // i.e. GC nodes are CASed onto this pointer
       std::atomic<GarbageNode *> garbage_list_p;
 
       // This does not need to be atomic since it is
@@ -7834,6 +7899,8 @@ before_switch:
     void CreateNewEpoch() {
       bwt_printf("Creating new epoch...\n");
 
+      // TODO: There is currently a bug that throws malloc: memory corruption
+      // message on this statement
       EpochNode *epoch_node_p = new EpochNode{};
 
       epoch_node_p->active_thread_count = 0UL;
