@@ -6484,10 +6484,10 @@ before_switch:
      * logical leaf node during copy construction.
      */
     ForwardIterator(const ForwardIterator &it) :
-      tree_p{it.p_tree_p},
+      tree_p{it.tree_p},
       // We allocate memory here and call copy constructor
-      logical_node_p{new LogicalLeafNode{it.logical_leaf_node}},
-      next_key{it.next_p},
+      logical_node_p{new LogicalLeafNode{*it.logical_node_p}},
+      next_key{it.next_key},
       // These two also need to be copied from the source
       is_begin{it.is_begin},
       is_end{it.is_end},
@@ -6662,8 +6662,8 @@ before_switch:
     LogicalLeafNode *logical_node_p;
 
     // Pointers tracking current key and value set
-    RawKeyType *raw_key_p;
-    ValueSet *value_set_p;
+    const RawKeyType *raw_key_p;
+    const ValueSet *value_set_p;
 
     // Iterators tracking current position inside the bwtree leaf node
     typename KeyValueSet::iterator key_it;
@@ -6753,14 +6753,14 @@ before_switch:
       // by setting the second argument to false
       // Since we are actually just using the low key to find page
       // rather than trying to collect its values
-      Traverse(&context, false);
+      tree_p->Traverse(&context, false);
 
       // Then collect all data in the logical leaf node
       NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
       if(snapshot_p->has_data == true) {
         assert(snapshot_p->has_metadata == true);
       } else {
-        CollectAllValuesOnLeaf(snapshot_p);
+        tree_p->CollectAllValuesOnLeaf(snapshot_p);
 
         assert(snapshot_p->has_data == true);
         assert(snapshot_p->has_metadata == true);

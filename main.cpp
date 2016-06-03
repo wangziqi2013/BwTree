@@ -729,6 +729,21 @@ int main() {
   tree_size = 0;
   print_flag = false;
   
+  // Test iterator
+  //////////////
+  
+  LaunchParallelTestID(thread_num, InsertTest2, t1);
+  printf("Finished inserting all keys\n");
+
+  PrintStat(t1);
+  
+  auto it = t1->Begin();
+  while(it.IsEnd() == false) {
+    printf("%lf\n", *it);
+  }
+  
+  //////////////
+  
   insert_success = 0UL;
   delete_success = 0UL;
   delete_attempt = 0UL;
