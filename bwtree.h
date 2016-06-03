@@ -6417,6 +6417,41 @@ before_switch:
       
       return;
     }
+    
+    /*
+     * operator= - Assigns one object to another
+     *
+     * TODO: As an optimization we could define an assignment operation
+     * for logical leaf node, and direct assign the logical leaf node from
+     * the source object to the current object
+     */
+    ForwardIterator &operator=(const ForwardIterator &it) {
+      // First copy the logical node into current instance
+      assert(logical_node_p != nullptr);
+      delete logical_node_p;
+      logical_node_p = new LogicalLeafNode{*it.logical_node_p};
+      
+      // Copy everything that could be copied
+      tree_p = it.tree_p;
+      next_key = it.next_key;
+      key_distance = it.key_distance;
+      value_distance = it.value_distance;
+      
+      // The following is copied from the copy constructor
+      
+      key_it = logical_node_p->key_value_set.begin();
+      std::advance(key_it, key_distance);
+
+      value_it = key_it.second.begin();
+      std::advance(value_it, value_distance);
+
+      raw_key_p = &key_it.first.key;
+      value_set_p = &key_it.second;
+      
+      // The above is copied from the copy constructor
+      
+      return *this;
+    }
 
     /*
      * Destructor
