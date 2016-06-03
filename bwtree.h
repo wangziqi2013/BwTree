@@ -6600,6 +6600,7 @@ before_switch:
       // too early
       EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
 
+    load_next_key:
       Context context{next_key};
 
       // Traverse to the leaf page whose range includes the key
@@ -6637,17 +6638,25 @@ before_switch:
         // Consider the case [1, 2, 3] [4, 5, 6], after we
         // have scanned [1, 2, 3], all keys were deleted except 1
         // then we query the tree with next key = 4. In that case
-        // we cannot find a key >= 4, and will hit end iterator
+        // we cannot find a key >= 4 in the page returned
+        // In this case we should proceed to the next page using 
+        // the high key of current page
         if(key_it == logical_node_p->key_value_set.end()) {
-          // Set next key as +Inf to indicate we have reached the end
-          // (not necessary but we do it for consistency)
-          next_key = tree_p->GetPosInfKey();
+          if(logical_node_p->ubound_p->IsPosInf() == true) {
+            // Set the flag to direcyly indicate caller that we
+            // have reached the end of iteration
+            is_end = true;
 
-          // And also set the flag to direcyly indicate caller that we
-          // have reached the end of iteration
-          is_end = true;
+            return;
+          } else {
+            // Need to set next key as the high key of current page, since
+            // in this situation, current node does not contain any key
+            // that >= the next key, so we go to the next page by using high
+            // key as the search key
+            next_key = *logical_node_p->ubound_p;
 
-          return;
+            goto load_next_key;
+          }
         }
       }
 
