@@ -6644,6 +6644,29 @@ before_switch:
     inline bool IsEnd() const {
       return is_end;
     }
+    
+    /*
+     * IsBegin() - Returns true if this iterator points to the first element
+     *             in the tree
+     *
+     * NOTE: Since the tree keeps changing potentially, this method only
+     * guarantees "first element" at some time in the past, which may not
+     * reflect the current state of the container
+     */
+    inline bool IsBegin() const {
+      return is_begin;
+    }
+    
+    /*
+     * GetCurrentKey() - Returns a const pointer to current key asociated with
+     *                   the value
+     *
+     * We need to return constant pointer to avoid caller modifying the key
+     * returned by this method.
+     */
+    inline const RawKeyType *GetCurrentKey() {
+      return raw_key_p;
+    }
 
    private:
     // We need access to the tree in order to traverse down using
@@ -6853,7 +6876,7 @@ before_switch:
      * The caller is responsible for checking whether the iterator has reached
      * its end. If iterator has reached end then assertion fails.
      */
-    void MoveAheadByOne() {
+    inline void MoveAheadByOne() {
       // This invalidates the iterator as the begin iterator
       is_begin = false;
       
