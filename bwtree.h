@@ -6577,6 +6577,56 @@ before_switch:
     inline const ValueType *operator->() {
       return &(*value_it);
     }
+    
+    /*
+     * operator< - Compares two iterators by comparing their current key
+     *
+     * Since the structure of the tree keeps changing, there is not a
+     * universal coordinate system that allows us to compare absolute
+     * positions of two iterators, all comparisons are done using the current
+     * key associated with values.
+     *
+     * NOTE: It is possible that for an iterator, no raw keys are stored. This
+     * happens when the tree is empty, or the requested key is larger than
+     * all existing keys in the tree. In that case, end flag is set, so
+     * in this function we check end flag first
+     */
+    inline bool operator<(const ForwardIterator &it) const {
+      if(it.is_end == true) {
+        if(is_end == true) {
+          // If both are end iterator then no one is less than another
+          return false;
+        } else {
+          // Otherwise, the left one is smaller as long as the
+          // RHS is an end iterator
+          return true;
+        }
+      }
+      
+      // If none of them is end iterator, we simply do a key comparison
+      return tree_p->RawKeyCmpLess(*raw_key_p, *it.raw_key_p);
+    }
+    
+    /*
+     * operator==() - Compares whether two iterators refer to the same key
+     *
+     * If both iterators are end iterator then we return true
+     * If one of them is not then the result is false
+     * Otherwise the result is the comparison result of current key
+     */
+    inline bool operator==(const ForwardIterator &it) const {
+      if(it.is_end == true) {
+        if(is_end == true) {
+          // Two end iterators are equal to each other
+          return true;
+        } else {
+          // Otherwise they are not equal
+          return false;
+        }
+      }
+      
+      return tree_p->RawKeyEqual(*raw_key_p, *it.raw_key_p);
+    }
 
     /*
      * Destructor
@@ -6811,6 +6861,10 @@ before_switch:
             // have reached the end of iteration
             is_end = true;
 
+            // NOTE: At this point, raw_key_p is not set
+            // so we cannot compare the iterator with other
+            // iterators using keys
+            // We need to inspect is_end first
             return;
           } else {
             // Need to set next key as the high key of current page, since
