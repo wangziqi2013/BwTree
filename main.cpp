@@ -783,10 +783,25 @@ int main() {
   printf("Finished scanning the tree\n");
   
   auto it = t1->Begin(888);
+  auto it2 = it;
   for(int i = 0;i < 5;i++) {
     printf("%lf ", *it++);
   }
   
+  putchar('\n');
+  
+  for(int i = 0;i < 5;i++) {
+    printf("%lf ", *it2++);
+  }
+
+  putchar('\n');
+  
+  auto it3 = it;
+  
+  for(int i = 0;i < 5;i++) {
+    printf("%lf ", *it3++);
+  }
+
   putchar('\n');
   
   //////////////
