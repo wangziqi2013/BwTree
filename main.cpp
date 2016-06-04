@@ -104,12 +104,12 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
   }
 }
 
-void GetNextNodeIDTestThread(uint64_t thread_id, BwTree<int, double> *tree_p) {
+void GetNextNodeIDTestThread(uint64_t thread_id, TreeType *tree_p) {
   bwt_printf("ID = %lu\n", tree_p->GetNextNodeID());
   return;
 }
 
-void GetNextNodeIDTest(BwTree<int, double> *tree_p) {
+void GetNextNodeIDTest(TreeType *tree_p) {
   LaunchParallelTestID(100, GetNextNodeIDTestThread, tree_p);
   return;
 }
@@ -699,6 +699,48 @@ void MixedGetValueTest(TreeType *t) {
   return;
 }
 
+void IteratorGetValueTest(TreeType *t) {
+  auto it = t->Begin();
+  
+  assert(*it++ == 0.0);
+  
+  for(int i = 1;i < key_num * thread_num;i++) {
+    std::set<double> value_set{};
+    
+    // Sort the value
+    value_set.insert(*it++);
+    value_set.insert(*it++);
+    value_set.insert(*it++);
+    value_set.insert(*it++);
+    
+    // Verify them one by one
+    auto it2 = value_set.begin();
+    //double temp;
+    
+    //temp = i * 1.11;
+    //printf("%lX %lX\n", *(uint64_t *)&*it2, *(uint64_t *)&temp);
+    //temp = i * 1.111;
+    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
+    //temp = i * 1.1111;
+    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
+    //temp = i * 1.11111;
+    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
+    //printf("%lf, %lf\n", *it2, i * 1.11);
+    assert((*it2) == (double)(i * 1.11L));
+    it2++;
+    assert(*it2 == (double)(i * 1.111L));
+    it2++;
+    assert(*it2 == (double)(i * 1.1111L));
+    it2++;
+    assert(*it2 == (double)(i * 1.11111L));
+    it2++;
+  }
+  
+  assert(it.IsEnd() == true);
+  
+  return;
+}
+
 void PrintStat(TreeType *t) {
   printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
          t->insert_op_count.load(),
@@ -737,10 +779,15 @@ int main() {
 
   PrintStat(t1);
   
-  auto it = t1->Begin();
-  while(it.IsEnd() == false) {
-    printf("%lf\n", *it);
+  IteratorGetValueTest(t1);
+  printf("Finished scanning the tree\n");
+  
+  auto it = t1->Begin(888);
+  for(int i = 0;i < 5;i++) {
+    printf("%lf ", *it++);
   }
+  
+  putchar('\n');
   
   //////////////
   
