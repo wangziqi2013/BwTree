@@ -804,6 +804,9 @@ int main() {
 
   putchar('\n');
   
+  assert(it < it3);
+  assert(it == it2);
+  
   //////////////
   
   insert_success = 0UL;
