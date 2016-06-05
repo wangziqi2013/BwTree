@@ -6396,7 +6396,7 @@ before_switch:
    * or equal to the given start key. If such key does not exist then it will
    * be the smallest key that is greater than start_key
    */
-  ForwardIterator Begin(KeyType start_key) {
+  ForwardIterator Begin(const KeyType &start_key) {
     return ForwardIterator{this, start_key};
   }
 
@@ -6625,7 +6625,7 @@ before_switch:
         }
       }
       
-      return tree_p->RawKeyEqual(*raw_key_p, *it.raw_key_p);
+      return tree_p->RawKeyCmpEqual(*raw_key_p, *it.raw_key_p);
     }
 
     /*
