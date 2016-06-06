@@ -42,7 +42,7 @@
  *                  We strive to make BwTree a standalone and independent
  *                  module that can be plugged-and-played in any situation
  */
-//#define BWTREE_PELOTON
+#define BWTREE_PELOTON
 
 // Used for debugging
 #include <mutex>
@@ -2612,6 +2612,7 @@ class BwTree {
           // Make sure this flag is set
           NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
           assert(snapshot_p->is_root == true);
+          (void)snapshot_p;
 
           bwt_printf("Successfully loading root node ID\n");
 
@@ -4312,6 +4313,7 @@ class BwTree {
     bwt_printf("Jumping to the left sibling\n");
 
     std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
+    (void)path_list_p;
 
     // Make sure the path list is not empty, and that it has a parent node
     // Even if the original root node splits, the node we are on must be the
@@ -4328,6 +4330,7 @@ class BwTree {
     NodeType type = snapshot_p->node_p->GetType();
     assert(type == NodeType::LeafRemoveType || \
            type == NodeType::InnerRemoveType);
+    (void)type;
 
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
@@ -4768,6 +4771,7 @@ before_switch:
         // is overwritten with the lbound_p of left sibling
         const KeyType *remove_node_lbound_p = lbound_p;
         NodeID remove_node_id = node_id;
+        (void)remove_node_id;
 
         // Update current node information
         // NOTE: node_p will not be used here since we have already
@@ -5570,6 +5574,7 @@ before_switch:
     // This CAS must succeed since nobody except this thread could remove
     // the ABORT delta on parent node
     assert(ret == true);
+    (void)ret;
 
     // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
     // UNINSTALLING IT FROM THE PARENT NODE
@@ -5662,6 +5667,8 @@ before_switch:
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->has_data == true);
     assert(snapshot_p->has_metadata == true);
+    
+    (void)insert_pid;
 
     KeyNodeIDMap &sep_map = \
       snapshot_p->GetLogicalInnerNode()->GetContainer();
@@ -5722,6 +5729,8 @@ before_switch:
     assert(snapshot_p->is_leaf == false);
     assert(snapshot_p->has_data == true);
     assert(snapshot_p->has_metadata == true);
+    
+    (void)deleted_node_id;
 
     // This is the map that stores key to node ID Mapping
     KeyNodeIDMap &sep_map = \
@@ -5978,7 +5987,7 @@ before_switch:
   bool ConditionalInsert(const KeyType &key,
                          const ValueType &value,
                          std::function<bool(const ItemPointer &)> predicate,
-                         ItemPointer **item_p_p) {
+                         bool *predicate_satisfied) {
     bwt_printf("Consitional Insert called\n");
 
     insert_op_count.fetch_add(1);
@@ -6000,7 +6009,7 @@ before_switch:
       // Note that in Peloton we always store value as ItemPointer * so
       // in order for simplicity we just assume the value itself
       // is a pointer type
-      *item_p_p = nullptr;
+      *predicate_satisfied = false;
 
       // For insertion for should iterate through existing values first
       // to make sure the key-value pair does not exist
@@ -6009,7 +6018,9 @@ before_switch:
         // v is a reference to ValueType
         for(auto &v : it->second) {
           if(predicate(*v) == true) {
-            *item_p_p = new ItemPointer{*v};
+            // To notify the caller that predicate
+            // has been satisfied and we cannot insert
+            *predicate_satisfied = true;
             
             // Do not forget this!
             epoch_manager.LeaveEpoch(epoch_node_p);
@@ -6018,7 +6029,7 @@ before_switch:
           }
         }
         
-        // Alfter evaluating predicate on all values we continue to find
+        // After evaluating predicate on all values we continue to find
         // whether there is duplication for the value
         auto it2 = it->second.find(value);
 
@@ -6204,7 +6215,8 @@ before_switch:
    *
    * This functions shares a same structure with the Insert() one
    */
-  bool Delete(const KeyType &key, const ValueType &value) {
+  bool Delete(const KeyType &key,
+              const ValueType &value) {
     bwt_printf("Delete called\n");
 
     delete_op_count.fetch_add(1);
@@ -6287,6 +6299,99 @@ before_switch:
 
     return true;
   }
+  
+  #ifdef BWTREE_PELOTON
+  
+  /*
+   * DeleteItemPointer() - Deletes an item pointer from the index by comparing
+   *                       the target of the pointer
+   */
+  bool DeleteItemPointer(const KeyType &key,
+                         const ValueType &value) {
+    bwt_printf("Delete called\n");
+
+    delete_op_count.fetch_add(1);
+
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
+    while(1) {
+      Context context{key};
+
+      // Collect values with node navigation
+      Traverse(&context, true);
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      KeyValueSet &container = logical_node_p->GetContainer();
+
+      // If the key or key-value pair does not exist then we just
+      // return false
+      typename KeyValueSet::iterator it = container.find(key);
+      if(it == container.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
+        return false;
+      }
+
+      // Look for value in consolidated leaf with the given key
+      auto it2 = it->second.find(value);
+      if(it2 == it->second.end()) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+
+        return false;
+      }
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If node_p is a delta node then we have to use its
+      // delta value
+      int depth = 1;
+
+      if(node_p->IsDeltaNode() == true) {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        depth = delta_node_p->depth + 1;
+      }
+
+      const LeafDeleteNode *delete_node_p = \
+        new LeafDeleteNode{key, value, depth, node_p};
+
+      bool ret = InstallNodeToReplace(node_id,
+                                      delete_node_p,
+                                      node_p);
+      if(ret == true) {
+        bwt_printf("Leaf Delete delta CAS succeed\n");
+
+        // This will actually not be used anymore, so maybe
+        // could save this assignment
+        snapshot_p->SwitchPhysicalPointer(delete_node_p);
+
+        // If install is a success then just break from the loop
+        // and return
+        break;
+      } else {
+        bwt_printf("Leaf Delete delta CAS failed\n");
+
+        delete delete_node_p;
+
+        context.abort_counter++;
+      }
+
+      delete_abort_count.fetch_add(context.abort_counter);
+
+      // We reach here only because CAS failed
+      bwt_printf("Retry installing leaf delete delta from the root\n");
+    }
+
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
+    return true;
+  }
+  
+  #endif
 
   /*
    * GetValue() - Fill a value list with values stored
@@ -6655,7 +6760,7 @@ before_switch:
       // First copy the logical node into current instance
       // DO NOT NEED delete; JUST DO A VALUE COPY
       assert(logical_node_p != nullptr);
-      logical_node_p = *it.logical_node_p;
+      *logical_node_p = *it.logical_node_p;
       
       // Copy everything that could be copied
       tree_p = it.tree_p;
