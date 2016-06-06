@@ -5965,26 +5965,20 @@ before_switch:
    * ConditionalInsert() - Insert a key-value pair only if a given
    *                       predicate fails for all values with a key
    *
-   * This functions uses two variables to output return state. They are
-   * the return value and argument predicate_satisfied respectively. Three
-   * combinations of them are valid:
-   * <ret, predicate_satisfied> = <true, true>
-   *   Value has been inserted, and predicate returns false for all existing
-   *   values
-   * <ret, predicate_satisfied> = <false, true>
-   *   Value has not been inserted because a same value already exists, but
-   *   the predicate is satisfied
-   * <ret, predicate_satisfied> = <false, false>
-   *   Value has not been inserted because the predicate is not satisfied
+   * If return true then the value has been inserted
+   * If return false then the value is not inserted. The reason could be
+   * predicates returning true for one of the values of a given key
+   * or because the value is already in the index
    *
-   * NOTE: The caller might choose to ignore one of the two output states
-   * depending on how caller make use of returned information
+   * Argument value_p is set to nullptr if all predicate tests returned false
+   *
+   * NOTE: We first test the predicate, and then test for duplicated values
+   * so predicate test result is always available
    */
   bool ConditionalInsert(const KeyType &key,
                          const ValueType &value,
                          std::function<bool(const ItemPointer &)> predicate,
-                         ValueType *itemptr_ptr,
-                         bool *predicate_satisfied) {
+                         ValueType *value_p) {
     bwt_printf("Consitional Insert called\n");
 
     insert_op_count.fetch_add(1);
@@ -6000,17 +5994,39 @@ before_switch:
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
       LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
       KeyValueSet &container = logical_node_p->GetContainer();
+      
+      // At the beginning of each iteration we just set the value pointer
+      // to be empty
+      // Note that in Peloton we always store value as ItemPointer * so
+      // in order for simplicity we just assume the value itself
+      // is a pointer type
+      *value_p = nullptr;
 
       // For insertion for should iterate through existing values first
       // to make sure the key-value pair does not exist
       typename KeyValueSet::iterator it = container.find(key);
       if(it != container.end()) {
-        // Look for value in consolidated leaf with the given key
+        // it2 is an iterator inside the unordered map
+        for(auto &v : it->second) {
+          if(predicate(*v) == true) {
+            *value_p = *v;
+            
+            // Do not forget this!
+            epoch_manager.LeaveEpoch(epoch_node_p);
+            
+            return false;
+          }
+        }
+        
+        // Alfter evaluating predicate on all values we continue to find
+        // whether there is duplication for the value
         auto it2 = it->second.find(value);
 
         if(it2 != it->second.end()) {
           epoch_manager.LeaveEpoch(epoch_node_p);
 
+          // In this case, value_p is set to nullptr
+          // and return value is false
           return false;
         }
       }
@@ -6037,7 +6053,7 @@ before_switch:
                                       insert_node_p,
                                       node_p);
       if(ret == true) {
-        bwt_printf("Leaf Insert delta CAS succeed\n");
+        bwt_printf("Leaf Insert delta (cond) CAS succeed\n");
 
         // This will actually not be used anymore, so maybe
         // could save this assignment
@@ -6047,7 +6063,7 @@ before_switch:
         // and return
         break;
       } else {
-        bwt_printf("Leaf insert delta CAS failed\n");
+        bwt_printf("Leaf Insert delta (cond) CAS failed\n");
 
         context.abort_counter++;
 
@@ -6055,7 +6071,7 @@ before_switch:
       }
 
       // Update abort counter
-      // NOTW 1: We could not do this before return since the context
+      // NOTE 1: We could not do this before return since the context
       // object is cleared at the end of loop
       // NOTE 2: Since Traverse() might abort due to other CAS failures
       // context.abort_counter might be larger than 1 when
