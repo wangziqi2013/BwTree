@@ -5978,7 +5978,7 @@ before_switch:
   bool ConditionalInsert(const KeyType &key,
                          const ValueType &value,
                          std::function<bool(const ItemPointer &)> predicate,
-                         ValueType *value_p) {
+                         ItemPointer **item_p_p) {
     bwt_printf("Consitional Insert called\n");
 
     insert_op_count.fetch_add(1);
@@ -6000,16 +6000,16 @@ before_switch:
       // Note that in Peloton we always store value as ItemPointer * so
       // in order for simplicity we just assume the value itself
       // is a pointer type
-      *value_p = nullptr;
+      *item_p_p = nullptr;
 
       // For insertion for should iterate through existing values first
       // to make sure the key-value pair does not exist
       typename KeyValueSet::iterator it = container.find(key);
       if(it != container.end()) {
-        // it2 is an iterator inside the unordered map
+        // v is a reference to ValueType
         for(auto &v : it->second) {
           if(predicate(*v) == true) {
-            *value_p = *v;
+            *item_p_p = new ItemPointer{*v};
             
             // Do not forget this!
             epoch_manager.LeaveEpoch(epoch_node_p);
