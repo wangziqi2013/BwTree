@@ -5958,6 +5958,120 @@ before_switch:
 
     return true;
   }
+  
+#ifdef BWTREE_PELOTON
+
+  /*
+   * ConditionalInsert() - Insert a key-value pair only if a given
+   *                       predicate fails for all values with a key
+   *
+   * This functions uses two variables to output return state. They are
+   * the return value and argument predicate_satisfied respectively. Three
+   * combinations of them are valid:
+   * <ret, predicate_satisfied> = <true, true>
+   *   Value has been inserted, and predicate returns false for all existing
+   *   values
+   * <ret, predicate_satisfied> = <false, true>
+   *   Value has not been inserted because a same value already exists, but
+   *   the predicate is satisfied
+   * <ret, predicate_satisfied> = <false, false>
+   *   Value has not been inserted because the predicate is not satisfied
+   *
+   * NOTE: The caller might choose to ignore one of the two output states
+   * depending on how caller make use of returned information
+   */
+  bool ConditionalInsert(const KeyType &key,
+                         const ValueType &value,
+                         std::function<bool(const ItemPointer &)> predicate,
+                         ValueType *itemptr_ptr,
+                         bool *predicate_satisfied) {
+    bwt_printf("Consitional Insert called\n");
+
+    insert_op_count.fetch_add(1);
+
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
+    while(1) {
+      Context context{key};
+
+      // Collect values with node navigation
+      Traverse(&context, true);
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
+      KeyValueSet &container = logical_node_p->GetContainer();
+
+      // For insertion for should iterate through existing values first
+      // to make sure the key-value pair does not exist
+      typename KeyValueSet::iterator it = container.find(key);
+      if(it != container.end()) {
+        // Look for value in consolidated leaf with the given key
+        auto it2 = it->second.find(value);
+
+        if(it2 != it->second.end()) {
+          epoch_manager.LeaveEpoch(epoch_node_p);
+
+          return false;
+        }
+      }
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If node_p is a delta node then we have to use its
+      // delta value
+      int depth = 1;
+
+      if(node_p->IsDeltaNode() == true) {
+        const DeltaNode *delta_node_p = \
+          static_cast<const DeltaNode *>(node_p);
+
+        depth = delta_node_p->depth + 1;
+      }
+
+      const LeafInsertNode *insert_node_p = \
+        new LeafInsertNode{key, value, depth, node_p};
+
+      bool ret = InstallNodeToReplace(node_id,
+                                      insert_node_p,
+                                      node_p);
+      if(ret == true) {
+        bwt_printf("Leaf Insert delta CAS succeed\n");
+
+        // This will actually not be used anymore, so maybe
+        // could save this assignment
+        snapshot_p->SwitchPhysicalPointer(insert_node_p);
+
+        // If install is a success then just break from the loop
+        // and return
+        break;
+      } else {
+        bwt_printf("Leaf insert delta CAS failed\n");
+
+        context.abort_counter++;
+
+        delete insert_node_p;
+      }
+
+      // Update abort counter
+      // NOTW 1: We could not do this before return since the context
+      // object is cleared at the end of loop
+      // NOTE 2: Since Traverse() might abort due to other CAS failures
+      // context.abort_counter might be larger than 1 when
+      // LeafInsertNode installation fails
+      insert_abort_count.fetch_add(context.abort_counter);
+
+      // We reach here only because CAS failed
+      bwt_printf("Retry installing leaf insert delta from the root\n");
+    }
+
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
+    return true;
+  }
+  
+#endif
 
   /*
    * Update() - Update an existing value for a key to a new value
