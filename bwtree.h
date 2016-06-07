@@ -6304,11 +6304,16 @@ before_switch:
   
   /*
    * DeleteItemPointer() - Deletes an item pointer from the index by comparing
-   *                       the target of the pointer
+   *                       the target of the pointer, rather than pointer itself
+   *
+   * Note that this function assumes the value always being ItemPointer *
+   * and in this function we compare item pointer's target rather than
+   * the value of pointers themselves. Also when a value is deleted, we
+   * free the memory, which is allocated when the value is inserted
    */
   bool DeleteItemPointer(const KeyType &key,
-                         const ValueType &value) {
-    bwt_printf("Delete called\n");
+                         const ItemPointer &value) {
+    bwt_printf("Delete Item Pointer called\n");
 
     delete_op_count.fetch_add(1);
 
@@ -6333,9 +6338,23 @@ before_switch:
         return false;
       }
 
-      // Look for value in consolidated leaf with the given key
-      auto it2 = it->second.find(value);
-      if(it2 == it->second.end()) {
+      bool found_flag = false;
+      ItemPointer *found_value = nullptr;
+      // We iterator over values stored with the given key
+      // v should be ItemPointer *
+      for(ItemPointer *v : it->second) {
+        if((v->block == value.block) &&
+           (v->offset == value.offset)) {
+          found_flag = true;
+          found_value = v;
+        }
+      }
+      
+      // If the value was not found, then just leave the epoch
+      // and return false to notify the caller
+      if(found_flag == false) {
+        assert(found_value == nullptr);
+        
         epoch_manager.LeaveEpoch(epoch_node_p);
 
         return false;
@@ -6357,7 +6376,7 @@ before_switch:
       }
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, depth, node_p};
+        new LeafDeleteNode{key, found_value, depth, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -6368,6 +6387,11 @@ before_switch:
         // This will actually not be used anymore, so maybe
         // could save this assignment
         snapshot_p->SwitchPhysicalPointer(delete_node_p);
+        
+        // This piece of memory holds ItemPointer, and is allocated by
+        // InsertEntry() in its wrapper class. We need to free the memory
+        // when the index is deleted
+        delete found_value;
 
         // If install is a success then just break from the loop
         // and return
