@@ -21,6 +21,7 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
+
 #include <vector>
 #include <atomic>
 #include <algorithm>
@@ -2688,6 +2689,7 @@ class BwTree {
           // Take care: Do not use conflict names in the
           // outer scope
           const KeyType *snapshot_lbound_p = nullptr;
+          (void)snapshot_lbound_p;
           const KeyType *snapshot_ubound_p = nullptr;
 
           // Get metadata from the next node we are going to
@@ -3140,6 +3142,7 @@ class BwTree {
     }
 
     bool first_time = true;
+    (void)first_time;
 
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
@@ -3425,6 +3428,7 @@ class BwTree {
                                  bool collect_sep) const {
     // Validate remove node, if any
     bool first_time = true;
+    (void)first_time;
 
     // Used to restrict the upper bound in a local branch
     // If we are collecting upper bound, then this will finally
@@ -3689,6 +3693,7 @@ class BwTree {
     // This is used to test whether a remove node is valid
     // since it could only be the first node on a delta chain
     bool first_time = true;
+    (void)first_time;
 
     // There is no recursion, but we still need to count the
     // number of delta records to replay
@@ -3942,6 +3947,8 @@ class BwTree {
                                   bool collect_ubound,
                                   bool collect_value) const {
     bool first_time = true;
+    (void)first_time;
+    
     // This is the high key for local branch
     // At the end of the loop if we are collecting high key then
     // this value will be set into logical node as its high key
@@ -6430,7 +6437,7 @@ before_switch:
                 std::vector<ValueType> &value_list) {
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{&search_key};
+    Context context{search_key};
 
     Traverse(&context, true);
 
@@ -6974,6 +6981,8 @@ before_switch:
      * returned by this method.
      */
     inline const RawKeyType *GetCurrentKey() {
+      // OK This is not elegant
+      // but the wrapper insists that
       return raw_key_p;
     }
 
@@ -8665,5 +8674,4 @@ before_switch:
 }  // End index namespace
 }  // End peloton namespace
 #endif
-
 
