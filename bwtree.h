@@ -160,7 +160,22 @@ static void dummy(const char*, ...) {}
 static std::mutex debug_stop_mutex;
 #endif
 
+/*
+ * class DummyOutObject - Mimics std::cout interface and avoids std::cout
+ *                       appearing in the source
+ *
+ * It is a validation requirement that std::cout should not appear in the
+ * source code, and all output should use logger function
+ */
 class DummyOutObject {
+ public:
+
+  /*
+   * operator<<() - accepts any type and chauin them up
+   *
+   * The template argument can be automatically deducted from the actual
+   * argument, which is done by the compiler
+   */
   template <typename T>
   DummyOutObject &operator<<(const T &value) {
     (void)value;
@@ -168,19 +183,22 @@ class DummyOutObject {
     return *this;
   }
   
-  DummyOutObject& operator<<(std::ostream& (*f)(std::ostream &)) {
+  /*
+   * operator<<() - The following three are to support std::endl()
+   */
+  DummyOutObject &operator<<(std::ostream& (*f)(std::ostream &)) {
     (void)f;
     
     return *this;
   }
 
-  DummyOutObject& operator<<(std::ostream& (*f)(std::ios &)) {
+  DummyOutObject &operator<<(std::ostream& (*f)(std::ios &)) {
     (void)f;
 
     return *this;
   }
 
-  DummyOutObject& operator<<(std::ostream& (*f)(std::ios_base &)) {
+  DummyOutObject &operator<<(std::ostream& (*f)(std::ios_base &)) {
     (void)f;
 
     return *this;
