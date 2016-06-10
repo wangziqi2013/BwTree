@@ -1,4 +1,16 @@
 
+//===----------------------------------------------------------------------===//
+//
+//                         Peloton
+//
+// bwtree.cpp
+//
+// Identification: src/index/bwtree.cpp
+//
+// Copyright (c) 2015-16, Carnegie Mellon University Database Group
+//
+//===----------------------------------------------------------------------===//
+
 #include "bwtree.h"
 
 #ifdef BWTREE_PELOTON
