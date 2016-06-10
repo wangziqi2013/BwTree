@@ -7285,6 +7285,12 @@ before_switch:
               return;
             }
           } // if is last leaf page == true
+        } else {
+          // NOTE: If we switch key and do not have to load a new page
+          // then we need to update the raw key pointer to reflect
+          // the key change
+          // During iteration this key is very important
+          raw_key_p = &key_it->first.key;
         } // if key_it == end()
         
         // If we switched to the next key in current page
