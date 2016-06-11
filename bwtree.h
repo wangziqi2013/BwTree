@@ -348,6 +348,15 @@ class BwTree {
   /*
    * enum class ExtendedKeyValue - We wrap the raw key with an extra
    * of indirection in order to identify +/-Inf
+   *
+   * NOTE: It must maintained that the numeric value obeys the following
+   * relation:
+   *
+   *   NegInf < RawKey < PosInf
+   *
+   * This is because when we compare two wrapped keys, as long as their
+   * types are not all of RawKey, we could directly compare using numeric
+   * values of their type
    */
   enum class ExtendedKeyValue {
     NegInf = 0,
@@ -448,6 +457,14 @@ class BwTree {
      */
     WrappedKeyComparator() = delete;
 
+    /*
+     * operator() - Compares two keys for < relation
+     *
+     * This functions first check whether two keys are both of raw key type
+     * If it is the case then compare two keys using key comparator object
+     * Otherwise, we compare numeric values of the type to determine
+     * which one is smaller.
+     */
     bool operator()(const KeyType &key1, const KeyType &key2) const {
       int key1_type = key1.GetIntType();
       int key2_type = key2.GetIntType();
@@ -539,29 +556,23 @@ class BwTree {
   /*
    * KeyCmpEqual() - Compare a pair of keys for equality
    *
-   * If both of the keys are +/-Inf then assertion fails
-   * If one of them are +/-Inf, then always return false
-   * Otherwise use key_eq_obj to compare (fast comparison)
+   * This function tests whether two keys are equal or not. It correctly
+   * deals with +Inf and -Inf, in the sense that +Inf == +Inf and
+   * -Inf == -Inf.
    *
-   * NOTE: This property does not affect <= and >= since these
-   * two are implemented using > and < respectively
+   * If two keys are both of raw key type then their raw keys are
+   * compared using the object. Otherwise their types are compared
+   * directly by numeric values.
    */
   bool KeyCmpEqual(const KeyType &key1, const KeyType &key2) const {
-    // This is special treatment since we are using -Inf
-    // as the low key for parent node, so there would be
-    // comparison related with it in order to decide
-    // whether the child is a left most one
-    if(key1.IsNegInf() && key2.IsNegInf()) {
-      return true;
-    } else if(key1.IsPosInf() && key2.IsPosInf()) {
-      return true;
-    } else if(key1.IsNegInf() && key2.IsPosInf()) {
-      return false;
-    } else if(key1.IsPosInf() && key2.IsNegInf()) {
-      return false;
+    int key1_type = key1.GetIntType();
+    int key2_type = key2.GetIntType();
+    
+    if((key1_type == 1) && (key2_type == 1)) {
+      return key_eq_obj(key1.key, key2.key);
     }
 
-    return key_eq_obj(key1.key, key2.key);
+    return key1_type == key2_type;
   }
 
   /*
