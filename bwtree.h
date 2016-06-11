@@ -43,7 +43,7 @@
  *                  We strive to make BwTree a standalone and independent
  *                  module that can be plugged-and-played in any situation
  */
-#define BWTREE_PELOTON
+//#define BWTREE_PELOTON
 
 // Used for debugging
 #include <mutex>
@@ -413,6 +413,13 @@ class BwTree {
      */
     inline bool IsPosInf() const {
       return type == ExtendedKeyValue::PosInf;
+    }
+    
+    /*
+     * GetIntType() - Cast ExtendedKeyType as integer and return
+     */
+    inline int GetIntType() {
+      return static_cast<int>(type);
     }
   };
 
