@@ -350,9 +350,9 @@ class BwTree {
    * of indirection in order to identify +/-Inf
    */
   enum class ExtendedKeyValue {
-    RawKey,
-    PosInf,
-    NegInf,
+    NegInf = 0,
+    RawKey = 1,
+    PosInf = 2,
   };
 
   /*
@@ -418,7 +418,7 @@ class BwTree {
     /*
      * GetIntType() - Cast ExtendedKeyType as integer and return
      */
-    inline int GetIntType() {
+    inline int GetIntType() const {
       return static_cast<int>(type);
     }
   };
@@ -449,42 +449,20 @@ class BwTree {
     WrappedKeyComparator() = delete;
 
     bool operator()(const KeyType &key1, const KeyType &key2) const {
-      // As long as the second operand is not -Inf then
-      // we return true
-      if(key1.IsNegInf()) {
-        if(key2.IsNegInf()) {
-          return false;
-        }
-
-        return true;
+      int key1_type = key1.GetIntType();
+      int key2_type = key2.GetIntType();
+      
+      if((key1_type == 1) && (key2_type == 1)) {
+        // Then we need to compare real key
+        // NOTE: We use the comparator object passed as constructor argument
+        // This might not be necessary if the comparator is trivially
+        // constructible, but in the case of Peloton, tuple key comparison
+        // requires knowledge of the tuple schema which cannot be achieved
+        // without a comparator object that is not trivially constructible
+        return (*key_cmp_obj_p)(key1.key, key2.key);
       }
-
-      // We already know key1 would not be negInf
-      if(key2.IsNegInf()) {
-        return false;
-      }
-
-      // As long as second operand is not
-      if(key2.IsPosInf()) {
-        if(key1.IsPosInf()) {
-          return false;
-        }
-
-        return true;
-      }
-
-      // We already know key2.type is not posInf
-      if(key1.IsPosInf()) {
-        return false;
-      }
-
-      // Then we need to compare real key
-      // NOTE: We use the comparator object passed as constructor argument
-      // This might not be necessary if the comparator is trivially
-      // constructible, but in the case of Peloton, tuple key comparison
-      // requires knowledge of the tuple schema which cannot be achieved
-      // without a comparator object that is not trivially constructible
-      return (*key_cmp_obj_p)(key1.key, key2.key);
+      
+      return key1_type < key2_type;
     }
   };
 
