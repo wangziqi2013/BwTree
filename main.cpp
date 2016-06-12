@@ -545,7 +545,7 @@ void InsertTest2(uint64_t thread_id, TreeType *t) {
 
     size_t current_size = tree_size.load();
     if(current_size % 1000 == 0) {
-      printf("Tree size = %lu\n", current_size);
+      //printf("Tree size = %lu\n", current_size);
     }
   }
 
