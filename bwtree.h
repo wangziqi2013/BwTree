@@ -5337,16 +5337,6 @@ before_switch:
       const LeafNode *leaf_node_p = \
         static_cast<const LeafNode *>(node_p);
 
-      // No matter what we want to do, this is necessary
-      // since we need to
-      // NOTE: This causes problem for later uses since it
-      // fills the node with actual value
-      if(snapshot_p->has_data == false) {
-        //CollectAllValuesOnLeaf(snapshot_p);
-      }
-
-      //assert(snapshot_p->has_data == true);
-
       size_t node_size = leaf_node_p->data_list.size();
 
       // Perform corresponding action based on node size
@@ -5466,12 +5456,6 @@ before_switch:
     } else {   // If this is an inner node
       const InnerNode *inner_node_p = \
         static_cast<const InnerNode *>(node_p);
-
-      if(snapshot_p->has_data == false) {
-        //CollectAllSepsOnInner(snapshot_p);
-      }
-
-      //assert(snapshot_p->has_data == true);
 
       size_t node_size = inner_node_p->sep_list.size();
 
