@@ -496,8 +496,7 @@ void TestNavigateInnerNode(TreeType *t) {
 constexpr int key_num = 65536;
 constexpr int thread_num = 4;
 
-std::mutex tree_size_mutex;
-size_t tree_size = 0;
+std::atomic<size_t> tree_size;
 
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (int)(thread_id + 1) * key_num;i++) {
@@ -532,6 +531,8 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
 }
 
 void InsertTest2(uint64_t thread_id, TreeType *t) {
+  tree_size = 0UL;
+  
   for(int i = 0;i < key_num;i++) {
     int key = thread_num * i + thread_id;
 
@@ -540,11 +541,12 @@ void InsertTest2(uint64_t thread_id, TreeType *t) {
     t->Insert(key, 1.1111L * key);
     t->Insert(key, 1.11111L * key);
 
-    //tree_size_mutex.lock();
-    //tree_size += 4;
-    //tree_size_mutex.unlock();
+    tree_size.fetch_add(4);
 
-    //printf("Tree size = %lu\n", tree_size);
+    size_t current_size = tree_size.load();
+    if(current_size % 1000 == 0) {
+      printf("Tree size = %lu\n", current_size);
+    }
   }
 
   return;
