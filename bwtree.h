@@ -759,26 +759,6 @@ class BwTree {
   };
 
   /*
-   * class DataItemComparator - Data item comparator function object
-   *
-   * NOTE: Since we could not instanciate object comparator so in order
-   * to construct this object we need to pass in the object
-   *
-   * TODO: This is not used currently. And the implementation is problematic
-   */
-  class DataItemComparator {
-   public:
-    KeyComparator &key_cmp_obj;
-
-    DataItemComparator(const KeyComparator &p_key_cmp_obj) :
-      key_cmp_obj{p_key_cmp_obj} {}
-
-    bool operator()(const DataItem &d1, const DataItem &d2) const {
-      return key_cmp_obj(d1.key, d2.key);
-    }
-  };
-
-  /*
    * struct SepItem() - Separator item for inner nodes
    *
    * We choose not to use std::pair bacause we probably need to
