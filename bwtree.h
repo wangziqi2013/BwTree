@@ -4712,16 +4712,20 @@ class BwTree {
       return;
     }
 
-    ConsolidateNode(context_p);
+    bool consolidated = ConsolidateNode(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
+    
+    // Same as in LoadNodeID(); the optimization works by reducing the
+    // need to collect all values/seps on every node
+    if(consolidated == true) {
+      AdjustNodeSize(context_p);
 
-    AdjustNodeSize(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
+      if(context_p->abort_flag == true) {
+        return;
+      }
     }
 
     return;
@@ -4785,7 +4789,7 @@ before_switch:
 
         // If snapshot indicates this is a leftmost child, but
         // actually we have seen a remove, then the parent must have
-        // been removed into its left sibling
+        // been merged into its left sibling
         // so we just abort and retry
         if(snapshot_p->is_leftmost_child == true) {
           bwt_printf("Snapshot indicates this is left most child. ABORT\n");
