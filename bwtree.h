@@ -5342,10 +5342,10 @@ before_switch:
       // NOTE: This causes problem for later uses since it
       // fills the node with actual value
       if(snapshot_p->has_data == false) {
-        CollectAllValuesOnLeaf(snapshot_p);
+        //CollectAllValuesOnLeaf(snapshot_p);
       }
 
-      assert(snapshot_p->has_data == true);
+      //assert(snapshot_p->has_data == true);
 
       size_t node_size = leaf_node_p->data_list.size();
 
@@ -5468,10 +5468,10 @@ before_switch:
         static_cast<const InnerNode *>(node_p);
 
       if(snapshot_p->has_data == false) {
-        CollectAllSepsOnInner(snapshot_p);
+        //CollectAllSepsOnInner(snapshot_p);
       }
 
-      assert(snapshot_p->has_data == true);
+      //assert(snapshot_p->has_data == true);
 
       size_t node_size = inner_node_p->sep_list.size();
 
