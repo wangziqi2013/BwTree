@@ -138,7 +138,7 @@ static void dummy(const char*, ...) {}
 #define bwt_printf(fmt, ...)                              \
   do {                                                    \
     if(print_flag == false) break;                        \
-    dummy("%-24s(%8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
+    fprintf(stderr, "%-24s(%8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
     fflush(stdout);                                       \
   } while (0);
 
@@ -4664,13 +4664,13 @@ class BwTree {
       snapshot_p->SetRootFlag();
     }
 
-    FinishPartialSMO(context_p);
+    bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
 
-    bool consolidated = ConsolidateNode(context_p);
+    bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4706,13 +4706,14 @@ class BwTree {
 
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
-    FinishPartialSMO(context_p);
+    
+    bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
 
-    bool consolidated = ConsolidateNode(context_p);
+    bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4738,12 +4739,19 @@ class BwTree {
    * a SMO on top of the delta chain, we should help-along that SMO before
    * doing our own job. This might incur a recursive call of this function.
    *
+   * If this function returns true, then a node consolidation on the current
+   * top snapshot is recommended, because we have seen and processed (or
+   * confirmed that it has been processed) a merge/split delta on current
+   * top snapshot. To prevent other threads from seeing them and taking
+   * a full snapshot of the parent snapshot everytime they are seen, we
+   * return true to inform caller to do a consolidation
+   *
    * If we see a remove node, then the actual NodeID pushed into the path
    * list stack may not equal the NodeID passed in this function. So when
    * we need to read NodeID, always use the one stored in the NodeSnapshot
    * vector instead of using a previously passed one
    */
-  void FinishPartialSMO(Context *context_p) {
+  bool FinishPartialSMO(Context *context_p) {
     // We assume the last node is the node we will help for
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -4796,14 +4804,8 @@ before_switch:
 
           context_p->abort_flag = true;
 
-          return;
+          return false;
         }
-
-        // We could not find remove delta on left most child
-        idb_assert_key(node_id,
-                       context_p->search_key,
-                       context_p,
-                       snapshot_p->is_leftmost_child == false);
 
         const DeltaNode *delta_node_p = \
           static_cast<const DeltaNode *>(node_p);
@@ -4817,7 +4819,7 @@ before_switch:
         if(context_p->abort_flag == true) {
           bwt_printf("Jump to left sibling in Remove help along ABORT\n");
 
-          return;
+          return false;
         }
 
         // That is the left sibling's snapshot
@@ -4881,13 +4883,13 @@ before_switch:
           bwt_printf("Merge delta CAS succeeds. ABORT\n");
 
           // Update the new merge node back to snapshot
-          snapshot_p->SwitchPhysicalPointer(node_p);
+          //snapshot_p->SwitchPhysicalPointer(node_p);
 
           // Then we abort, because it is possible for us to immediately
           // posting on the merge delta
           context_p->abort_flag = true;
 
-          return;
+          return false;
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
@@ -4897,17 +4899,18 @@ before_switch:
           // Currently we just abort
           context_p->abort_flag = true;
 
-          return;
+          return false;
         } // if ret == true
 
-        bwt_printf("Continue to post index term delete delta\n");
+        // CURRENT WE DO NOT CONTINUE
+        //bwt_printf("Continue to post index term delete delta\n");
 
         // Update type information and make sure it is the correct node
-        type = node_p->GetType();
-        assert(type == NodeType::InnerMergeType ||
-               type == NodeType::LeafMergeType);
+        //type = node_p->GetType();
+        //assert(type == NodeType::InnerMergeType ||
+        //       type == NodeType::LeafMergeType);
 
-        // FALL THROUGH TO MERGE
+        assert(false);
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
@@ -4985,8 +4988,11 @@ before_switch:
         if(merge_key_found == false) {
           bwt_printf("Index term is absent; No need to remove\n");
 
-          // Out of switch
-          break;
+          // If we have seen a merge delta but did not find
+          // corresponding sep in parent then it has already been removed
+          // so we propose a consolidation on current node to
+          // get rid of the merge delta
+          return true;
         }
 
         // NOTE: InnerDeleteNode should use parent node's current
@@ -5011,12 +5017,12 @@ before_switch:
                      parent_snapshot_p->node_id);
 
           // Update in parent snapshot
-          parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
+          //parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
 
           // NOTE: We also abort here
           context_p->abort_flag = true;
 
-          return;
+          return false;
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
@@ -5024,7 +5030,7 @@ before_switch:
           // DO NOT FORGET TO DELETE THIS
           delete delete_node_p;
 
-          return;
+          return false;
         }
 
         break;
@@ -5082,6 +5088,10 @@ before_switch:
 
           if(ret == true) {
             bwt_printf("Install root CAS succeeds\n");
+            
+            //context_p->abort_flag = true;
+
+            return false;
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
 
@@ -5089,11 +5099,8 @@ before_switch:
             // TODO: REMOVE THE NEWLY ALLOCATED ID
             context_p->abort_flag = true;
 
-            return;
+            return false;
           } // if CAS succeeds/fails
-
-          // NOTE: We do not have to update the snapshot to reflect newly assigned
-          // root node
         } else {
           /***********************************************************
            * Index term insert for non-root nodes
@@ -5121,21 +5128,21 @@ before_switch:
           if(split_key_absent == false) {
             bwt_printf("Index term is present. No need to insert\n");
 
-            // Break out of switch
-            break;
+            // We have seen a split, but the sep in parent node is already
+            // installed. In this case we propose a consolidation on current
+            // node to prevent further encountering the "false" split delta
+            return true;
           }
 
           // Determine the depth on parent delta chain
           // If the parent node has delta node, then derive
           // depth from delta node
-          int depth = 0;
+          int depth = 1;
           if(parent_snapshot_p->node_p->IsDeltaNode()) {
             const DeltaNode *delta_node_p = \
               static_cast<const DeltaNode *>(parent_snapshot_p->node_p);
 
             depth = delta_node_p->depth + 1;
-          } else {
-            depth = 1;
           }
 
           const InnerInsertNode *insert_node_p = \
@@ -5155,11 +5162,11 @@ before_switch:
                        split_node_id);
 
             // Invalidate cached version of logical node
-            parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
+            //parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
 
             context_p->abort_flag = true;
 
-            return;
+            return false;
           } else {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. ABORT\n",
                        node_id,
@@ -5169,19 +5176,21 @@ before_switch:
             context_p->abort_flag = true;
             delete insert_node_p;
 
-            return;
+            return false;
           } // if CAS succeeds/fails
         } // if split root / else not split root
 
         break;
       } // case split node
       default: {
+        return false;
         // By default we do not do anything special
         break;
       }
     } // switch
 
-    return;
+    assert(false);
+    return false;
   }
 
   /*
@@ -5202,7 +5211,7 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool ConsolidateNode(Context *context_p) {
+  bool ConsolidateNode(Context *context_p, bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -5211,16 +5220,24 @@ before_switch:
     // We could only perform consolidation on delta node
     // because we want to see depth field
     if(node_p->IsDeltaNode() == false) {
+      assert(recommend_consolidation == false);
+      
       return false;
     }
 
     const DeltaNode *delta_node_p = \
       static_cast<const DeltaNode *>(node_p);
 
-    // If depth does not exceeds threshold then just return
+    // If depth does not exceeds threshold then we check recommendation flag
     const int depth = delta_node_p->depth;
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
-      return false;
+      // If there is not recommended consolidation just return
+      if(recommend_consolidation == false) {
+        return false;
+      } else {
+        bwt_printf("Delta chian length < threshold, "
+                   "but consolidation is recommended\n");
+      }
     }
 
     // After this pointer we decide to consolidate node
