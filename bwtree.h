@@ -307,7 +307,7 @@ class BwTree {
   using EpochNode = typename EpochManager::EpochNode;
 
   // The maximum number of nodes we could map in this index
-  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
+  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 18;
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
@@ -2218,7 +2218,8 @@ class BwTree {
    * has been called before we free the whole tree
    */
   ~BwTree() {
-    bwt_printf("Constructor: Free tree nodes\n");
+    bwt_printf("Next node ID at exit: %lu\n", next_unused_node_id.load());
+    bwt_printf("Destructor: Free tree nodes\n");
 
     // Free all nodes recursively
     //FreeAllNodes(GetNode(root_id.load()));
@@ -2439,14 +2440,20 @@ class BwTree {
    *
    * It initialize all elements to NULL in order to make
    * first CAS on the mapping table would succeed
+   *
+   * NOTE: As an optimization we do not set the mapping table to zero
+   * since installing new node could be done as directly writing into
+   * the mapping table rather than CAS with nullptr
    */
   void InitMappingTable() {
     bwt_printf("Initializing mapping table.... size = %lu\n",
                MAPPING_TABLE_SIZE);
-
+    bwt_printf("Fast initialization: Do not set to zero\n");
+    /*
     for(NodeID i = 0;i < MAPPING_TABLE_SIZE;i++) {
       mapping_table[i] = nullptr;
     }
+    */
 
     return;
   }
@@ -2483,7 +2490,7 @@ class BwTree {
    * This function will not return until we have successfully obtained the
    * ID and increased counter by 1
    */
-  NodeID GetNextNodeID() {
+  inline NodeID GetNextNodeID() {
     bool ret = false;
     NodeID current_id, next_id;
 
@@ -2505,9 +2512,9 @@ class BwTree {
    * If installation fails because CAS returned false, then return false
    * This function does not retry
    */
-  bool InstallNodeToReplace(NodeID node_id,
-                            const BaseNode *node_p,
-                            const BaseNode *prev_p) {
+  inline bool InstallNodeToReplace(NodeID node_id,
+                                   const BaseNode *node_p,
+                                   const BaseNode *prev_p) {
     // Make sure node id is valid and does not exceed maximum
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
@@ -2545,15 +2552,19 @@ class BwTree {
    * This function does not return any value since we assume new node
    * installation would always succeed
    */
-  void InstallNewNode(NodeID node_id,
-                      const BaseNode *node_p) {
+  inline void InstallNewNode(NodeID node_id,
+                             const BaseNode *node_p) {
+    //BaseNode *old_node_p = GetNode(node_id);
+    
     // We initialize the mapping table to always have 0 for
     // unused entries
-    bool ret = InstallNodeToReplace(node_id, node_p, nullptr);
+    //bool ret = InstallNodeToReplace(node_id, node_p, old_node_p);
+    
+    mapping_table[node_id] = node_p;
 
     // So using nullptr to CAS must succeed
-    assert(ret == true);
-    (void)ret;
+    //assert(ret == true);
+    //(void)ret;
 
     return;
   }
@@ -2571,7 +2582,7 @@ class BwTree {
    * If we want to keep the same snapshot then we should only
    * call GetNode() once and stick to that physical pointer
    */
-  const BaseNode *GetNode(const NodeID node_id) {
+  inline const BaseNode *GetNode(const NodeID node_id) {
     assert(node_id != INVALID_NODE_ID);
     assert(node_id < MAPPING_TABLE_SIZE);
 
@@ -2586,7 +2597,7 @@ class BwTree {
    * SMOs it is easy to just judge underlying data node type using
    * the top of delta chain
    */
-  bool IsLeafDeltaChainType(const NodeType type) const {
+  inline bool IsLeafDeltaChainType(const NodeType type) const {
     return (type == NodeType::LeafDeleteType ||
             type == NodeType::LeafInsertType ||
             type == NodeType::LeafMergeType ||
@@ -5321,7 +5332,6 @@ before_switch:
   void AdjustNodeSize(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
-    NodeID node_id = snapshot_p->node_id;
 
     // We do not adjust size for delta nodes
     if(node_p->IsDeltaNode() == true) {
@@ -5332,6 +5342,8 @@ before_switch:
 
       return;
     }
+    
+    NodeID node_id = snapshot_p->node_id;
 
     if(snapshot_p->is_leaf == true) {
       const LeafNode *leaf_node_p = \
