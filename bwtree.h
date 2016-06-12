@@ -4671,21 +4671,16 @@ class BwTree {
     }
 
     bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
+    (void)consolidated;
 
     if(context_p->abort_flag == true) {
       return;
     }
     
-    // As an optimization we only try to split or merge node when
-    // it has just been consolidayed
-    // NOTE: AdjustNodeSize() correctly deals with the situation when
-    // there is delta node on top of consolidated nodes
-    if(consolidated == true) {
-      AdjustNodeSize(context_p);
+    AdjustNodeSize(context_p);
 
-      if(context_p->abort_flag == true) {
-        return;
-      }
+    if(context_p->abort_flag == true) {
+      return;
     }
 
     return;
@@ -4714,19 +4709,16 @@ class BwTree {
     }
 
     bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
+    (void)consolidated;
 
     if(context_p->abort_flag == true) {
       return;
     }
-    
-    // Same as in LoadNodeID(); the optimization works by reducing the
-    // need to collect all values/seps on every node
-    if(consolidated == true) {
-      AdjustNodeSize(context_p);
 
-      if(context_p->abort_flag == true) {
-        return;
-      }
+    AdjustNodeSize(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
     }
 
     return;
