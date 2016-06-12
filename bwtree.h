@@ -2693,7 +2693,10 @@ class BwTree {
           if(context_p->abort_flag == true) {
             bwt_printf("Navigate Inner Node abort. ABORT\n");
 
-            // This behavior is defined in Navigate function
+            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+            // as a double check
+            // This is the only situation that this function returns
+            // INVALID_NODE_ID
             assert(child_node_id == INVALID_NODE_ID);
 
             context_p->current_state = OpState::Abort;
@@ -2778,11 +2781,13 @@ class BwTree {
                          snapshot_lbound_p != nullptr);
 
           // This must be true since the NodeID to low key mapping
-          // is constant
+          // is constant (if the child node is merged into its
+          // left sibling, then we just see a remove node and go left
+          // in LoadNodeID() called above)
           assert(KeyCmpGreaterEqual(context_p->search_key,
                                     *snapshot_lbound_p) == true);
 
-          // If this happen then it means between the moment we get NodeID
+          // If this happens then it means between the moment we get NodeID
           // and we get actual physical pointer, it has splited, changing
           // the high key to a smaller value
           // In that case we need to abort and re-traverse
@@ -2798,7 +2803,6 @@ class BwTree {
 
             break;
           }
-
 
           if(is_leaf == true) {
             bwt_printf("The next node is a leaf\n");
