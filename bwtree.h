@@ -3369,7 +3369,7 @@ class BwTree {
    *
    * NOTE: This function makes use of cached logical node if there is one
    */
-  void CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
+  inline void CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
     // If there is cached version of value then just make use of
     // it. The cache will be invalidated when we switch physical pointer
     if(snapshot_p->has_data == true) {
@@ -3436,7 +3436,7 @@ class BwTree {
    * After this function returns, it is guarantted that has_data flag is set
    * to false
    */
-  void CollectMetadataOnInner(NodeSnapshot *snapshot_p) {
+  inline void CollectMetadataOnInner(NodeSnapshot *snapshot_p) {
     // If there is cached metadata then we just use cached version
     if(snapshot_p->has_metadata == true) {
       bwt_printf("Fast path: Use previous cached metadata\n");
@@ -4226,7 +4226,7 @@ class BwTree {
    *
    * NOTE 4: This function makes use of cached logical node if there is one
    */
-  void
+  inline void
   CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
     if(snapshot_p->has_data == true) {
       bwt_printf("Fast path: There is cached value.\n");
@@ -4270,7 +4270,7 @@ class BwTree {
    *
    * After this function returns snapshot has its has_data set to false
    */
-  void
+  inline void
   CollectMetadataOnLeaf(NodeSnapshot *snapshot_p) {
     // If there is cached metadata then we just use cached version
     if(snapshot_p->has_metadata == true) {
@@ -4328,7 +4328,7 @@ class BwTree {
    * NOTE: The same as GetLatestNodeSnapshot(), be careful when popping
    * snapshots out of the stack
    */
-  NodeSnapshot *GetLatestParentNodeSnapshot(Context *context_p) {
+  inline NodeSnapshot *GetLatestParentNodeSnapshot(Context *context_p) {
     std::vector<NodeSnapshot> *path_list_p = \
       &context_p->path_list;
 
@@ -4670,16 +4670,22 @@ class BwTree {
       return;
     }
 
-    ConsolidateNode(context_p);
+    bool consolidated = ConsolidateNode(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
+    
+    // As an optimization we only try to split or merge node when
+    // it has just been consolidayed
+    // NOTE: AdjustNodeSize() correctly deals with the situation when
+    // there is delta node on top of consolidated nodes
+    if(consolidated == true) {
+      AdjustNodeSize(context_p);
 
-    AdjustNodeSize(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
+      if(context_p->abort_flag == true) {
+        return;
+      }
     }
 
     return;
@@ -5181,6 +5187,10 @@ before_switch:
    * If the length of delta chain does not exceed the threshold then this
    * function does nothing
    *
+   * If function returns true then we have successfully consolidated a node
+   * Otherwise no consolidation happens. The return value might be used
+   * as a hint for deciding whether to adjust node size or not
+   *
    * NOTE: If consolidation fails then this function does not do anything
    * and will just continue with its own job. There is no chance of abort
    *
@@ -5188,7 +5198,7 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  void ConsolidateNode(Context *context_p) {
+  bool ConsolidateNode(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -5197,7 +5207,7 @@ before_switch:
     // We could only perform consolidation on delta node
     // because we want to see depth field
     if(node_p->IsDeltaNode() == false) {
-      return;
+      return false;
     }
 
     const DeltaNode *delta_node_p = \
@@ -5206,7 +5216,7 @@ before_switch:
     // If depth does not exceeds threshold then just return
     const int depth = delta_node_p->depth;
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
-      return;
+      return false;
     }
 
     // After this pointer we decide to consolidate node
@@ -5251,6 +5261,9 @@ before_switch:
         // should abort here
 
         delete leaf_node_p;
+        
+        // Return false here since we did not consolidate
+        return false;
       } // if CAS succeeds / fails
     } else {
       const InnerNode *inner_node_p = \
@@ -5272,11 +5285,11 @@ before_switch:
 
         delete inner_node_p;
 
-        return;
+        return false;
       } // if CAS succeeds / fails
     } // if it is leaf / is inner
 
-    return;
+    return true;
   }
 
   /*
