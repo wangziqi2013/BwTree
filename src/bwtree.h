@@ -3317,14 +3317,8 @@ class BwTree {
       bwt_printf("Inner snapshot already has data.\n");
     }
 
-    bool first_time = true;
-    (void)first_time;
-
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
-
-    // We track current artificial high key brought about by split node
-    const KeyType *ubound_p = nullptr;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3337,7 +3331,7 @@ class BwTree {
           NodeID target_id = \
             LocateSeparatorByKey(search_key,
                                  inner_node_p,
-                                 ubound_p,
+                                 &node_p->metadata.ubound,
                                  lbound_p_p); // This records the sep
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
@@ -3348,7 +3342,6 @@ class BwTree {
         case NodeType::InnerRemoveType: {
           bwt_printf("ERROR: InnerRemoveNode not allowed\n");
 
-          assert(first_time == true);
           assert(false);
         } // case InnerRemoveType
         case NodeType::InnerInsertType: {
@@ -3440,17 +3433,9 @@ class BwTree {
               bwt_printf("After inner jumping there is data\n");
             }
 
-            // Since we have jumped to a new NodeID, we could see a remove node
-            first_time = true;
-
             // Continue in the while loop to avoid setting first_time to false
             continue;
           } else {
-            // If we do not take the branch, then the high key has changed
-            // since the splited half takes some keys from the logical node
-            // downside
-            ubound_p = &split_key;
-
             node_p = split_node_p->child_node_p;
           }
 
@@ -3480,8 +3465,6 @@ class BwTree {
           assert(false);
         }
       } // switch type
-
-      first_time = false;
     } // while 1
 
     // Should not reach here
