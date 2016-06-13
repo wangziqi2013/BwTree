@@ -10,11 +10,14 @@ main: ./build/main.o ./build/bwtree.o
 ./build/bwtree.o: ./src/bwtree.h ./src/bwtree.cpp
 	g++ ./src/bwtree.cpp -c --std=gnu++11 -o ./build/bwtree.o -g -Wall -O3
 
-benchmark: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main -b
+benchmark-all: main
+	LD_PRELOAD=./lib/libjemalloc.so ./main --benchmark-all
+
+benchmark-bwtree: main
+	LD_PRELOAD=./lib/libjemalloc.so ./main --benchmark-bwtree
 
 test: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main -t
+	LD_PRELOAD=./lib/libjemalloc.so ./main --test
 
 clean:
 	rm -f ./build/*

@@ -926,23 +926,27 @@ void PrintStat(TreeType *t) {
 
 
 int main(int argc, char **argv) {
-  bool run_benchmark = false;
+  bool run_benchmark_all = false;
   bool run_test = false;
+  bool run_benchmark_bwtree = false;
   
   int opt_index = 1;
   while(opt_index < argc) {
     char *opt_p = argv[opt_index];
     
-    if(strcmp(opt_p, "-b") == 0) {
-      run_benchmark = true;
-    } else if(strcmp(opt_p, "-t") == 0) {
+    if(strcmp(opt_p, "--benchmark-all") == 0) {
+      run_benchmark_all = true;
+    } else if(strcmp(opt_p, "--test") == 0) {
       run_test = true;
+    } else if(strcmp(opt_p, "--benchmark-bwtree") == 0) {
+      run_benchmark_bwtree = true;
     }
     
     opt_index++;
   }
   
-  bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark);
+  bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark_all);
+  bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("======================================\n");
   
@@ -950,147 +954,169 @@ int main(int argc, char **argv) {
   // Next start running test cases
   //////////////////////////////////////////////////////
   
-  TreeType *t1 = new TreeType{KeyComparator{1},
-                              KeyEqualityChecker{1}};
+  TreeType *t1 = nullptr;
 
   tree_size = 0;
-  print_flag = false;
+  print_flag = true;
   
-  if(run_benchmark == true) {
+  if(run_benchmark_bwtree == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+                      
+    TestBwTreeInsertReadPerformance(t1);
+    
+    print_flag = true;
+    delete t1;
+    print_flag = false;
+  }
+  
+  if(run_benchmark_all == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+    
     TestStdMapInsertReadPerformance();
     TestStdUnorderedMapInsertReadPerformance();
     TestBTreeInsertReadPerformance();
     TestBwTreeInsertReadPerformance(t1);
+    
+    print_flag = true;
+    delete t1;
+    print_flag = false;
   }
   
-  if(run_test == false) {
-    // Uncomment this to benchmark performance only
-    END_TEST
+  if(run_test == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+    
+    //////////////
+    // Test iterator
+    //////////////
+
+    LaunchParallelTestID(thread_num, InsertTest2, t1);
+    printf("Finished inserting all keys\n");
+
+    PrintStat(t1);
+
+    IteratorGetValueTest(t1);
+    printf("Finished scanning the tree\n");
+
+    auto it = t1->Begin(888);
+    auto it2 = it;
+    for(int i = 0;i < 5;i++) {
+      printf("%lf ", *it++);
+    }
+
+    putchar('\n');
+
+    for(int i = 0;i < 5;i++) {
+      printf("%lf ", *it2++);
+    }
+
+    putchar('\n');
+
+    auto it3 = it;
+
+    for(int i = 0;i < 5;i++) {
+      printf("%lf ", *it3++);
+    }
+
+    putchar('\n');
+
+    assert(it < it3);
+    assert(it == it2);
+
+    //////////////
+
+    insert_success = 0UL;
+    delete_success = 0UL;
+    delete_attempt = 0UL;
+
+    LaunchParallelTestID(thread_num, MixedTest1, t1);
+    printf("Finished mixed testing\n");
+
+    PrintStat(t1);
+
+    MixedGetValueTest(t1);
+
+    LaunchParallelTestID(thread_num, InsertTest2, t1);
+    printf("Finished inserting all keys\n");
+
+    PrintStat(t1);
+
+    //END_TEST
+
+    //LaunchParallelTestID(thread_num, UpdateTest2, t1);
+    //printf("Finished updating all keys\n");
+
+    InsertGetValueTest(t1);
+    printf("Finished verifying all inserted values\n");
+
+    LaunchParallelTestID(thread_num, DeleteTest1, t1);
+    printf("Finished deleting all keys\n");
+
+    PrintStat(t1);
+
+    DeleteGetValueTest(t1);
+    printf("Finished verifying all deleted values\n");
+
+    LaunchParallelTestID(thread_num, InsertTest1, t1);
+    printf("Finished inserting all keys\n");
+
+    PrintStat(t1);
+
+    InsertGetValueTest(t1);
+    printf("Finished verifying all inserted values\n");
+
+    LaunchParallelTestID(thread_num, DeleteTest2, t1);
+    printf("Finished deleting all keys\n");
+
+    PrintStat(t1);
+
+    DeleteGetValueTest(t1);
+    printf("Finished verifying all deleted values\n");
+
+    LaunchParallelTestID(thread_num, InsertTest1, t1);
+    printf("Finished inserting all keys\n");
+
+    PrintStat(t1);
+
+    InsertGetValueTest(t1);
+    printf("Finished verifying all inserted values\n");
+
+    LaunchParallelTestID(thread_num, DeleteTest1, t1);
+    printf("Finished deleting all keys\n");
+
+    PrintStat(t1);
+
+    DeleteGetValueTest(t1);
+    printf("Finished verifying all deleted values\n");
+
+    LaunchParallelTestID(thread_num, InsertTest2, t1);
+    printf("Finished inserting all keys\n");
+
+    PrintStat(t1);
+
+    InsertGetValueTest(t1);
+    printf("Finished verifying all inserted values\n");
+
+    LaunchParallelTestID(thread_num, DeleteTest2, t1);
+    printf("Finished deleting all keys\n");
+
+    PrintStat(t1);
+
+    DeleteGetValueTest(t1);
+    printf("Finished verifying all deleted values\n");
+    
+    print_flag = true;
+    delete t1;
+    print_flag = false;
   }
-  
-  t1 = new TreeType{KeyComparator{1}, KeyEqualityChecker{1}};
-  print_flag = false;
-  
-  //////////////
-  // Test iterator
-  //////////////
-  
-  LaunchParallelTestID(thread_num, InsertTest2, t1);
-  printf("Finished inserting all keys\n");
-
-  PrintStat(t1);
-  
-  IteratorGetValueTest(t1);
-  printf("Finished scanning the tree\n");
-  
-  auto it = t1->Begin(888);
-  auto it2 = it;
-  for(int i = 0;i < 5;i++) {
-    printf("%lf ", *it++);
-  }
-  
-  putchar('\n');
-  
-  for(int i = 0;i < 5;i++) {
-    printf("%lf ", *it2++);
-  }
-
-  putchar('\n');
-  
-  auto it3 = it;
-  
-  for(int i = 0;i < 5;i++) {
-    printf("%lf ", *it3++);
-  }
-
-  putchar('\n');
-  
-  assert(it < it3);
-  assert(it == it2);
-  
-  //////////////
-  
-  insert_success = 0UL;
-  delete_success = 0UL;
-  delete_attempt = 0UL;
-  
-  LaunchParallelTestID(thread_num, MixedTest1, t1);
-  printf("Finished mixed testing\n");
-  
-  PrintStat(t1);
-  
-  MixedGetValueTest(t1);
-
-  LaunchParallelTestID(thread_num, InsertTest2, t1);
-  printf("Finished inserting all keys\n");
-
-  PrintStat(t1);
-
-  //END_TEST
-
-  //LaunchParallelTestID(thread_num, UpdateTest2, t1);
-  //printf("Finished updating all keys\n");
-
-  InsertGetValueTest(t1);
-  printf("Finished verifying all inserted values\n");
-
-  LaunchParallelTestID(thread_num, DeleteTest1, t1);
-  printf("Finished deleting all keys\n");
-
-  PrintStat(t1);
-
-  DeleteGetValueTest(t1);
-  printf("Finished verifying all deleted values\n");
-
-  LaunchParallelTestID(thread_num, InsertTest1, t1);
-  printf("Finished inserting all keys\n");
-
-  PrintStat(t1);
-
-  InsertGetValueTest(t1);
-  printf("Finished verifying all inserted values\n");
-
-  LaunchParallelTestID(thread_num, DeleteTest2, t1);
-  printf("Finished deleting all keys\n");
-
-  PrintStat(t1);
-
-  DeleteGetValueTest(t1);
-  printf("Finished verifying all deleted values\n");
-
-  LaunchParallelTestID(thread_num, InsertTest1, t1);
-  printf("Finished inserting all keys\n");
-
-  PrintStat(t1);
-
-  InsertGetValueTest(t1);
-  printf("Finished verifying all inserted values\n");
-
-  LaunchParallelTestID(thread_num, DeleteTest1, t1);
-  printf("Finished deleting all keys\n");
-
-  PrintStat(t1);
-
-  DeleteGetValueTest(t1);
-  printf("Finished verifying all deleted values\n");
-
-  LaunchParallelTestID(thread_num, InsertTest2, t1);
-  printf("Finished inserting all keys\n");
-
-  PrintStat(t1);
-
-  InsertGetValueTest(t1);
-  printf("Finished verifying all inserted values\n");
-
-  LaunchParallelTestID(thread_num, DeleteTest2, t1);
-  printf("Finished deleting all keys\n");
-
-  PrintStat(t1);
-
-  DeleteGetValueTest(t1);
-  printf("Finished verifying all deleted values\n");
-
-  END_TEST
 
   return 0;
 }
