@@ -2779,9 +2779,9 @@ class BwTree {
 
     // This is the low key (i.e. "virtual sep key")
     // for root node
-    // NOTE: This should be put inside the scope in case it is
-    // corrupted
-    KeyType root_lbound_key = GetNegInfKey();
+    // NOTE: We make it static since the key itself is constant and
+    // will not be modified
+    static KeyType root_lbound_key = GetNegInfKey();
 
     while(1) {
       // NOTE: break only breaks out this switch
@@ -2835,7 +2835,8 @@ class BwTree {
           NodeID child_node_id = \
             NavigateInnerNode(context_p, &lbound_p);
 
-          // Navigate could abort since it goes to another NodeID
+          // Navigate could abort since it might go to another NodeID
+          // if there is a split delta and the key is >= split key
           if(context_p->abort_flag == true) {
             bwt_printf("Navigate Inner Node abort. ABORT\n");
 
@@ -2854,9 +2855,13 @@ class BwTree {
 
           // This returns the current inner node that we are traversing into
           // There must be at least one at this stage
+          // NOTE: The snapshot could have changed if NavigateInnerNode()
+          // switches to another NodeID, which reloads NodeSnapshot
           NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
           // This is the low key of current inner node
+          // which is also the key we used ti traverse to current node
+          // in its parent (-Inf if current node is root)
           const KeyType *current_lbound_p = snapshot_p->lbound_p;
 
           // If the sep key equals the low key of current node then we
@@ -2886,45 +2891,23 @@ class BwTree {
 
           // This is the node we have just loaded
           snapshot_p = GetLatestNodeSnapshot(context_p);
-          // We need to deal with leaf node and inner node when traversing down
-          // an inner node
-          bool is_leaf = snapshot_p->is_leaf;
+
+          if(snapshot_p->is_leaf == true) {
+            bwt_printf("The next node is a leaf\n");
+
+            // If there is an abort later on then we just go to
+            // abort state
+            context_p->current_state = OpState::Leaf;
+          }
 
           // Take care: Do not use conflict names in the
           // outer scope
-          const KeyType *snapshot_lbound_p = nullptr;
-          (void)snapshot_lbound_p;
-          const KeyType *snapshot_ubound_p = nullptr;
-
-          // Get metadata from the next node we are going to
-          // navigate through
-          if(is_leaf == true) {
-            CollectMetadataOnLeaf(snapshot_p);
-
-            LogicalLeafNode *logical_node_p = \
-              snapshot_p->GetLogicalLeafNode();
-
-            snapshot_lbound_p = logical_node_p->lbound_p;
-            snapshot_ubound_p = logical_node_p->ubound_p;
-
-            //assert(snapshot_lbound_p != nullptr);
-          } else {
-            CollectMetadataOnInner(snapshot_p);
-
-            LogicalInnerNode *logical_node_p = \
-              snapshot_p->GetLogicalInnerNode();
-
-            snapshot_lbound_p = logical_node_p->lbound_p;
-            snapshot_ubound_p = logical_node_p->ubound_p;
-
-            //assert(snapshot_lbound_p != nullptr);
-          }
-
-          // Make sure the lbound is not empty
-          idb_assert_key(snapshot_p->node_id,
-                         context_p->search_key,
-                         context_p,
-                         snapshot_lbound_p != nullptr);
+          // NOTE: We directly use the metadata stored inside node
+          // here to avoid copying them around
+          const KeyType *snapshot_lbound_p = \
+            &snapshot_p->node_p->metadata.lbound;
+          const KeyType *snapshot_ubound_p = \
+            &snapshot_p->node_p->metadata.ubound;
 
           // This must be true since the NodeID to low key mapping
           // is constant (if the child node is merged into its
@@ -2948,14 +2931,6 @@ class BwTree {
             context_p->current_state = OpState::Abort;
 
             break;
-          }
-
-          if(is_leaf == true) {
-            bwt_printf("The next node is a leaf\n");
-
-            // Then we start traversing leaf node, and deal
-            // with potential aborts
-            context_p->current_state = OpState::Leaf;
           }
 
           // go to next level
