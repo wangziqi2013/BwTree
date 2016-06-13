@@ -7242,7 +7242,6 @@ before_switch:
           // then we need to update the raw key pointer to reflect
           // the key change
           // During iteration this key is very important
-          // (The original commit is in branch "peloton")
           raw_key_p = &key_it->first.key;
         } // if key_it == end()
         
