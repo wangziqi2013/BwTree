@@ -1,6 +1,7 @@
 
+#include <cstring>
 #include "bwtree.h"
-#include "btree.h"
+#include "../benchmark/btree.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
@@ -883,23 +884,52 @@ void PrintStat(TreeType *t) {
 
 
 
-int main() {
+int main(int argc, char **argv) {
+  bool run_benchmark = false;
+  bool run_test = false;
+  
+  int opt_index = 1;
+  while(opt_index < argc) {
+    char *opt_p = argv[opt_index];
+    
+    if(strcmp(opt_p, "-b") == 0) {
+      run_benchmark = true;
+    } else if(strcmp(opt_p, "-t") == 0) {
+      run_test = true;
+    }
+    
+    opt_index++;
+  }
+  
+  bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark);
+  bwt_printf("RUN_TEST = %d\n", run_test);
+  bwt_printf("======================================\n");
+  
+  //////////////////////////////////////////////////////
+  // Next start running test cases
+  //////////////////////////////////////////////////////
+  
   TreeType *t1 = new TreeType{KeyComparator{1},
                               KeyEqualityChecker{1}};
 
   tree_size = 0;
   print_flag = false;
   
-  TestStdMapInsertReadPerformance();
-  TestBTreeInsertReadPerformance();
-  TestBwTreeInsertReadPerformance(t1);
+  if(run_benchmark == true) {
+    TestStdMapInsertReadPerformance();
+    TestBTreeInsertReadPerformance();
+    TestBwTreeInsertReadPerformance(t1);
+  }
   
-  // Uncomment this to benchmark performance only
-  END_TEST
+  if(run_test == false) {
+    // Uncomment this to benchmark performance only
+    END_TEST
+  }
   
   t1 = new TreeType{KeyComparator{1}, KeyEqualityChecker{1}};
   print_flag = false;
   
+  //////////////
   // Test iterator
   //////////////
   

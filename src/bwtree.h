@@ -3327,8 +3327,8 @@ class BwTree {
    * takes an extra argument for remembering the separator key associated
    * with the NodeID.
    */
-  NodeID NavigateInnerNode(Context *context_p,
-                           const KeyType **lbound_p_p) {
+  inline NodeID NavigateInnerNode(Context *context_p,
+                                  const KeyType **lbound_p_p) {
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -4800,10 +4800,10 @@ class BwTree {
    * root flag is set as a side-effect, since we know now we are definitely
    * loading the ID for root node
    */
-  void LoadNodeID(NodeID node_id,
-                  Context *context_p,
-                  const KeyType *lbound_p,
-                  bool is_leftmost_child) {
+  inline void LoadNodeID(NodeID node_id,
+                         Context *context_p,
+                         const KeyType *lbound_p,
+                         bool is_leftmost_child) {
     bwt_printf("Loading NodeID = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -5356,7 +5356,8 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool ConsolidateNode(Context *context_p, bool recommend_consolidation) {
+  bool ConsolidateNode(Context *context_p,
+                       bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     const BaseNode *node_p = snapshot_p->node_p;
