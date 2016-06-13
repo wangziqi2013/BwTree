@@ -3605,23 +3605,13 @@ class BwTree {
       return;
     }
 
-    //assert(snapshot_p->has_data == false);
-
     LogicalInnerNode *logical_node_p = snapshot_p->GetLogicalInnerNode();
+    const NodeMetaData *metadata_p = &snapshot_p->node_p->metadata;
 
-    logical_node_p->lbound_p = &snapshot_p->node_p->metadata.lbound;
-    logical_node_p->ubound_p = &snapshot_p->node_p->metadata.ubound;
-    logical_node_p->next_node_id = snapshot_p->node_p->metadata.next_node_id;
+    logical_node_p->lbound_p = &metadata_p->lbound;
+    logical_node_p->ubound_p = &metadata_p->ubound;
+    logical_node_p->next_node_id = metadata_p->next_node_id;
 
-    /*
-    CollectAllSepsOnInnerRecursive(snapshot_p->node_p,
-                                   snapshot_p->GetLogicalInnerNode(),
-                                   true,
-                                   true,
-                                   false);
-    */
-
-    //snapshot_p->has_data = false;
     snapshot_p->has_metadata = true;
 
     return;
@@ -4448,29 +4438,15 @@ class BwTree {
       return;
     }
 
-    // If there is no metadata then there is definitely no data
-    //assert(snapshot_p->has_data == false);
-
     assert(snapshot_p->is_leaf == true);
     assert(snapshot_p->logical_node_p != nullptr);
     
     LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
-    logical_node_p->lbound_p = &snapshot_p->node_p->metadata.lbound;
-    logical_node_p->ubound_p = &snapshot_p->node_p->metadata.ubound;
-    logical_node_p->next_node_id = snapshot_p->node_p->metadata.next_node_id;
+    const NodeMetaData *metadata_p = &snapshot_p->node_p->metadata;
 
-    /*
-    // We want to collect both ubound and lbound in this call
-    // These two flags will be set to false for every node
-    // that is neither a left not right most node
-    CollectAllValuesOnLeafRecursive(snapshot_p->node_p,
-                                    snapshot_p->GetLogicalLeafNode(),
-                                    true,
-                                    true,
-                                    false); // Do not collect data
-
-    snapshot_p->has_data = false;
-    */
+    logical_node_p->lbound_p = &metadata_p->lbound;
+    logical_node_p->ubound_p = &metadata_p->ubound;
+    logical_node_p->next_node_id = metadata_p->next_node_id;
     
     snapshot_p->has_metadata = true;
 
