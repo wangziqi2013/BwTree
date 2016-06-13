@@ -1,9 +1,12 @@
 
 #include "bwtree.h"
+#include "btree.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
 #endif
+
+using namespace stx;
 
 /*
  * class KeyComparator - Test whether BwTree supports context
@@ -743,7 +746,7 @@ void IteratorGetValueTest(TreeType *t) {
   return;
 }
 
-void TestStdMapInsertPerformance() {
+void TestStdMapInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
   
@@ -782,7 +785,46 @@ void TestStdMapInsertPerformance() {
   return;
 }
 
-void TestBwTreeInsertPerformance(TreeType *t) {
+void TestBTreeInsertReadPerformance() {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  // Insert 1 million keys into std::map
+  btree<int, double> test_map{};
+  for(int i = 0;i < 1024 * 1024;i++) {
+    test_map.insert(i, i * 1.11L);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "std::btree: " << 1.0 / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from std::map
+    for(int i = 0;i < 1024 * 1024;i++) {
+      auto t = test_map.find(i);
+      (void)t;
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "stx::btree " << (1.0 * iter) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
+void TestBwTreeInsertReadPerformance(TreeType *t) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
@@ -848,11 +890,12 @@ int main() {
   tree_size = 0;
   print_flag = false;
   
-  TestStdMapInsertPerformance();
-  TestBwTreeInsertPerformance(t1);
+  TestStdMapInsertReadPerformance();
+  TestBTreeInsertReadPerformance();
+  TestBwTreeInsertReadPerformance(t1);
   
+  // Uncomment this to benchmark performance only
   END_TEST
-  
   
   t1 = new TreeType{KeyComparator{1}, KeyEqualityChecker{1}};
   print_flag = false;
