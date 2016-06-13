@@ -1266,21 +1266,15 @@ class BwTree {
    */
   class InnerNode : public BaseNode {
    public:
-    KeyNodeIDMap sep_map;
-    
-    // We keep a pointer to BwTree instance to initialize map object
-    BwTree *tree_p;
+    std::vector<SepItem> sep_list;
 
     /*
      * Constructor
      */
     InnerNode(const KeyType &p_lbound,
               const KeyType &p_ubound,
-              NodeID p_next_node_id,
-              BwTree *p_tree_p) :
-      BaseNode{NodeType::InnerType},
-      sep_map{p_tree_p->wrapped_key_cmp_obj},
-      tree_p{p_tree_p} {
+              NodeID p_next_node_id) :
+      BaseNode{NodeType::InnerType} {
       this->SetNodeMetaData(p_lbound, p_ubound, p_next_node_id);
       
       return;
@@ -1292,29 +1286,24 @@ class BwTree {
      * This functions is similar to that in LeafNode
      */
     InnerNode *GetSplitSibling() const {
-      int node_size = static_cast<int>(sep_map.size());
-      int split_key_pos = node_size >> 1;
+      size_t node_size = sep_list.size();
+      size_t split_key_index = node_size / 2;
 
       // We enforce this to avoid empty nodes
       assert(node_size >= 2);
-      
-      // NOTE: This is potentially slow, but considering the potentially
-      // rare split event for inner nodes, it should be OK
-      auto sep_map_it = sep_map.begin();
-      std::advance(sep_map_it, split_key_pos);
 
-      // This key is contained in the new node
-      const KeyType &split_key = sep_map_it->first;
+      const KeyType &split_key = sep_list[split_key_index].key;
 
       // This sets metddata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = new InnerNode{split_key,
                                               this->metadata.ubound,
-                                              this->metadata.next_node_id,
-                                              tree_p};
+                                              this->metadata.next_node_id};
 
-      // Copy part of the old map to new map using range operator
-      inner_node_p->sep_map.insert(sep_map_it, sep_map.end());
+      // Copy data item into the new node
+      for(int i = split_key_index;i < (int)node_size;i++) {
+        inner_node_p->sep_list.push_back(sep_list[i]);
+      }
 
       return inner_node_p;
     }
@@ -1513,18 +1502,14 @@ class BwTree {
     const KeyType *ubound_p;
 
     NodeID next_node_id;
-    
-    // We need to access wrapped key comparator later
-    BwTree *tree_p;
 
     /*
      * Constructor - Initialize everything to initial invalid state
      */
-    BaseLogicalNode(BwTree *p_tree_p) :
+    BaseLogicalNode() :
       lbound_p{nullptr},
       ubound_p{nullptr},
-      next_node_id{INVALID_NODE_ID},
-      tree_p{p_tree_p}
+      next_node_id{INVALID_NODE_ID}
     {}
 
     /*
@@ -1533,8 +1518,7 @@ class BwTree {
     BaseLogicalNode(const BaseLogicalNode &node) :
       lbound_p{node.lbound_p},
       ubound_p{node.ubound_p},
-      next_node_id{node.next_node_id},
-      tree_p{node.tree_p}
+      next_node_id{node.next_node_id}
     {}
   };
 
@@ -1549,6 +1533,9 @@ class BwTree {
    */
   class LogicalLeafNode : public BaseLogicalNode {
    public:
+    // We need to access wrapped key comparator later
+    BwTree *tree_p;
+
     // These fields are filled by callee
     KeyValueSet key_value_set;
 
@@ -1561,9 +1548,10 @@ class BwTree {
      *               as the tree snapshot
      */
     LogicalLeafNode(BwTree *p_tree_p) :
-      BaseLogicalNode{p_tree_p},
+      BaseLogicalNode{},
+      tree_p{p_tree_p},
       // We need to use the given object to initialize std::map
-      key_value_set{this->tree_p->wrapped_key_cmp_obj},
+      key_value_set{tree_p->wrapped_key_cmp_obj},
       pointer_list{}
     {}
 
@@ -1585,6 +1573,7 @@ class BwTree {
     LogicalLeafNode(const LogicalLeafNode &node) :
       // Parent copy constructor
       BaseLogicalNode{node},
+      tree_p{node.tree_p},
       // This is the most important one
       key_value_set{node.key_value_set},
       pointer_list{} {
@@ -1608,13 +1597,13 @@ class BwTree {
       BaseLogicalNode::lbound_p = node.lbound_p;
       BaseLogicalNode::ubound_p = node.ubound_p;
       BaseLogicalNode::next_node_id = node.next_node_id;
-      BaseLogicalNode::tree_p = node.tree_p;
       
       // Same reason; do not copy assign logcal leaf node in its
       // intermediate state
       assert(node.pointer_list.size() == 0UL);
       assert(pointer_list.size() == 0UL);
       
+      tree_p = node.tree_p;
       key_value_set = node.key_value_set;
       
       return *this;
@@ -1679,7 +1668,7 @@ class BwTree {
      * NOTE: DO NOT REMOVE DIRECTLY ON THE MAP USING ITERATOR
      */
     void RemoveEmptyValueSet() {
-      KeyValueSet temp_map{this->tree_p->wrapped_key_cmp_obj};
+      KeyValueSet temp_map{tree_p->wrapped_key_cmp_obj};
 
       // Move every non-empty ValueSet into container
       for(auto &item : GetContainer()) {
@@ -1875,9 +1864,9 @@ class BwTree {
     /*
      * Constructor - Accept an initial starting point and init others
      */
-    LogicalInnerNode(BwTree *p_tree_p) :
-      BaseLogicalNode{p_tree_p},
-      key_value_map{this->tree_p->wrapped_key_cmp_obj}
+    LogicalInnerNode(BwTree *tree_p) :
+      BaseLogicalNode{},
+      key_value_map{tree_p->wrapped_key_cmp_obj}
     {}
 
     /*
@@ -1904,12 +1893,15 @@ class BwTree {
       InnerNode *inner_node_p = \
         new InnerNode{*BaseLogicalNode::lbound_p,
                       *BaseLogicalNode::ubound_p,
-                      BaseLogicalNode::next_node_id,
-                      this->tree_p};
+                      BaseLogicalNode::next_node_id};
 
-      // Bulk load the map to inner node
-      inner_node_p->sep_map.insert(key_value_map.begin(),
-                                   key_value_map.end());
+      // Iterate through the ordered map and push separator items
+      for(auto &it : key_value_map) {
+        // We should not use INVALID_NODE_ID in inner node
+        assert(it.second != INVALID_NODE_ID);
+
+        inner_node_p->sep_list.push_back(SepItem{it.first, it.second});
+      }
 
       return inner_node_p;
     }
@@ -2567,10 +2559,12 @@ class BwTree {
     first_node_id = GetNextNodeID();
     assert(first_node_id == 1UL);
 
-    InnerNode *root_node_p = \
-      new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID, this};
+    SepItem neg_si {GetNegInfKey(), first_node_id};
 
-    root_node_p->sep_map[GetNegInfKey()] = first_node_id;
+    InnerNode *root_node_p = \
+      new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
+
+    root_node_p->sep_list.push_back(neg_si);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -3149,27 +3143,50 @@ class BwTree {
     if(ubound_p == nullptr) {
       ubound_p = &inner_node_p->metadata.ubound;
     }
-    
+
+    const std::vector<SepItem> *sep_list_p = &inner_node_p->sep_list;
+
+    // We do not know what to do for an empty inner node
+    assert(sep_list_p->size() != 0UL);
+
+    auto iter1 = sep_list_p->begin();
+    auto iter2 = iter1 + 1;
+
+    // NOTE: If there is only one element then we would
+    // not be able to go into while() loop
+    // and in that case we just check for upper bound
+    //assert(iter2 != sep_list_p->end());
+
+    // TODO: Replace this with binary search
+    while(iter2 != sep_list_p->end()) {
+      if(KeyCmpGreaterEqual(search_key, iter1->key) && \
+         KeyCmpLess(search_key, iter2->key)) {
+        // We set separator key before returning
+        *lbound_p_p = &iter1->key;
+
+        return iter1->node;
+      }
+
+      iter1++;
+      iter2++;
+    }
+
+    // This assertion failure could only happen if we
+    // hit +Inf as separator
+    assert(iter1->node != INVALID_NODE_ID);
+
     // If search key >= upper bound (natural or artificial) then
     // we have hit the wrong inner node
-    assert(KeyCmpLess(search_key, *ubound_p));
+    idb_assert(KeyCmpLess(search_key, *ubound_p));
 
     // Search key must be greater than or equal to the lower bound
     // which is assumed to be a constant associated with a NodeID
     assert(KeyCmpGreaterEqual(search_key, inner_node_p->metadata.lbound));
 
-    // We do not know what to do for an empty inner node
-    assert(inner_node_p->sep_map.size() != 0UL);
-
-    auto it = inner_node_p->sep_map.upper_bound(search_key);
-    assert(it != inner_node_p->sep_map.begin());
-    
-    it--;
-
     // In this corner case, iter1 is the correct sep/NodeID pair
-    *lbound_p_p = &it->first;
+    *lbound_p_p = &iter1->key;
 
-    return it->second;
+    return iter1->node;
   }
 
   /*
@@ -3629,33 +3646,27 @@ class BwTree {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
-          // A base node also defines the high key
-          if(ubound_p == nullptr) {
-            ubound_p = &inner_node_p->metadata.ubound;
-          }
-
           // If the caller cares about the actual content
           if(collect_sep) {
-            assert(ubound_p != nullptr);
-            
-            for(auto it = inner_node_p->sep_map.begin();
-                it != inner_node_p->sep_map.end();
-                it++) {
+            for(const SepItem &item : inner_node_p->sep_list) {
               // Since we are using INVALID_NODE_ID to mark deleted nodes
               // we check for other normal node id to avoid accidently
               // having a bug and deleting random keys
-              assert(it->second != INVALID_NODE_ID);
+              assert(item.node != INVALID_NODE_ID);
 
               // If we observed an out of range key (brought about by split)
               // just ignore it (>= high key, if exists a high key)
-              if(KeyCmpGreaterEqual(it->first, *ubound_p)) {
+              if(ubound_p != nullptr && \
+                 KeyCmpGreaterEqual(item.key, *ubound_p)) {
                 //bwt_printf("Detected a out of range key in inner base node\n");
 
-                break;
+                continue;
               }
 
               // If the sep key has already been collected, then ignore
-              logical_node_p->key_value_map.insert(*it);
+              logical_node_p->key_value_map.insert( \
+                typename decltype(logical_node_p->key_value_map)::value_type( \
+                  item.key, item.node));
             } // for item : sep_list
           } // if collect_sep
 
@@ -3665,6 +3676,11 @@ class BwTree {
             assert(logical_node_p->lbound_p == nullptr);
 
             logical_node_p->lbound_p = &inner_node_p->metadata.lbound;
+          }
+
+          // A base node also defines the high key
+          if(ubound_p == nullptr) {
+            ubound_p = &inner_node_p->metadata.ubound;
           }
 
           // If we clooect high key, then it is set to the local branch
@@ -5201,13 +5217,13 @@ before_switch:
           // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
           // NOTE: DO NOT MAKE IT CONSTANT since we will push separator into it
           InnerNode *inner_node_p = \
-            new InnerNode{GetNegInfKey(),
-                          GetPosInfKey(),
-                          INVALID_NODE_ID,
-                          this};
+            new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
-          inner_node_p->sep_map[GetNegInfKey()] = node_id;
-          inner_node_p->sep_map[*split_key_p] = split_node_id;
+          SepItem item1{GetNegInfKey(), node_id};
+          SepItem item2{*split_key_p, split_node_id};
+
+          inner_node_p->sep_list.push_back(item1);
+          inner_node_p->sep_list.push_back(item2);
 
           // First we need to install the new node with NodeID
           // This makes it visible
@@ -5595,7 +5611,7 @@ before_switch:
       const InnerNode *inner_node_p = \
         static_cast<const InnerNode *>(node_p);
 
-      size_t node_size = inner_node_p->sep_map.size();
+      size_t node_size = inner_node_p->sep_list.size();
 
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
@@ -5609,16 +5625,15 @@ before_switch:
         const KeyType *split_key_p = &new_inner_node_p->metadata.lbound;
 
         // New node has at least one item (this is the basic requirement)
-        assert(new_inner_node_p->sep_map.size() > 0);
-        
-        auto first_item_it = new_inner_node_p->sep_map.begin();
-        
+        assert(new_inner_node_p->sep_list.size() > 0);
+
+        const SepItem &first_item = new_inner_node_p->sep_list[0];
         // This points to the left most node on the right split sibling
         // If this node is being removed then we abort
-        NodeID split_key_child_node_id = first_item_it->second;
+        NodeID split_key_child_node_id = first_item.node;
 
         // This must be the split key
-        assert(KeyCmpEqual(first_item_it->first, *split_key_p));
+        assert(KeyCmpEqual(first_item.key, *split_key_p));
 
         // NOTE: WE FETCH THE POINTER WITHOUT HELP ALONG SINCE WE ARE
         // NOW ON ITS PARENT
@@ -6766,13 +6781,15 @@ before_switch:
                                std::vector<RawKeyType> raw_key_list,
                                std::vector<NodeID> node_id_list) {
     InnerNode *temp_node_p = \
-      new InnerNode{p_lbound, p_ubound, p_next_node_id, this};
+      new InnerNode{p_lbound, p_ubound, p_next_node_id};
 
     assert(raw_key_list.size() == node_id_list.size());
 
-    // Push item into the node map by
+    // Push item into the node 1 by 1
     for(int i = 0;i < (int)raw_key_list.size();i++) {
-      temp_node_p->sep_map[KeyType{raw_key_list[i]}] = node_id_list[i];
+      SepItem item{KeyType{raw_key_list[i]}, node_id_list[i]};
+
+      temp_node_p->sep_list.push_back(item);
     }
 
     return temp_node_p;
