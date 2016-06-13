@@ -1,5 +1,7 @@
 
 #include <cstring>
+#include <unordered_map>
+
 #include "bwtree.h"
 #include "../benchmark/btree.h"
 
@@ -786,6 +788,45 @@ void TestStdMapInsertReadPerformance() {
   return;
 }
 
+void TestStdUnorderedMapInsertReadPerformance() {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  // Insert 1 million keys into std::map
+  std::unordered_map<int, double> test_map{};
+  for(int i = 0;i < 1024 * 1024;i++) {
+    test_map[i] = i * 1.11L;
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "std::unordered_map: " << 1.0 / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from std::map
+    for(int i = 0;i < 1024 * 1024;i++) {
+      double t = test_map[i];
+      (void)t;
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "std::unordered_map: " << (1.0 * iter) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
 void TestBTreeInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
@@ -917,6 +958,7 @@ int main(int argc, char **argv) {
   
   if(run_benchmark == true) {
     TestStdMapInsertReadPerformance();
+    TestStdUnorderedMapInsertReadPerformance();
     TestBTreeInsertReadPerformance();
     TestBwTreeInsertReadPerformance(t1);
   }
