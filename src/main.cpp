@@ -1,9 +1,13 @@
 
+#include <cstring>
 #include "bwtree.h"
+#include "../benchmark/btree.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
 #endif
+
+using namespace stx;
 
 /*
  * class KeyComparator - Test whether BwTree supports context
@@ -496,8 +500,7 @@ void TestNavigateInnerNode(TreeType *t) {
 constexpr int key_num = 65536;
 constexpr int thread_num = 4;
 
-std::mutex tree_size_mutex;
-size_t tree_size = 0;
+std::atomic<size_t> tree_size;
 
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (int)(thread_id + 1) * key_num;i++) {
@@ -532,6 +535,8 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
 }
 
 void InsertTest2(uint64_t thread_id, TreeType *t) {
+  tree_size = 0UL;
+  
   for(int i = 0;i < key_num;i++) {
     int key = thread_num * i + thread_id;
 
@@ -540,11 +545,12 @@ void InsertTest2(uint64_t thread_id, TreeType *t) {
     t->Insert(key, 1.1111L * key);
     t->Insert(key, 1.11111L * key);
 
-    //tree_size_mutex.lock();
-    //tree_size += 4;
-    //tree_size_mutex.unlock();
+    tree_size.fetch_add(4);
 
-    //printf("Tree size = %lu\n", tree_size);
+    size_t current_size = tree_size.load();
+    if(current_size % 1000 == 0) {
+      //printf("Tree size = %lu\n", current_size);
+    }
   }
 
   return;
@@ -741,6 +747,120 @@ void IteratorGetValueTest(TreeType *t) {
   return;
 }
 
+void TestStdMapInsertReadPerformance() {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+  
+  // Insert 1 million keys into std::map
+  std::map<int, double> test_map{};
+  for(int i = 0;i < 1024 * 1024;i++) {
+    test_map[i] = i * 1.11L;
+  }
+  
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "std::map: " << 1.0 / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from std::map
+    for(int i = 0;i < 1024 * 1024;i++) {
+      double t = test_map[i];
+      (void)t;
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+  
+  elapsed_seconds = end - start;
+  std::cout << "std::map: " << (1.0 * iter) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+  
+  return;
+}
+
+void TestBTreeInsertReadPerformance() {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  // Insert 1 million keys into std::map
+  btree<int, double> test_map{};
+  for(int i = 0;i < 1024 * 1024;i++) {
+    test_map.insert(i, i * 1.11L);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "std::btree: " << 1.0 / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from std::map
+    for(int i = 0;i < 1024 * 1024;i++) {
+      auto t = test_map.find(i);
+      (void)t;
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "stx::btree " << (1.0 * iter) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
+void TestBwTreeInsertReadPerformance(TreeType *t) {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  for(int i = 0;i < 1024 * 1024;i++) {
+    t->Insert(i, i * 1.11L);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: " << 1.0 / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+            
+  // Then test read performance
+  
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    for(int i = 0;i < 1024 * 1024;i++) {
+      auto ret = t->GetValue(i);
+      (void)ret;
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: " << (1.0 * iter) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
 void PrintStat(TreeType *t) {
   printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
          t->insert_op_count.load(),
@@ -764,13 +884,52 @@ void PrintStat(TreeType *t) {
 
 
 
-int main() {
+int main(int argc, char **argv) {
+  bool run_benchmark = false;
+  bool run_test = false;
+  
+  int opt_index = 1;
+  while(opt_index < argc) {
+    char *opt_p = argv[opt_index];
+    
+    if(strcmp(opt_p, "-b") == 0) {
+      run_benchmark = true;
+    } else if(strcmp(opt_p, "-t") == 0) {
+      run_test = true;
+    }
+    
+    opt_index++;
+  }
+  
+  bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark);
+  bwt_printf("RUN_TEST = %d\n", run_test);
+  bwt_printf("======================================\n");
+  
+  //////////////////////////////////////////////////////
+  // Next start running test cases
+  //////////////////////////////////////////////////////
+  
   TreeType *t1 = new TreeType{KeyComparator{1},
                               KeyEqualityChecker{1}};
 
   tree_size = 0;
   print_flag = false;
   
+  if(run_benchmark == true) {
+    TestStdMapInsertReadPerformance();
+    TestBTreeInsertReadPerformance();
+    TestBwTreeInsertReadPerformance(t1);
+  }
+  
+  if(run_test == false) {
+    // Uncomment this to benchmark performance only
+    END_TEST
+  }
+  
+  t1 = new TreeType{KeyComparator{1}, KeyEqualityChecker{1}};
+  print_flag = false;
+  
+  //////////////
   // Test iterator
   //////////////
   
