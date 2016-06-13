@@ -497,8 +497,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 1024 * 1024 / 4;
-constexpr int thread_num = 1;
+constexpr int key_num = 65536;
+constexpr int thread_num = 4;
 
 std::atomic<size_t> tree_size;
 
