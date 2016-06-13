@@ -313,10 +313,10 @@ class BwTree {
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
 
   // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 16;
+  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 32;
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 7;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 15;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 7;
 
   /*
@@ -3148,45 +3148,41 @@ class BwTree {
 
     // We do not know what to do for an empty inner node
     assert(sep_list_p->size() != 0UL);
-
-    auto iter1 = sep_list_p->begin();
-    auto iter2 = iter1 + 1;
-
-    // NOTE: If there is only one element then we would
-    // not be able to go into while() loop
-    // and in that case we just check for upper bound
-    //assert(iter2 != sep_list_p->end());
-
-    // TODO: Replace this with binary search
-    while(iter2 != sep_list_p->end()) {
-      if(KeyCmpGreaterEqual(search_key, iter1->key) && \
-         KeyCmpLess(search_key, iter2->key)) {
-        // We set separator key before returning
-        *lbound_p_p = &iter1->key;
-
-        return iter1->node;
-      }
-
-      iter1++;
-      iter2++;
-    }
-
-    // This assertion failure could only happen if we
-    // hit +Inf as separator
-    assert(iter1->node != INVALID_NODE_ID);
-
+    
     // If search key >= upper bound (natural or artificial) then
     // we have hit the wrong inner node
-    idb_assert(KeyCmpLess(search_key, *ubound_p));
+    assert(KeyCmpLess(search_key, *ubound_p));
 
     // Search key must be greater than or equal to the lower bound
     // which is assumed to be a constant associated with a NodeID
     assert(KeyCmpGreaterEqual(search_key, inner_node_p->metadata.lbound));
 
-    // In this corner case, iter1 is the correct sep/NodeID pair
-    *lbound_p_p = &iter1->key;
+    // Hoprfully std::upper_bound would use binary search here
+    auto it = std::upper_bound(sep_list_p->begin(),
+                               sep_list_p->end(),
+                               SepItem{search_key, INVALID_NODE_ID},
+                               [this](const SepItem &si1, const SepItem &si2) {
+                                 return this->wrapped_key_cmp_obj(si1.key, si2.key);
+                               });
+                               
+    // This is impossible since if the first element greater than key
+    // then key < low key which is a violation of the invariant that search key
+    // must >= low key and < high key
+    assert(it != sep_list_p->begin());
+    
+    // Since upper_bound returns the first element > given key
+    // so we need to decrease it to find the last element <= given key
+    // which is out separator key
+    it--;
 
-    return iter1->node;
+    // This assertion failure could only happen if we
+    // hit +Inf as separator
+    assert(it->node != INVALID_NODE_ID);
+
+    // In this corner case, iter1 is the correct sep/NodeID pair
+    *lbound_p_p = &it->key;
+
+    return it->node;
   }
 
   /*
