@@ -3504,7 +3504,7 @@ class BwTree {
                  KeyCmpGreaterEqual(item.key, *ubound_p)) {
                 //bwt_printf("Detected a out of range key in inner base node\n");
 
-                continue;
+                break;
               }
 
               // If the sep key has already been collected, then ignore
