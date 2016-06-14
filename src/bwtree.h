@@ -2594,23 +2594,13 @@ class BwTree {
   /*
    * GetNextNodeID() - Thread-safe lock free method to get next node ID
    *
-   * This function will not return until we have successfully obtained the
-   * ID and increased counter by 1
+   * This function basically compiles to LOCK XADD instruction on x86
+   * which is guaranteed to execute atomically
    */
-  inline NodeID GetNextNodeID() {
-    bool ret = false;
-    NodeID current_id, next_id;
-
-    do {
-      current_id = next_unused_node_id.load();
-      next_id = current_id + 1;
-
-      // Optimistic approach: If nobody has touched next_id then we are done
-      // Otherwise CAS would fail, and we try again
-      ret = next_unused_node_id.compare_exchange_strong(current_id, next_id);
-    } while(ret == false);
-
-    return current_id;
+  NodeID GetNextNodeID() {
+    // fetch_add() returns the old value and increase the atomic
+    // automatically
+    return next_unused_node_id.fetch_add(1);
   }
 
   /*
@@ -8312,6 +8302,10 @@ before_switch:
 
       // TODO: There is currently a bug that throws malloc: memory corruption
       // message on this statement
+      // MORE OBSERVATIONS:
+      // 1. the error is most frequent with GDB without jemalloc
+      // 2. With jemalloc I have never seen this problem
+      // 3. With libc malloc and without GDB this sometimes happen
       EpochNode *epoch_node_p = new EpochNode{};
 
       epoch_node_p->active_thread_count = 0UL;
@@ -8568,7 +8562,7 @@ before_switch:
 
       while(1) {
         // Even if current_epoch_p is nullptr, this should work
-        if(current_epoch_p == head_epoch_p) {
+        if(head_epoch_p == current_epoch_p) {
           bwt_printf("Current epoch is head epoch. Do not clean\n");
 
           break;
@@ -8605,6 +8599,10 @@ before_switch:
         // First need to save this in order to delete current node
         // safely
         EpochNode *next_epoch_node_p = head_epoch_p->next_p;
+        
+        // This line is casuing the malloc() corruption problem
+        // Not sure whether it s because some thread is still accessing
+        // this chunk of memory or because it was written out of bound
         delete head_epoch_p;
 
         // Then advance to the next epoch
