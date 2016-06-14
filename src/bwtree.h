@@ -100,7 +100,7 @@ static void dummy(const char*, ...) {}
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
-      dummy("assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
+      fprintf(stderr, "assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
       idb.Start();                                                      \
       debug_stop_mutex.unlock();                                        \
     }                                                                   \
@@ -110,7 +110,7 @@ static void dummy(const char*, ...) {}
   do {                                                                  \
     if (!(cond)) {                                                      \
       debug_stop_mutex.lock();                                          \
-      dummy("assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
+      fprintf(stderr, "assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
       idb.key_list.push_back(key);                                      \
       idb.node_id_list.push_back(node_id);                              \
       idb.context_p = context_p;                                        \
@@ -205,7 +205,11 @@ class DummyOutObject {
   }
 };
 
+/*
 static DummyOutObject dummy_out;
+*/
+
+#define dummy_out std::cout
 
 using NodeID = uint64_t;
 
@@ -1939,20 +1943,11 @@ class BwTree {
     // NOTE: This will not change once it is fixed
     const bool is_leaf;
 
-    // This is true if the node is the left most node in its parent
-    // We could not remove the leftmost node in a parent
-    // NOTE: This is false for root node
-    bool is_leftmost_child;
-
     // Set to true only if the snapshot is created for a root node
     // such that we know there is no more parent node.
     // A node with this flag set to true must be the first node
     // in the stack
     bool is_root;
-
-    // The low key we uses when entering this node
-    // This is used for finding the left sibling
-    const KeyType *lbound_p;
 
     /*
      * Constructor - Initialize every member to invalid state
@@ -1972,9 +1967,7 @@ class BwTree {
       has_data{false},
       has_metadata{false},
       is_leaf{p_is_leaf},
-      is_leftmost_child{false},
-      is_root{false},
-      lbound_p{nullptr} {
+      is_root{false} {
       // Allocate a logical node
       if(is_leaf == true) {
         logical_node_p = new LogicalLeafNode{tree_p};
@@ -2004,9 +1997,7 @@ class BwTree {
       has_data{p_ns.has_data},
       has_metadata{p_ns.has_metadata},
       is_leaf{p_ns.is_leaf},
-      is_leftmost_child{p_ns.is_leftmost_child},
-      is_root{p_ns.is_root},
-      lbound_p{p_ns.lbound_p} {
+      is_root{p_ns.is_root} {
 
       // Avoid the node being destroyed on destruction of the old node
       p_ns.logical_node_p = nullptr;
@@ -2048,9 +2039,7 @@ class BwTree {
       has_data = snapshot.has_data;
       has_metadata = snapshot.has_metadata;
       is_leaf = snapshot.is_leaf;
-      is_leftmost_child = snapshot.is_leftmost_child;
       is_root = snapshot.is_root;
-      lbound_p = snapshot.lbound_p;
 
       // This completes the move semantics
       snapshot.logical_node_p = nullptr;
@@ -2217,40 +2206,12 @@ class BwTree {
     }
 
     /*
-     * SetLeftMostChildFlag() - Set a snapshot to be the left most child
-     *
-     * This function could only be called once to enforce the invariant that
-     * once we see a node as left most node, it is impossible for us to
-     * mark it as non-leftmost
-     */
-    inline void SetLeftMostChildFlag() {
-      assert(is_leftmost_child == false);
-
-      is_leftmost_child = true;
-
-      return;
-    }
-
-    /*
      * SetRootFlag() - Set is_root flag for a NodeSnapshot instance
      */
     inline void SetRootFlag() {
       assert(is_root == false);
 
       is_root = true;
-
-      return;
-    }
-
-    /*
-     * SetLowKey() - Set the low key of a NodeSnapshot to indicate
-     *               the low key we use when entering current node
-     *
-     * This could be called for multiple times since we allow changing
-     * low key during repositioning
-     */
-    inline void SetLowKey(const KeyType *p_lbound_p) {
-      lbound_p = p_lbound_p;
 
       return;
     }
@@ -2777,12 +2738,6 @@ class BwTree {
     idb.AddKey(context_p->search_key);
     #endif
 
-    // This is the low key (i.e. "virtual sep key")
-    // for root node
-    // NOTE: We make it static since the key itself is constant and
-    // will not be modified
-    static KeyType root_lbound_key = GetNegInfKey();
-
     while(1) {
       // NOTE: break only breaks out this switch
       switch(context_p->current_state) {
@@ -2797,9 +2752,7 @@ class BwTree {
           // We need to call this even for root node since there could
           // be split delta posted on to root node
           LoadNodeID(start_node_id,
-                     context_p,
-                     &root_lbound_key,  // Root node has a "virtual sep"
-                     true);             // root ID is implicitly leftmost
+                     context_p);
 
           // There could be an abort here, and we could not directly jump
           // to Init state since we would like to do some clean up or
@@ -2810,11 +2763,6 @@ class BwTree {
             // This goes to the beginning of loop
             break;
           }
-
-          // Make sure this flag is set
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-          assert(snapshot_p->is_root == true);
-          (void)snapshot_p;
 
           bwt_printf("Successfully loading root node ID\n");
 
@@ -2827,13 +2775,7 @@ class BwTree {
           break;
         } // case Init
         case OpState::Inner: {
-          // For inner nodes, when traversing down we should keep track of the
-          // low key for the NodeID returned, and whether it is the left most
-          // child of the parent node
-          const KeyType *lbound_p = nullptr;
-
-          NodeID child_node_id = \
-            NavigateInnerNode(context_p, &lbound_p);
+          NodeID child_node_id = NavigateInnerNode(context_p);
 
           // Navigate could abort since it might go to another NodeID
           // if there is a split delta and the key is >= split key
@@ -2851,35 +2793,9 @@ class BwTree {
             break;
           }
 
-          bool is_leftmost_child = false;
-
-          // This returns the current inner node that we are traversing into
-          // There must be at least one at this stage
-          // NOTE: The snapshot could have changed if NavigateInnerNode()
-          // switches to another NodeID, which reloads NodeSnapshot
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-          // This is the low key of current inner node
-          // which is also the key we used ti traverse to current node
-          // in its parent (-Inf if current node is root)
-          const KeyType *current_lbound_p = snapshot_p->lbound_p;
-
-          // If the sep key equals the low key of current node then we
-          // know it definitely is the left most child since lbound is always
-          // tight
-          // NOTE: For root node, current_lbound_p is -Inf
-          if(KeyCmpEqual(*current_lbound_p, *lbound_p) == true) {
-            bwt_printf("Child node id = %lu is a left most child\n",
-                       child_node_id);
-
-            is_leftmost_child = true;
-          }
-
           // This might load a leaf child
           LoadNodeID(child_node_id,
-                     context_p,
-                     lbound_p,
-                     is_leftmost_child);
+                     context_p);
 
           if(context_p->abort_flag == true) {
             bwt_printf("LoadNodeID aborted. ABORT\n");
@@ -2890,7 +2806,7 @@ class BwTree {
           }
 
           // This is the node we have just loaded
-          snapshot_p = GetLatestNodeSnapshot(context_p);
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
           if(snapshot_p->is_leaf == true) {
             bwt_printf("The next node is a leaf\n");
@@ -3111,8 +3027,7 @@ class BwTree {
    */
   NodeID LocateSeparatorByKey(const KeyType &search_key,
                               const InnerNode *inner_node_p,
-                              const KeyType *ubound_p,
-                              const KeyType **lbound_p_p) {
+                              const KeyType *ubound_p) {
     // If the upper bound is not set because we have not met a
     // split delta node, then just set to the current upper bound
     if(ubound_p == nullptr) {
@@ -3153,9 +3068,6 @@ class BwTree {
     // This assertion failure could only happen if we
     // hit +Inf as separator
     assert(it->node != INVALID_NODE_ID);
-
-    // In this corner case, iter1 is the correct sep/NodeID pair
-    *lbound_p_p = &it->key;
 
     return it->node;
   }
@@ -3298,8 +3210,7 @@ class BwTree {
    * takes an extra argument for remembering the separator key associated
    * with the NodeID.
    */
-  inline NodeID NavigateInnerNode(Context *context_p,
-                                  const KeyType **lbound_p_p) {
+  inline NodeID NavigateInnerNode(Context *context_p) {
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -3331,8 +3242,7 @@ class BwTree {
           NodeID target_id = \
             LocateSeparatorByKey(search_key,
                                  inner_node_p,
-                                 &node_p->metadata.ubound,
-                                 lbound_p_p); // This records the sep
+                                 &node_p->metadata.ubound);
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
                      target_id);
@@ -3355,9 +3265,6 @@ class BwTree {
           if(KeyCmpGreaterEqual(search_key, insert_low_key) && \
              KeyCmpLess(search_key, insert_high_key)) {
             bwt_printf("Find target ID = %lu in insert delta\n", target_id);
-
-            // Assign the separator key that brings us here
-            *lbound_p_p = &insert_low_key;
 
             return target_id;
           }
@@ -3382,10 +3289,6 @@ class BwTree {
              KeyCmpLess(search_key, delete_high_key)) {
             bwt_printf("Find target ID = %lu in delete delta\n", target_id);
 
-            // For delete node, if there is a match then it must be
-            // the prev separator key for deleted key
-            *lbound_p_p = &delete_low_key;
-
             return target_id;
           }
 
@@ -3408,16 +3311,13 @@ class BwTree {
 
             // Try to jump to the right branch
             // If jump fails just abort
-            JumpToNodeId(branch_id,
-                         context_p,
-                         &split_key, // Equals low key of the target node
-                         false);     // Always could not be left child
+            // NOTE: We do not give parent low key, so is_leftmost
+            // in the resulting snapshot object is by default set to false
+            JumpToNodeID(branch_id,
+                         context_p); 
 
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-              // Before returning an invalid node ID, set it to NULL
-              *lbound_p_p = nullptr;
 
               return INVALID_NODE_ID;
             }
@@ -3572,7 +3472,7 @@ class BwTree {
   }
 
   /*
-   * CollectAllSpesOnInnerRecursive() - This is the counterpart on inner node
+   * CollectAllSepsOnInnerRecursive() - This is the counterpart on inner node
    *
    * Please refer to the function on leaf node for details. These two have
    * almost the same logical flow
@@ -3998,10 +3898,8 @@ class BwTree {
             NodeID split_sibling_id = split_node_p->split_sibling;
 
             // Jump to right sibling, with possibility that it aborts
-            JumpToNodeId(split_sibling_id,
-                         context_p,
-                         &split_key, // This is the low key for target node
-                         false);     // Always could not be leftmost child
+            JumpToNodeID(split_sibling_id,
+                         context_p);
 
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
@@ -4482,7 +4380,6 @@ class BwTree {
     // Get last record which is the current node's context
     // and we must make sure the current node is not left mode node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    assert(snapshot_p->is_leftmost_child == false);
 
     // Check currently we are on a remove node
     NodeType type = snapshot_p->node_p->GetType();
@@ -4492,57 +4389,60 @@ class BwTree {
 
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
-    const KeyType *lbound_p = snapshot_p->lbound_p;
-    // We use this in assertion
+    const KeyType *removed_lbound_p = &snapshot_p->node_p->metadata.lbound;
+    
+    // We use this to test whether we have found the real
+    // left sibling whose next node id equals this one
     const NodeID removed_node_id = snapshot_p->node_id;
+    
+    // After this point snapshot_p could be overwritten
 
     // Get its parent node
-    snapshot_p = GetLatestParentNodeSnapshot(context_p);
-    assert(snapshot_p->is_leaf == false);
+    NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
+    assert(parent_snapshot_p->is_leaf == false);
 
     // Load data into the parent node if there is not
-    if(snapshot_p->has_data == false) {
-      CollectAllSepsOnInner(snapshot_p);
+    if(parent_snapshot_p->has_data == false) {
+      CollectAllSepsOnInner(parent_snapshot_p);
     }
 
     // After this point there must be data associated with the
     // node snapshot
-    assert(snapshot_p->has_data == true);
-    assert(snapshot_p->has_metadata == true);
+    assert(parent_snapshot_p->has_data == true);
+    assert(parent_snapshot_p->has_metadata == true);
 
     KeyNodeIDMap &key_value_map = \
-      snapshot_p->GetLogicalInnerNode()->GetContainer();
-    typename KeyNodeIDMap::reverse_iterator it{};
-
-    for(it = key_value_map.rbegin();
-        it != key_value_map.rend();
-        it++) {
-      // We break at the first key from right to left that is
-      // strictly less than the low key we are from
-      if(KeyCmpLess(it->first, *lbound_p) == true) {
-        break;
-      }
-    } // for right to left iteration of SepItem
-
-    // This could not be true since the left most SepItem
-    // will always be valid (i.e. we always hit break)
-    assert(it != key_value_map.rend());
+      parent_snapshot_p->GetLogicalInnerNode()->GetContainer();
+    
+    // This returns the first iterator >= current low key
+    auto it = key_value_map.find(*removed_lbound_p);
+    
+    // Such sep key must exist
+    assert(it != key_value_map.end());
+    /*
+    // And it should not be the first key (o.w. we are seeing
+    // a removed node on the left most child)
+    idb_assert_key(snapshot_p->node_id,
+                   context_p->search_key,
+                   context_p,
+                   it != key_value_map.begin());
+    */
+    if(it == key_value_map.begin()) {
+      bwt_printf("Current parent snapshot indicates we"
+                 " are on leftmost child\n");
+      bwt_printf("    But actually seen RemoveDelta."
+                 " Parent must have merged. ABORT\n");
+      
+      context_p->abort_flag = true;
+      
+      return;
+    }
+    
+    it--;
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
     idb_assert(left_sibling_id != INVALID_NODE_ID);
-
-    // This is used for LoadNodeID() if the left sibling itself
-    // is removed, then we need to recursively call this function
-    // to find the left left sibling, with the entry key
-    const KeyType *entry_key_p = &it->first;
-
-    // If it is the leftmost child node we mark this as true
-    bool is_leftmost_child = false;
-    if(KeyCmpEqual(*entry_key_p,
-                   *snapshot_p->GetLogicalInnerNode()->lbound_p) == true) {
-      is_leftmost_child = true;
-    }
 
     while(1) {
       // It is impossible that the current node is merged
@@ -4557,7 +4457,7 @@ class BwTree {
 
       // This might incur recursive update
       // We need to pass in the low key of left sibling node
-      JumpToNodeId(left_sibling_id, context_p, entry_key_p, is_leftmost_child);
+      JumpToNodeID(left_sibling_id, context_p);
 
       if(context_p->abort_flag == true) {
         bwt_printf("CALLEE ABORT\n");
@@ -4569,29 +4469,19 @@ class BwTree {
       // (but do not pop it - so we directly return)
       snapshot_p = GetLatestNodeSnapshot(context_p);
 
-      // try to consolidate the node for meta data
-      if(snapshot_p->is_leaf) {
-        CollectMetadataOnLeaf(snapshot_p);
-      } else {
-        CollectMetadataOnInner(snapshot_p);
-      }
-
-      // After this point the new node has metadata
-      assert(snapshot_p->has_metadata == true);
-
       // Get high key and left sibling NodeID
-      const KeyType *ubound_p = snapshot_p->GetHighKey();
+      const KeyType *left_ubound_p = &snapshot_p->node_p->metadata.ubound;
 
       // This will be used in next iteration
       // NOTE: The variable name is a little bit confusing, because
       // this variable was created outside of the loop
-      left_sibling_id = snapshot_p->GetRightSiblingNodeID();
+      left_sibling_id = snapshot_p->node_p->metadata.next_node_id;
 
       // If the high key of the left sibling equals the low key
       // then we know it is the real left sibling
       // Or the node has already been consolidated, then the range
       // of the node would cover current low key
-      if(KeyCmpEqual(*ubound_p, *lbound_p)) {
+      if(KeyCmpEqual(*left_ubound_p, *removed_lbound_p)) {
         bwt_printf("Find a exact match of low/high key\n");
 
         // We need to take care that high key is not sufficient for identifying
@@ -4614,7 +4504,7 @@ class BwTree {
           // Return and propagate abort information
           return;
         }
-      } else if(KeyCmpGreater(*ubound_p, *lbound_p)) {
+      } else if(KeyCmpGreater(*left_ubound_p, *removed_lbound_p)) {
         bwt_printf("The range of left sibling covers current node\n");
         bwt_printf("    Don't know for sure what happened\n");
 
@@ -4630,13 +4520,6 @@ class BwTree {
         // its right side
         assert(left_sibling_id != INVALID_NODE_ID);
       }
-
-      // For the next iteration, we traverse to the node to its right
-      // using the next node ID and its high key as next node's low key
-      entry_key_p = ubound_p;
-
-      // As long as we traverse right, this becomes not true
-      is_leftmost_child = false;
     } // while(1)
 
     return;
@@ -4652,27 +4535,23 @@ class BwTree {
    * be invalidated (logical node pointer being set to nullptr) after the move
    */
   void TakeNodeSnapshot(NodeID node_id,
-                        Context *context_p,
-                        const KeyType *lbound_p,
-                        bool is_leftmost_child) {
+                        Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
     std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
 
     // Need to check whether it is leaf or inner node
     // NOTE: EVEN IF IT IS A LeafAbortNode WE STILL NEED
     // TO CALL THIS FUNCTION TO KNOW WE ARE ON LEAF
-    bool is_leaf = node_p->IsOnLeafDeltaChain();
-    NodeSnapshot snapshot{is_leaf, this};
+    NodeSnapshot snapshot{node_p->IsOnLeafDeltaChain(),
+                          this};
 
     snapshot.node_id = node_id;
-    // This makes sure the cached version of logical node is removed
+    
+    // If current state is Init state then we know we are now on the root
+    snapshot.is_root = (context_p->current_state == OpState::Init);
+    
+    // Before calling this function, is_leaf must be set
     snapshot.SwitchPhysicalPointer(node_p);
-
-    // This is useful for finding left sibling
-    snapshot.lbound_p = lbound_p;
-
-    // Mark it if it is the leftmost child
-    snapshot.is_leftmost_child = is_leftmost_child;
 
     // Put this into the list in case that a remove node causes
     // backtracking
@@ -4710,9 +4589,7 @@ class BwTree {
    * (i.e. checking whether switching to itself) whenever requested
    */
   void UpdateNodeSnapshot(NodeID node_id,
-                          Context *context_p,
-                          const KeyType *lbound_p,
-                          bool is_leftmost_child) {
+                          Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
 
     // We operate on the latest snapshot instead of creating a new one
@@ -4724,11 +4601,7 @@ class BwTree {
 
     // Make sure we are not switching to itself
     assert(snapshot_p->node_id != node_id);
-
-    // We change these three
-    snapshot_p->is_leftmost_child = is_leftmost_child;
     snapshot_p->node_id = node_id;
-    snapshot_p->lbound_p = lbound_p;
 
     // We only call UpdateNodeSnapshot() when we switch to split
     // sibling in Navigate function and jump to left sibling
@@ -4751,26 +4624,16 @@ class BwTree {
    * call JumpToNodeID() instead
    *
    * NOTE: If this function is called when we are still in Init mode, then
-   * root flag is set as a side-effect, since we know now we are definitely
+   * root flag is set, since we know now we are definitely
    * loading the ID for root node
    */
   inline void LoadNodeID(NodeID node_id,
-                         Context *context_p,
-                         const KeyType *lbound_p,
-                         bool is_leftmost_child) {
+                         Context *context_p) {
     bwt_printf("Loading NodeID = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
-    TakeNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
-
-    // If we are in init state, then set root flag
-    if(context_p->current_state == OpState::Init) {
-      bwt_printf("Loading NodeID for root; set root flag\n");
-
-      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-      snapshot_p->SetRootFlag();
-    }
-
+    TakeNodeSnapshot(node_id, context_p);
+    
     bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
@@ -4800,14 +4663,12 @@ class BwTree {
    * NOTE: This function could also be called to traverse right, in which case
    * we need to check whether the target node is the left most child
    */
-  void JumpToNodeId(NodeID node_id,
-                    Context *context_p,
-                    const KeyType *lbound_p,
-                    bool is_leftmost_child) {
+  void JumpToNodeID(NodeID node_id,
+                    Context *context_p) {
     bwt_printf("Jumping to node ID = %lu\n", node_id);
 
     // This updates the current snapshot in the stack
-    UpdateNodeSnapshot(node_id, context_p, lbound_p, is_leftmost_child);
+    UpdateNodeSnapshot(node_id, context_p);
     
     bool recommend_consolidation = FinishPartialSMO(context_p);
 
@@ -4858,10 +4719,11 @@ class BwTree {
     // the left sibling
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
-    // NOTE: For root node this is nullptr
+    
+    // NOTE: For root node this is -Inf
     // But we do not allow posting remove delta on root node
     // which means it would not be
-    const KeyType *lbound_p = snapshot_p->lbound_p;
+    const KeyType *lbound_p = &snapshot_p->node_p->metadata.lbound;
 
     // And also need to update this if we post a new node
     // NOTE: This will be updated by remove node, so do not make
@@ -4894,18 +4756,6 @@ before_switch:
       case NodeType::InnerRemoveType: {
         bwt_printf("Helping along remove node...\n");
 
-        // If snapshot indicates this is a leftmost child, but
-        // actually we have seen a remove, then the parent must have
-        // been merged into its left sibling
-        // so we just abort and retry
-        if(snapshot_p->is_leftmost_child == true) {
-          bwt_printf("Snapshot indicates this is left most child. ABORT\n");
-
-          context_p->abort_flag = true;
-
-          return false;
-        }
-
         const DeltaNode *delta_node_p = \
           static_cast<const DeltaNode *>(node_p);
 
@@ -4924,6 +4774,7 @@ before_switch:
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = \
           GetLatestNodeSnapshot(context_p);
+          
         // Make sure we are still on the same level
         assert(snapshot_p->is_leaf == left_snapshot_p->is_leaf);
 
@@ -4932,32 +4783,16 @@ before_switch:
         // We save this before lbound_p which was once remove node lbound_p
         // is overwritten with the lbound_p of left sibling
         const KeyType *remove_node_lbound_p = lbound_p;
-        NodeID remove_node_id = node_id;
-        (void)remove_node_id;
 
         // Update current node information
         // NOTE: node_p will not be used here since we have already
         // saved merge sibling in merge_right_branch
         node_p = left_sibling_p;
         node_id = left_snapshot_p->node_id;
-        lbound_p = left_snapshot_p->lbound_p;
+        lbound_p = &left_snapshot_p->node_p->metadata.lbound;
 
         // Now they are equal
         snapshot_p = left_snapshot_p;
-
-        // if debug is on, make sure it is the left sibling
-        #ifdef BWTREE_DEBUG
-        if(left_snapshot_p->is_leaf == true) {
-          CollectMetadataOnLeaf(left_snapshot_p);
-        } else {
-          CollectMetadataOnInner(left_snapshot_p);
-        }
-
-        // Make sure it is the real left sibling
-        assert(KeyCmpEqual(*left_snapshot_p->GetHighKey(),
-                           *remove_node_lbound_p));
-        assert(left_snapshot_p->GetNextNodeID() == remove_node_id);
-        #endif
 
         bool ret = false;
 
@@ -5002,12 +4837,6 @@ before_switch:
         } // if ret == true
 
         // CURRENT WE DO NOT CONTINUE
-        //bwt_printf("Continue to post index term delete delta\n");
-
-        // Update type information and make sure it is the correct node
-        //type = node_p->GetType();
-        //assert(type == NodeType::InnerMergeType ||
-        //       type == NodeType::LeafMergeType);
 
         assert(false);
       } // case Inner/LeafRemoveType
@@ -5474,9 +5303,6 @@ before_switch:
                      node_id,
                      new_node_id);
 
-          // NOTE: WE SHOULD SWITCH TO SPLIT NODE
-          snapshot_p->SwitchPhysicalPointer(split_node_p);
-
           // TODO: WE ABORT HERE TO AVOID THIS THREAD POSTING ANYTHING
           // ON TOP OF IT WITHOUT HELPING ALONG AND ALSO BLOCKING OTHER
           // THREAD TO HELP ALONG
@@ -5494,13 +5320,25 @@ before_switch:
         }
 
       } else if(node_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
-        if(snapshot_p->is_leftmost_child == true || \
-           snapshot_p->is_root == true) {
+        // Leaf node could not be root
+        assert(snapshot_p->is_root == false);
+        
+        NodeSnapshot *parent_snapshot_p = \
+          GetLatestParentNodeSnapshot(context_p);
+
+        bool is_leftmost_child = \
+          KeyCmpEqual(snapshot_p->node_p->metadata.lbound,
+                      parent_snapshot_p->node_p->metadata.lbound);
+
+        // We could not remove leftmost node
+        if(is_leftmost_child == true) {
           bwt_printf("Left most leaf node cannot be removed\n");
 
           return;
         }
 
+        // After this point we decide to remove leaf node
+        
         bwt_printf("Node size <= leaf lower threshold. Remove\n");
 
         // Install an abort node on parent
@@ -5538,8 +5376,6 @@ before_switch:
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT.\n");
-
-          snapshot_p->SwitchPhysicalPointer(node_p);
 
           context_p->abort_flag = true;
 
@@ -5628,8 +5464,6 @@ before_switch:
                      node_id,
                      new_node_id);
 
-          snapshot_p->SwitchPhysicalPointer(split_node_p);
-
           // Same reason as in leaf node
           context_p->abort_flag = true;
 
@@ -5644,13 +5478,35 @@ before_switch:
           return;
         } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
+        if(snapshot_p->is_root == true) {
+          bwt_printf("Root underflow - let it be\n");
+          
+          return;
+        }
+        
+        // After this point we know there is at least a parent
+        NodeSnapshot *parent_snapshot_p = \
+          GetLatestParentNodeSnapshot(context_p);
+        
+        // Check whether current inner node is left most child by comparing
+        // the low key of its parent node when we traverse down and the current
+        // node's low key
+        // NOTE: If the parent node has changed (e.g. split on the current
+        // node's low key) we will not be able to catch it. But we will
+        // find it later by posting an InnerAbortNode on parent which would
+        // result in CAS failing and aborting
+        bool is_leftmost_child = \
+          KeyCmpEqual(snapshot_p->node_p->metadata.lbound,
+                      parent_snapshot_p->node_p->metadata.lbound);
+        
         // We could not remove leftmost node
-        if(snapshot_p->is_leftmost_child == true || \
-           snapshot_p->is_root == true) {
+        if(is_leftmost_child == true) {
           bwt_printf("Left most inner node cannot be removed\n");
 
           return;
         }
+        
+        // After this point we decide to remove
 
         bwt_printf("Node size <= inner lower threshold. Remove\n");
 
@@ -5690,8 +5546,6 @@ before_switch:
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
-
-          snapshot_p->SwitchPhysicalPointer(node_p);
 
           // We abort after installing a node remove delta
           context_p->abort_flag = true;
@@ -7724,11 +7578,13 @@ before_switch:
         case NodeType::LeafSplitType:
         case NodeType::LeafRemoveType:
         case NodeType::LeafMergeType:
+        case NodeType::LeafAbortType:
         case NodeType::InnerInsertType:
         case NodeType::InnerDeleteType:
         case NodeType::InnerSplitType:
         case NodeType::InnerRemoveType:
         case NodeType::InnerMergeType:
+        case NodeType::InnerAbortType:
         case NodeType::LeafUpdateType: {
           const DeltaNode *delta_node_p = \
             static_cast<const DeltaNode *>(current_node_p);
@@ -7785,25 +7641,9 @@ before_switch:
      * ProcessGotoSibling() - Goto sibling node (only for leaf nodes)
      */
     void ProcessGotoSibling() {
-      NodeID next_node_id = INVALID_NODE_ID;
+      NodeID next_node_id = current_node_p->metadata.next_node_id;
 
-      if(current_type == NodeType::InnerType) {
-        const InnerNode *inner_node_p = \
-          static_cast<const InnerNode *>(current_node_p);
-
-        next_node_id = inner_node_p->next_node_id;
-      } else if(current_type == NodeType::LeafType) {
-        const LeafNode *leaf_node_p = \
-          static_cast<const LeafNode *>(current_node_p);
-
-        next_node_id = leaf_node_p->next_node_id;
-      } else {
-        dummy_out << "Type (" << NodeTypeToString(current_type)
-                  << ") does not have sibling node" << std::endl;
-        return;
-      }
-
-      // This should not happen, but just in case
+      // This may happen for the last node in the chain
       if(next_node_id == INVALID_NODE_ID) {
         dummy_out << "NodeID is INVALID_NODE_ID";
 
@@ -7873,30 +7713,11 @@ before_switch:
      * ProcessPrintBound() - Process high key and low key printing
      */
     void ProcessPrintBound() {
-      if(current_type == NodeType::InnerType) {
-        const InnerNode *inner_node_p = \
-          static_cast<const InnerNode *>(current_node_p);
-
-        dummy_out << "Lower, Upper: "
-                  << GetKeyID(inner_node_p->lbound)
-                  << ", "
-                  << GetKeyID(inner_node_p->ubound)
-                  << std::endl;
-      } else if(current_type == NodeType::LeafType) {
-        const LeafNode *leaf_node_p = \
-          static_cast<const LeafNode *>(current_node_p);
-
-        dummy_out << "Lower, Upper: "
-                  << GetKeyID(leaf_node_p->lbound)
-                  << ", "
-                  << GetKeyID(leaf_node_p->ubound)
-                  << std::endl;
-      } else {
-        dummy_out << "Type ("
-                  << NodeTypeToString(current_type)
-                  << ") does not have bound key"
-                  << std::endl;
-      }
+      dummy_out << "Lower, Upper: "
+                << GetKeyID(current_node_p->metadata.lbound)
+                << ", "
+                << GetKeyID(current_node_p->metadata.ubound)
+                << std::endl;
 
       return;
     }
@@ -8151,12 +7972,10 @@ before_switch:
 
       for(auto &snapshot : context_p->path_list) {
         dummy_out << snapshot.node_id;
-        dummy_out << "; leftmost = "
-                  << snapshot.is_leftmost_child;
         dummy_out << "; is_leaf = "
                   << snapshot.is_leaf;
-        dummy_out << "; low key: "
-                  << GetKeyID(*snapshot.lbound_p);
+        dummy_out << "; low key (from metadata): "
+                  << GetKeyID(snapshot.node_p->metadata.lbound);
 
         dummy_out << std::endl;
       }
@@ -8170,7 +7989,7 @@ before_switch:
     void ProcessConsolidate() {
       bool is_leaf = current_node_p->IsOnLeafDeltaChain();
 
-      NodeSnapshot snapshot{is_leaf};
+      NodeSnapshot snapshot{is_leaf, tree};
       snapshot.node_p = current_node_p;
 
       if(is_leaf == true) {
@@ -8309,7 +8128,7 @@ before_switch:
           // We push the target key into key_list
           // when we hit the assertion, and then invoke the debugger
           // then we could use its index to see the relative position of the key
-          int key_index;
+          size_t key_index;
           std::cin >> key_index;
 
           if (key_index < 0 || key_index >= key_list.size()) {
@@ -8318,7 +8137,7 @@ before_switch:
             dummy_out << GetKeyID(key_list[key_index]) << std::endl;
           }
         } else if (opcode == "get-id") {
-          int node_id_index;
+          size_t node_id_index;
           std::cin >> node_id_index;
 
           if (node_id_index < 0 || node_id_index >= node_id_list.size()) {
