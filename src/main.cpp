@@ -24,7 +24,7 @@ using namespace stx;
  */
 class KeyComparator {
  public:
-  bool operator()(const int k1, const int k2) const {
+  inline bool operator()(const int k1, const int k2) const {
     return k1 < k2;
   }
 
@@ -48,7 +48,7 @@ class KeyComparator {
  */
 class KeyEqualityChecker {
  public:
-  bool operator()(const int k1, const int k2) const {
+  inline bool operator()(const int k1, const int k2) const {
     return k1 == k2;
   }
   
@@ -841,7 +841,7 @@ void TestBTreeInsertReadPerformance() {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "std::btree: " << 1.0 / elapsed_seconds.count()
+  std::cout << "stx::btree: " << 1.0 / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
 
   ////////////////////////////////////////////
