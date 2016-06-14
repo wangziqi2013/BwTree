@@ -315,6 +315,7 @@ class BwTree {
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = -4;
 
   // If node size goes above this then we split it
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 32;
@@ -5148,7 +5149,16 @@ before_switch:
       static_cast<const DeltaNode *>(node_p);
 
     // If depth does not exceeds threshold then we check recommendation flag
-    const int depth = delta_node_p->depth;
+    int depth = delta_node_p->depth;
+    if(snapshot_p->is_leaf == true) {
+      // Adjust the length a little bit using this variable
+      // NOTE: The length of the delta chain on leaf coule be a
+      // little bit longer than on inner
+      // so this is usually a negative value
+      // This improves performance
+      depth += DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF;
+    }
+    
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
       // If there is not recommended consolidation just return
       if(recommend_consolidation == false) {
