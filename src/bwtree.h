@@ -8379,6 +8379,10 @@ before_switch:
      *
      * The effect is that all memory deallocated on and after
      * current epoch will not be freed before current thread leaves
+     *
+     * NOTE: It is possible that prev_count < 0, because in ClearEpoch()
+     * the cleaner thread will decrease the epoch counter by a large amount
+     * to prevent this function using an epoch currently being recycled
      */
     EpochNode *JoinEpoch() {
 try_join_again:
@@ -8388,6 +8392,9 @@ try_join_again:
       EpochNode *epoch_p = current_epoch_p;
 
       int64_t prev_count = epoch_p->active_thread_count.fetch_add(1);
+      
+      // We know epoch_p is now being cleaned, so need to read the
+      // current epoch again because it must have been moved
       if(prev_count < 0) {
         goto try_join_again;
       }
@@ -8589,14 +8596,25 @@ try_join_again:
           break;
         }
         
+        // If some thread joins the epoch between the previous branch
+        // and the following fetch_sub(), then fetch_sub() returns a positive
+        // number, which is the number of threads that have joined the epoch
+        // since last epoch counter testing.
+        
         if(head_epoch_p->active_thread_count.fetch_sub(max_thread_count) > 0) {
           bwt_printf("Some thread sneaks in after we have decided"
                      " to clean. Return\n");
 
+          // Must add it back to let the next round of cleaning correctly
+          // identify empty epoch
           head_epoch_p->active_thread_count.fetch_add(max_thread_count);
                      
           break;
         }
+        
+        // After this point all fetch_add() on the epoch counter would return
+        // a negative value which will cause re-read of current_epoch_p
+        // to prevent joining an epoch that is being deleted
 
         // If the epoch has cleared we just loop through its garbage chain
         // and then free each delta chain
