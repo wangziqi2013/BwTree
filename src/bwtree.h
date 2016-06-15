@@ -2158,14 +2158,11 @@ class BwTree {
     /*
      * GetHighKey() - Return the high key of a snapshot
      *
-     * This deals with different node types
+     * Since we store node metadata inside BaseNode it could
+     * quickly find the high key without worrying about type casting
      */
     inline const KeyType *GetHighKey() {
-      if(is_leaf == true) {
-        return GetLogicalLeafNode()->ubound_p;
-      } else {
-        return GetLogicalInnerNode()->ubound_p;
-      }
+      return &node_p->metadata.ubound;
     }
 
     /*
@@ -2174,50 +2171,7 @@ class BwTree {
      * This is useful sometimes for assertion conditions
      */
     inline const KeyType *GetLowKey() {
-      if(is_leaf == true) {
-        return GetLogicalLeafNode()->lbound_p;
-      } else {
-        return GetLogicalInnerNode()->lbound_p;
-      }
-    }
-
-    /*
-     * GetNextNodeID() - Return the NodeID of its right sibling
-     *
-     * NOTE: Do not use const NodeID as return type - it will be ignored
-     * by compiler and induce an error
-     */
-    inline NodeID GetNextNodeID() {
-      if(is_leaf == true) {
-        return GetLogicalLeafNode()->next_node_id;
-      } else {
-        return GetLogicalInnerNode()->next_node_id;
-      }
-    }
-
-    /*
-     * GetRightSiblingNodeID() - Return the node ID of right sibling
-     *                           node (could be INVALID_NODE_ID)
-     *
-     * This function deals with different types of nodes
-     */
-    inline NodeID GetRightSiblingNodeID() {
-      if(is_leaf == true) {
-        return GetLogicalLeafNode()->next_node_id;
-      } else {
-        return GetLogicalInnerNode()->next_node_id;
-      }
-    }
-
-    /*
-     * SetRootFlag() - Set is_root flag for a NodeSnapshot instance
-     */
-    inline void SetRootFlag() {
-      assert(is_root == false);
-
-      is_root = true;
-
-      return;
+      return &node_p->metadata.lbound;
     }
 
     /*
