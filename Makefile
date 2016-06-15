@@ -25,6 +25,9 @@ benchmark-bwtree: main
 test: main
 	LD_PRELOAD=./lib/libjemalloc.so ./main --test
 
+stress-test: main
+	LD_PRELOAD=./lib/libjemalloc.so ./main --stress-test
+
 clean:
 	rm -f ./build/*
 	rm -f *.log
