@@ -315,6 +315,7 @@ class BwTree {
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+  // So maximum delta chain length on leaf is 12
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = -4;
 
   // If node size goes above this then we split it
@@ -323,6 +324,8 @@ class BwTree {
 
   constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 15;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 7;
+  
+  constexpr static int64_t max_thread_count = 888888;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -2314,6 +2317,8 @@ class BwTree {
 
     bwt_printf("Starting epoch manager thread...\n");
     epoch_manager.StartThread();
+    
+    dummy("Call it here to avoid compiler warning\n");
 
     return;
   }
@@ -8194,8 +8199,8 @@ before_switch:
      */
     struct EpochNode {
       // We need this to be atomic in order to accurately
-      // counte the number of threads
-      std::atomic<size_t> active_thread_count;
+      // count the number of threads
+      std::atomic<int64_t> active_thread_count;
       
       // We need this to be atomic to be able to
       // add garbage nodes without any race condition
@@ -8244,7 +8249,7 @@ before_switch:
       current_epoch_p = new EpochNode{};
       // These two are atomic variables but we could
       // simply assign to them
-      current_epoch_p->active_thread_count = 0UL;
+      current_epoch_p->active_thread_count = 0;
       current_epoch_p->garbage_list_p = nullptr;
 
       current_epoch_p->next_p = nullptr;
@@ -8310,15 +8315,9 @@ before_switch:
     void CreateNewEpoch() {
       bwt_printf("Creating new epoch...\n");
 
-      // TODO: There is currently a bug that throws malloc: memory corruption
-      // message on this statement
-      // MORE OBSERVATIONS:
-      // 1. the error is most frequent with GDB without jemalloc
-      // 2. With jemalloc I have never seen this problem
-      // 3. With libc malloc and without GDB this sometimes happen
       EpochNode *epoch_node_p = new EpochNode{};
 
-      epoch_node_p->active_thread_count = 0UL;
+      epoch_node_p->active_thread_count = 0;
       epoch_node_p->garbage_list_p = nullptr;
 
       // We always append to the tail of the linked list
@@ -8382,12 +8381,16 @@ before_switch:
      * current epoch will not be freed before current thread leaves
      */
     EpochNode *JoinEpoch() {
+try_join_again:
       // We must make sure the epoch we join and the epoch we
       // return are the same one because the current point
       // could change in the middle of this function
       EpochNode *epoch_p = current_epoch_p;
 
-      epoch_p->active_thread_count.fetch_add(1);
+      int64_t prev_count = epoch_p->active_thread_count.fetch_add(1);
+      if(prev_count < 0) {
+        goto try_join_again;
+      }
 
       return epoch_p;
     }
@@ -8580,19 +8583,28 @@ before_switch:
 
         // If we have seen an epoch whose count is not zero then all
         // epochs after that are protected and we stop
-        if(head_epoch_p->active_thread_count.load() != 0UL) {
+        if(head_epoch_p->active_thread_count.load() != 0) {
           bwt_printf("Head epoch is not empty. Return\n");
 
+          break;
+        }
+        
+        if(head_epoch_p->active_thread_count.fetch_sub(max_thread_count) > 0) {
+          bwt_printf("Some thread sneaks in after we have decided"
+                     " to clean. Return\n");
+
+          head_epoch_p->active_thread_count.fetch_add(max_thread_count);
+                     
           break;
         }
 
         // If the epoch has cleared we just loop through its garbage chain
         // and then free each delta chain
 
-        GarbageNode *next_garbage_node_p = nullptr;
+        const GarbageNode *next_garbage_node_p = nullptr;
 
         // Walk through its garbage chain
-        for(GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
+        for(const GarbageNode *garbage_node_p = head_epoch_p->garbage_list_p.load();
             garbage_node_p != nullptr;
             garbage_node_p = next_garbage_node_p) {
           FreeEpochDeltaChain(garbage_node_p->node_p);
@@ -8610,10 +8622,9 @@ before_switch:
         // safely
         EpochNode *next_epoch_node_p = head_epoch_p->next_p;
         
-        // This line is casuing the malloc() corruption problem
-        // Not sure whether it s because some thread is still accessing
-        // this chunk of memory or because it was written out of bound
         delete head_epoch_p;
+        //*(reinterpret_cast<unsigned char *>(head_epoch_p) - 1) = 0x66;
+        //printf("delete head_epoch_p = %p\n", head_epoch_p);
 
         // Then advance to the next epoch
         // It is possible that head_epoch_p becomes nullptr
@@ -8637,6 +8648,7 @@ before_switch:
       // since even if we missed one we could always
       // hit the correct value on next try
       while(exited_flag == false) {
+        //printf("Start new epoch cycle\n");
         CreateNewEpoch();
         ClearEpoch();
 
