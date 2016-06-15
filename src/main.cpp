@@ -504,6 +504,20 @@ constexpr int thread_num = 4;
 
 std::atomic<size_t> tree_size;
 
+void PrintStat(TreeType *t) {
+  printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
+         t->insert_op_count.load(),
+         t->insert_abort_count.load(),
+         (double)t->insert_abort_count.load() / (double)t->insert_op_count.load());
+
+  printf("Delete op = %lu; abort = %lu; abort rate = %lf\n",
+         t->delete_op_count.load(),
+         t->delete_abort_count.load(),
+         (double)t->delete_abort_count.load() / (double)t->delete_op_count.load());
+
+  return;
+}
+
 void InsertTest1(uint64_t thread_id, TreeType *t) {
   for(int i = thread_id * key_num;i < (int)(thread_id + 1) * key_num;i++) {
     t->Insert(i, 1.11L * i);
@@ -902,19 +916,53 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   return;
 }
 
-void PrintStat(TreeType *t) {
-  printf("Insert op = %lu; abort = %lu; abort rate = %lf\n",
-         t->insert_op_count.load(),
-         t->insert_abort_count.load(),
-         (double)t->insert_abort_count.load() / (double)t->insert_op_count.load());
 
-  printf("Delete op = %lu; abort = %lu; abort rate = %lf\n",
-         t->delete_op_count.load(),
-         t->delete_abort_count.load(),
-         (double)t->delete_abort_count.load() / (double)t->delete_op_count.load());
+void StressTest(uint64_t thread_id, TreeType *t) {
+  static std::atomic<size_t> tree_size;
+  static std::atomic<size_t> insert_success;
+  static std::atomic<size_t> delete_success;
+  static std::atomic<size_t> total_op;
+  
+  int max_key = 1024 * 1024;
+  
+  std::random_device r;
+
+  // Choose a random mean between 1 and 6
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, max_key - 1);
+  
+  while(1) {
+    int key = uniform_dist(e1);
+    
+    if((thread_id % 2) == 0) {
+      if(t->Insert(key, 1.11L * key)) {
+        tree_size.fetch_add(1);
+        insert_success.fetch_add(1);
+      }
+    } else {
+      if(t->Delete(key, 1.11L * key)) {
+        tree_size.fetch_sub(1);
+        delete_success.fetch_add(1);
+      }
+    }
+
+    size_t op = total_op.fetch_add(1);
+
+    if(op % max_key == 0) {
+      PrintStat(t);
+      printf("Total operation = %lu; tree size = %lu\n",
+             op,
+             tree_size.load());
+      printf("    insert success = %lu; delete success = %lu\n",
+             insert_success.load(),
+             delete_success.load());
+    }
+  }
 
   return;
 }
+
+
 
 #define END_TEST do{ \
                   print_flag = true; \
@@ -929,6 +977,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_all = false;
   bool run_test = false;
   bool run_benchmark_bwtree = false;
+  bool run_stress = false;
   
   int opt_index = 1;
   while(opt_index < argc) {
@@ -940,6 +989,8 @@ int main(int argc, char **argv) {
       run_test = true;
     } else if(strcmp(opt_p, "--benchmark-bwtree") == 0) {
       run_benchmark_bwtree = true;
+    } else if(strcmp(opt_p, "--stress-test") == 0) {
+      run_stress = true;
     }
     
     opt_index++;
@@ -948,6 +999,7 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark_all);
   bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
   bwt_printf("RUN_TEST = %d\n", run_test);
+  bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("======================================\n");
   
   //////////////////////////////////////////////////////
@@ -955,9 +1007,20 @@ int main(int argc, char **argv) {
   //////////////////////////////////////////////////////
   
   TreeType *t1 = nullptr;
-
   tree_size = 0;
-  print_flag = true;
+  
+  if(run_stress == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+
+    LaunchParallelTestID(8, StressTest, t1);
+
+    print_flag = true;
+    delete t1;
+    print_flag = false;
+  }
   
   if(run_benchmark_bwtree == true) {
     print_flag = true;
