@@ -4524,11 +4524,10 @@ class BwTree {
   /*
    * TakeNodeSnapshot() - Take the snapshot of a node by pushing node information
    *
-   * This function simply copies NodeID, low key, and physical pointer into
-   * the snapshot object, and pushes snapshot into the path list
-   *
-   * NOTE: We use move semantics to push the snapshot, such that the instance will
-   * be invalidated (logical node pointer being set to nullptr) after the move
+   * This function simply copies NodeID, and physical pointer into
+   * the snapshot object. Node that the snapshot object itself is directly
+   * constructed on the path list which is a vector. This avoids copying the
+   * NodeSnapshot object from the stack to vector
    */
   void TakeNodeSnapshot(NodeID node_id,
                         Context *context_p) {
