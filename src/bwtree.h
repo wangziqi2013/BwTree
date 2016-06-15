@@ -4534,26 +4534,19 @@ class BwTree {
                         Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
     std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
+    
+    // As an optimization we construct NodeSnapshot inside the vector
+    // instead of copying it
+    path_list_p->emplace_back(node_p->IsOnLeafDeltaChain(), this);
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-    // Need to check whether it is leaf or inner node
-    // NOTE: EVEN IF IT IS A LeafAbortNode WE STILL NEED
-    // TO CALL THIS FUNCTION TO KNOW WE ARE ON LEAF
-    NodeSnapshot snapshot{node_p->IsOnLeafDeltaChain(),
-                          this};
-
-    snapshot.node_id = node_id;
+    snapshot_p->node_id = node_id;
     
     // If current state is Init state then we know we are now on the root
-    snapshot.is_root = (context_p->current_state == OpState::Init);
+    snapshot_p->is_root = (context_p->current_state == OpState::Init);
     
     // Before calling this function, is_leaf must be set
-    snapshot.SwitchPhysicalPointer(node_p);
-
-    // Put this into the list in case that a remove node causes
-    // backtracking
-    // NOTE: 1. snapshot is invalid after this point
-    //       2. We need to retrieve it using GetLatestNodeSnapshot()
-    path_list_p->push_back(std::move(snapshot));
+    snapshot_p->SwitchPhysicalPointer(node_p);
 
     return;
   }
