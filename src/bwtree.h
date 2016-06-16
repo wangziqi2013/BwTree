@@ -4042,8 +4042,7 @@ before_switch:
         }
 
         // That is the left sibling's snapshot
-        NodeSnapshot *left_snapshot_p = \
-          GetLatestNodeSnapshot(context_p);
+        NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
 
         // This is the left sibling of the merge delta node
         const BaseNode *left_sibling_p = left_snapshot_p->node_p;
@@ -4052,7 +4051,8 @@ before_switch:
         // Not changed if CAS fails
         const BaseNode *merge_node_p = nullptr;
 
-        // Update snapshot pointer
+        // Update snapshot pointer if we fall through to posting
+        // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
 
         bool ret = false;
@@ -5096,23 +5096,11 @@ before_switch:
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
-    // If this is the first delta node, then we just set depth to 1
-    // Otherwise we need to use from the one from previous node
-    int depth = 1;
-
-    if(node_p->IsDeltaNode() == true) {
-      const DeltaNode *delta_node_p = \
-        static_cast<const DeltaNode *>(node_p);
-
-      depth = delta_node_p->depth + 1;
-    }
-
     // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
     const MergeNodeType *merge_node_p = \
       new MergeNodeType{*merge_key_p,
                         merge_branch_p,
                         deleted_node_id,
-                        depth,
                         node_p};
 
     // Compare and Swap!
