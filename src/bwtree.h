@@ -1004,13 +1004,14 @@ class BwTree {
   };
 
   /*
-   * struct Context - Stores per thread context data that is used during
-   *                  tree traversal
+   * class Context - Stores per thread context data that is used during
+   *                 tree traversal
    *
    * NOTE: For each thread there could be only 1 instance of this object
    * so we forbid copy construction and assignment and move
    */
-  struct Context {
+  class Context {
+   public:
     // This is cannot be changed once initialized
     const KeyType search_key;
     
@@ -1062,6 +1063,17 @@ class BwTree {
     Context &operator=(const Context &p_context) = delete;
     Context(Context &&p_context) = delete;
     Context &operator=(Context &&p_context) = delete;
+    
+    /*
+     * HasParentNode() - Returns whether the current node (top of path list)
+     *                   has a parent node
+     */
+    inline bool HasParentNode() const {
+      int path_list_length = static_cast<int>(path_list.size());
+      
+      // If currently the length of the path > 1 then there is a parent node
+      return path_list_length >= 2;
+    }
   };
 
   /*
@@ -1200,6 +1212,27 @@ class BwTree {
       } else {
         return true;
       }
+    }
+    
+    /*
+     * IsInnerNode() - Returns true if the node is an inner node
+     *
+     * This is useful if we want to collect all seps on an inner node
+     * If the top of delta chain is an inner node then just do not collect
+     * and use the node directly
+     */
+    inline bool IsInnerNode() const {
+      return type == NodeType::InnerType;
+    }
+    
+    /*
+     * IsRemoveNode() - Returns true if the node is of inner/leaf remove type
+     *
+     * This is used in JumpToLeftSibling() as an assertion
+     */
+    inline bool IsRemoveNode() const {
+      return (type == NodeType::InnerRemoveNode) || \
+             (type == NodeType::LeafRemoveNode);
     }
 
     /*
@@ -3545,9 +3578,8 @@ class BwTree {
 
     std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
     
-    size_t item_num = present_set.size();
-    
     // Reserve that much space for items to avoid allocation in the future
+    size_t item_num = present_set.size();
     data_list_p->reserve(item_num);
     
     // Copy the entire set into the vector
@@ -3653,24 +3685,14 @@ class BwTree {
   void JumpToLeftSibling(Context *context_p) {
     bwt_printf("Jumping to the left sibling\n");
 
-    std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
-    (void)path_list_p;
-
-    // Make sure the path list is not empty, and that it has a parent node
-    // Even if the original root node splits, the node we are on must be the
-    // left most node of the new root
-    assert(path_list_p->size() != 0 && \
-           path_list_p->size() != 1);
+    assert(context_p->HasParentNode());
 
     // Get last record which is the current node's context
     // and we must make sure the current node is not left mode node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Check currently we are on a remove node
-    NodeType type = snapshot_p->node_p->GetType();
-    assert(type == NodeType::LeafRemoveType || \
-           type == NodeType::InnerRemoveType);
-    (void)type;
+    assert(snapshot_p->node_p->IsRemoveType());
 
     // This is the low key of current removed node. Also
     // the low key of the separator-ID pair
@@ -3686,33 +3708,30 @@ class BwTree {
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
     assert(parent_snapshot_p->is_leaf == false);
 
-    // Load data into the parent node if there is not
-    if(parent_snapshot_p->has_data == false) {
-      CollectAllSepsOnInner(parent_snapshot_p);
+    // We either consolidate the parent node to get an inner node
+    // or directly use the parent node_p if it is already inner node
+    InnerNode *inner_node_p = nullptr;
+    
+    // If the parent node is not inner node (i.e. has delta chain)
+    // then consolidate it to get an inner node
+    // Otherwise just use node_p
+    if(parent_snapshot_p->node_p->IsInnerNode() == false) {
+      inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
+    } else {
+      inner_node_p = parent_snapshot_p->node_p;
     }
-
-    // After this point there must be data associated with the
-    // node snapshot
-    assert(parent_snapshot_p->has_data == true);
-    assert(parent_snapshot_p->has_metadata == true);
-
-    KeyNodeIDMap &key_value_map = \
-      parent_snapshot_p->GetLogicalInnerNode()->GetContainer();
     
     // This returns the first iterator >= current low key
-    auto it = key_value_map.find(*removed_lbound_p);
+    // And we decrease
+    auto it = std::lower_bound(inner_node_p->sep_list.begin(),
+                               inner_node_p->sep_list.end(),
+                               // We use INVALID_NODE_ID since the comp obj does
+                               // not compare node id field
+                               std::make_pair(*removed_lbound_p,
+                                              INVALID_NODE_ID),
+                               key_node_id_pair_cmp_obj);
     
-    // Such sep key must exist
-    assert(it != key_value_map.end());
-    /*
-    // And it should not be the first key (o.w. we are seeing
-    // a removed node on the left most child)
-    idb_assert_key(snapshot_p->node_id,
-                   context_p->search_key,
-                   context_p,
-                   it != key_value_map.begin());
-    */
-    if(it == key_value_map.begin()) {
+    if(it == inner_node_p->sep_list.begin()) {
       bwt_printf("Current parent snapshot indicates we"
                  " are on leftmost child\n");
       bwt_printf("    But actually seen RemoveDelta."
@@ -3724,10 +3743,25 @@ class BwTree {
     }
     
     it--;
+    
+    // After this point the inner node is no longer used
+    // So as an optimization we try to switch the consolidated node into
+    // the parent node using CAS and also in the snapshot
+    
+    bool ret = InstallNodeToReplace(parent_snapshot_p.node_id,
+                                    inner_node_p,
+                                    parent_snapshot_p->node_p);
+                                    
+    // If CAS succeeds we update the node_p in parent snapshot
+    // If CAS fails we delete inner node allocated in CollectAllSeps..()
+    if(ret == true) {
+      parent_snapshot_p->node_p = inner_node_p;
+    } else {
+      delete inner_node_p;
+    }
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
-    idb_assert(left_sibling_id != INVALID_NODE_ID);
 
     while(1) {
       // It is impossible that the current node is merged
@@ -3745,7 +3779,7 @@ class BwTree {
       JumpToNodeID(left_sibling_id, context_p);
 
       if(context_p->abort_flag == true) {
-        bwt_printf("CALLEE ABORT\n");
+        bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n");
 
         return;
       }
@@ -3832,9 +3866,6 @@ class BwTree {
     
     // If current state is Init state then we know we are now on the root
     snapshot_p->is_root = (context_p->current_state == OpState::Init);
-    
-    // Before calling this function, is_leaf must be set
-    snapshot_p->SwitchPhysicalPointer(node_p);
 
     return;
   }
@@ -3885,11 +3916,6 @@ class BwTree {
     // When updating the physical pointer of a root node after posting
     // a delta, please call SwitchPhysicalPointer() instead
     snapshot_p->is_root = false;
-
-    // Resets all cached metadata and data
-    // including flags
-    // and also replace physical pointer
-    snapshot_p->SwitchPhysicalPointer(node_p);
 
     return;
   }
