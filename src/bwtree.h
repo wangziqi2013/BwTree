@@ -3695,15 +3695,29 @@ class BwTree {
 
     // We either consolidate the parent node to get an inner node
     // or directly use the parent node_p if it is already inner node
-    InnerNode *inner_node_p = nullptr;
+    const InnerNode *inner_node_p = \
+      static_cast<const InnerNode *>(parent_snapshot_p->node_p);
     
     // If the parent node is not inner node (i.e. has delta chain)
     // then consolidate it to get an inner node
-    // Otherwise just use node_p
     if(parent_snapshot_p->node_p->IsInnerNode() == false) {
       inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
-    } else {
-      inner_node_p = parent_snapshot_p->node_p;
+      
+      // As an optimization, we CAS the consolidated version of InnerNode
+      // here. If CAS fails, we SHOULD NOT delete the inner node immediately
+      // since its value is still being used by this function
+      // So we delay allocation by putting it into the garbage chain
+      bool ret = InstallNodeToReplace(parent_snapshot_p.node_id,
+                                      inner_node_p,
+                                      parent_snapshot_p->node_p);
+
+      // If CAS succeeds we update the node_p in parent snapshot
+      // If CAS fails we delete inner node allocated in CollectAllSeps..()
+      if(ret == true) {
+        parent_snapshot_p->node_p = inner_node_p;
+      } else {
+        epoch_manager.AddGarbageNode(inner_node_p);
+      }
     }
     
     // This returns the first iterator >= current low key
@@ -3729,21 +3743,9 @@ class BwTree {
     
     it--;
     
-    // After this point the inner node is no longer used
-    // So as an optimization we try to switch the consolidated node into
-    // the parent node using CAS and also in the snapshot
-    
-    bool ret = InstallNodeToReplace(parent_snapshot_p.node_id,
-                                    inner_node_p,
-                                    parent_snapshot_p->node_p);
-                                    
-    // If CAS succeeds we update the node_p in parent snapshot
-    // If CAS fails we delete inner node allocated in CollectAllSeps..()
-    if(ret == true) {
-      parent_snapshot_p->node_p = inner_node_p;
-    } else {
-      delete inner_node_p;
-    }
+    // Note that after this point the inner node is still being used since
+    // we have iterator referring to the internal structure of the inner node
+    // So we could not try CAS here
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
@@ -3764,8 +3766,8 @@ class BwTree {
       JumpToNodeID(left_sibling_id, context_p);
 
       if(context_p->abort_flag == true) {
-        bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n");
-
+        bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n")
+        
         return;
       }
 
@@ -3793,7 +3795,7 @@ class BwTree {
         if(left_sibling_id == removed_node_id) {
           bwt_printf("Find real left sibling, next id == removed id\n");
 
-          // Quit the loop
+          // Quit the loop. Do not return
           break;
         } else {
           bwt_printf("key match but next node ID does not match. ABORT\n");
@@ -4117,32 +4119,21 @@ before_switch:
         const KeyType *next_key_p = nullptr;
         NodeID prev_node_id = INVALID_NODE_ID;
 
-        int depth = 1;
-
-        // This is a faster way of determining depth:
-        // Since we know the parent must be inner node
-        // the only exception is InnerType, in which we need to
-        // set depth to 1. In all other cases just cast them to
-        // DeltaNode and use its depth
-        NodeType parent_type = parent_snapshot_p->node_p->GetType();
-        if(parent_type != NodeType::InnerType) {
-          const DeltaNode *delta_node_p = \
-            static_cast<const DeltaNode *>(parent_snapshot_p->node_p);
-
-          depth = delta_node_p->depth + 1;
-        }
-
-        // Determine deleted key using merge node
+        // Type of the merge delta
+        NodeType type = snapshot_p->node_p->GetType();
         if(type == NodeType::InnerMergeType) {
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(node_p);
 
+          // Extract merge key and deleted node ID from the merge delta
           merge_key_p = &merge_node_p->merge_key;
+          deleted_node_id = merge_node_p->deleted_node_id;
         } else if(type == NodeType::LeafMergeType) {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(node_p);
 
           merge_key_p = &merge_node_p->merge_key;
+          deleted_node_id = merge_node_p->deleted_node_id;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n",
                      static_cast<int>(type));
@@ -4171,15 +4162,11 @@ before_switch:
           return true;
         }
 
-        // NOTE: InnerDeleteNode should use parent node's current
-        // delta chain as its child node
-        // DO NOT USE node_p AS ITS CHILD!!!!!!
         const InnerDeleteNode *delete_node_p = \
           new InnerDeleteNode{*merge_key_p,
                               *next_key_p,
                               *prev_key_p,
                               prev_node_id,
-                              depth,
                               parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
@@ -4188,23 +4175,20 @@ before_switch:
         bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
                                         delete_node_p,
                                         parent_snapshot_p->node_p);
+
         if(ret == true) {
           bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
                      parent_snapshot_p->node_id);
 
-          // Update in parent snapshot
-          //parent_snapshot_p->SwitchPhysicalPointer(delete_node_p);
-
-          // NOTE: We also abort here
           context_p->abort_flag = true;
 
           return false;
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
-          context_p->abort_flag = true;
           // DO NOT FORGET TO DELETE THIS
           delete delete_node_p;
+          context_p->abort_flag = true;
 
           return false;
         }
@@ -5000,77 +4984,71 @@ before_switch:
    *
    * Return true if the merge key is found. false if merge key not found
    */
-  bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
-                            const KeyType *merge_key_p,
-                            const KeyType **prev_key_p_p,
-                            const KeyType **next_key_p_p,
-                            NodeID *prev_node_id_p,
-                            NodeID deleted_node_id) {
+  inline bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
+                                   const KeyType *merge_key_p,
+                                   const KeyType **prev_key_p_p,
+                                   const KeyType **next_key_p_p,
+                                   NodeID *prev_node_id_p,
+                                   NodeID deleted_node_id) {
     // We could only post merge key on merge node
     assert(snapshot_p->is_leaf == false);
-    assert(snapshot_p->has_data == true);
-    assert(snapshot_p->has_metadata == true);
-    
-    (void)deleted_node_id;
 
-    // This is the map that stores key to node ID Mapping
-    KeyNodeIDMap &sep_map = \
-      snapshot_p->GetLogicalInnerNode()->GetContainer();
+    const InnerNode *inner_node_p = \
+      static_cast<const InnerNode *>(parent_snapshot_p->node_p);
 
-    // This does not have to be >= 2, since it is possible
-    // that there is only 1 separator (we just return false
-    // to let the caller know the key has been deleted no
-    // matter what the key is)
-    idb_assert(sep_map.size() != 0);
+    if(parent_snapshot_p->node_p->IsInnerNode() == false) {
+      inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
 
-    // If there is only one key then we know
-    // and we know the key being deleted is not here
-    if(sep_map.size() == 1) {
-      bwt_printf("Only 1 key to delete. Return false\n");
+      bool ret = InstallNodeToReplace(parent_snapshot_p.node_id,
+                                      inner_node_p,
+                                      parent_snapshot_p->node_p);
 
-      return false;
-    }
-
-    // it1 should not be the key since we do not allow
-    // merge node on the leftmost child
-    // FUCK YOU C++ for not having non-random iterator's operator+
-    typename KeyNodeIDMap::iterator it1 = sep_map.begin();
-    decltype(it1) it2 = it1;
-    it2++;
-    decltype(it2) it3 = it2;
-    it3++;
-
-    while(it3 != sep_map.end()) {
-      if(KeyCmpEqual(it2->first, *merge_key_p) == true) {
-        *prev_key_p_p = &it1->first;
-        *next_key_p_p = &it3->first;
-        // We use prev key's node ID
-        *prev_node_id_p = it1->second;
-
-        return true;
+      if(ret == true) {
+        parent_snapshot_p->node_p = inner_node_p;
+      } else {
+        // Must delay deallocation since we return pointers pointing
+        // into this node's data
+        epoch_manager.AddGarbageNode(inner_node_p);
       }
-
-      it1++;
-      it2++;
-      it3++;
     }
-
-    // Special case: sep is the last in parent node
-    // In this case we need to use high key as the next sep key
-    if(KeyCmpEqual(it2->first, *merge_key_p) == true) {
-      *prev_key_p_p = &it1->first;
-      *next_key_p_p = snapshot_p->GetHighKey();
-      *prev_node_id_p = it1->second;
-
-      return true;
-    } else {
-      bwt_printf("Did not find merge key in parent node - already deleted\n");
-
+    
+    // Find the merge key
+    auto merge_key_it = std::lower_bound(inner_node_p->sep_list.begin(),
+                                         inner_node_p->sep_list.end(),
+                                         std::make_pair(*merge_key_p,
+                                                        INVALID_NODE_ID),
+                                         key_node_id_pair_cmp_obj);
+                                         
+    // If the lower bound of merge_key_p is not itself, then we
+    // declare such key does not exist
+    if(KeyCmpEqual(merge_key_it->first, *merge_key_p) == false) {
       return false;
     }
-
-    assert(false);
-    return false;
+    
+    // If we have found the deleted entry then it must be associated
+    // with the node id that has been deleted
+    assert(merge_key_it->second == deleted_node_id);
+    
+    // In the parent node merge key COULD NOT be the left most key
+    // since the merge node itself has a low key, which < merge key
+    // and the low key >= parent node low key
+    assert(merge_key_it != inner_node_p->sep_list.begin());
+    
+    auto merge_key_prev_it = std::advance(merge_key_it, -1);
+    auto merge_key_next_it = std::advance(merge_key_it, 1);
+    
+    *prev_key_p_p = &merge_key_prev_it->first;
+    *prev_node_id_p = merge_key_prev_it->second;
+    
+    // If the merge key is the last key in the inner node
+    // then the next key is the high key of the inner node
+    if(merge_key_next_it == inner_node_p->sep_list.end()) {
+      *next_key_p_p = &inner_node_p->metadata.ubound;
+    } else {
+      *next_key_p_p = &merge_key_next_it->first;
+    }
+    
+    return true;
   }
 
   /*
