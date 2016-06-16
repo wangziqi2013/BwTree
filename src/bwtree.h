@@ -1098,29 +1098,36 @@ class BwTree {
     
     NodeID next_node_id;
     
+    int depth;
+    
     /*
      * Constructor
      *
      * NOTE: We save key objects rather than key pointers in this function
      * in order to prevent hard-to-debug pointer problems
+     *
+     * This constructor is called by InnerNode and LeafNode, so the depth
+     * is by default set to 0
      */
     NodeMetaData(const KeyType &p_lbound,
                  const KeyType &p_ubound,
                  NodeID p_next_node_id) :
       lbound{p_lbound},
       ubound{p_ubound},
-      next_node_id{p_next_node_id}
+      next_node_id{p_next_node_id},
+      depth{0}
     {}
     
     /*
      * Copy Constructor
      *
-     * This could be used to copy a metadata from other node
+     * This could be used to copy a metadata from other node. 
      */
     NodeMetaData(const NodeMetaData &nmd) :
       lbound{nmd.lbound},
       ubound{nmd.ubound},
-      next_node_id{nmd.next_node_id}
+      next_node_id{nmd.next_node_id},
+      depth{nmd.depth}
     {}
     
     /*
@@ -1177,17 +1184,25 @@ class BwTree {
      * SetNodeMetaData() - This is a wrapper to the expanded version below
      *
      * Argument node_p must be the child node of current node being initialized
+     *
+     * The other node being copied from should be the child node of the
+     * current node, since we assume the depth of current metadata object
+     * always equals the from node's depth + 1
      */
     inline void SetNodeMetaData(const BaseNode *node_p) {
       SetNodeMetaData(node_p->metadata.lbound,
                       node_p->metadata.ubound,
-                      node_p->metadata.next_node_id);
-                      
+                      node_p->metadata.next_node_id,
+                      node_p->metadata.depth + 1);
+
       return;
     }
     
     /*
      * SetNodeMetaData() - Set node metadata using given values
+     *
+     * Note: Node depth is by default set to 0, since this function
+     * is called for InnerNode and LeafNode, the depth of which is always 0
      */
     inline void SetNodeMetaData(const KeyType &p_lbound,
                                 const KeyType &p_ubound,
@@ -1195,6 +1210,7 @@ class BwTree {
       metadata.lbound = p_lbound;
       metadata.ubound = p_ubound;
       metadata.next_node_id = p_next_node_id;
+      metadata.depth = 0;
       
       return;
     }
@@ -1546,17 +1562,21 @@ class BwTree {
     // to indicate that the right half is already part
     // of the logical node
     const BaseNode *right_merge_p;
+    
+    NodeID deleted_node_id;
 
     /*
      * Constructor
      */
     LeafMergeNode(const KeyType &p_merge_key,
                   const BaseNode *p_right_merge_p,
+                  NodeID p_deleted_node_id,
                   int p_depth,
                   const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
-      right_merge_p{p_right_merge_p} {
+      right_merge_p{p_right_merge_p},
+      deleted_node_id{p_deleted_node_id} {
       // For merge node, node metadata should be set according to
       // two merge branches
       // Low key is the low key of the left branch
@@ -1785,17 +1805,23 @@ class BwTree {
     KeyType merge_key;
 
     const BaseNode *right_merge_p;
+    
+    // This is beneficial for us to cross validate IndexTermDelete
+    // and also to recycle NodeID and remove delta
+    NodeID deleted_node_id;
 
     /*
      * Constructor
      */
     InnerMergeNode(const KeyType &p_merge_key,
                    const BaseNode *p_right_merge_p,
+                   NodeID p_deleted_node_id,
                    int p_depth,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerMergeType, p_depth, p_child_node_p},
       merge_key{p_merge_key},
-      right_merge_p{p_right_merge_p} {
+      right_merge_p{p_right_merge_p},
+      deleted_node_id{p_deleted_node_id} {
       // Set node metadata using two branches
       // Low key is the low key of the left branch
       // High key is the high key of the right branch
@@ -3943,8 +3969,7 @@ class BwTree {
       return;
     }
 
-    bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
-    (void)consolidated;
+    ConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3979,8 +4004,7 @@ class BwTree {
       return;
     }
 
-    bool consolidated = ConsolidateNode(context_p, recommend_consolidation);
-    (void)consolidated;
+    ConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4015,55 +4039,39 @@ class BwTree {
    * vector instead of using a previously passed one
    */
   bool FinishPartialSMO(Context *context_p) {
-    // We assume the last node is the node we will help for
+    // Note: If the top of the path list changes then this pointer
+    // must also be updated
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-    // NOTE: Need to update these three variables if we jump to
-    // the left sibling
-    const BaseNode *node_p = snapshot_p->node_p;
-    NodeID node_id = snapshot_p->node_id;
     
-    // NOTE: For root node this is -Inf
-    // But we do not allow posting remove delta on root node
-    // which means it would not be
-    const KeyType *lbound_p = &snapshot_p->node_p->metadata.lbound;
-
-    // And also need to update this if we post a new node
-    // NOTE: This will be updated by remove node, so do not make
-    // it as constant
-    NodeType type = node_p->GetType();
-
 before_switch:
-    switch(type) {
+    switch(snapshot_p->node_p->GetType()) {
       case NodeType::InnerAbortType: {
         bwt_printf("Observed Inner Abort Node; ABORT\n");
-
-        // This block is an optimization - when seeing an ABORT
+        
+        // This is an optimization - when seeing an ABORT
         // node, we continue but set the physical pointer to be ABORT's
         // child, to make CAS always fail on this node to avoid
         // posting on ABORT, especially posting split node
-        {
-          node_p = \
-            static_cast<const DeltaNode *>(node_p)->child_node_p;
-          snapshot_p->SwitchPhysicalPointer(node_p);
-          type = node_p->GetType();
+        snapshot_p->node_p = \
+          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
 
-          goto before_switch;
-        }
-
-        //context_p->abort_flag = true;
-
-        //return;
+        goto before_switch;
       }
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
         bwt_printf("Helping along remove node...\n");
 
-        const DeltaNode *delta_node_p = \
-          static_cast<const DeltaNode *>(node_p);
-
+        // The right branch for merging is the child node under remove node
         const BaseNode *merge_right_branch = \
-          delta_node_p->child_node_p;
+          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
+          
+        // This serves as the merge key
+        const KeyType *merge_key_p = &snapshot_p->node_p->metadata.lbound;
+        
+        // This will also be recorded in merge delta such that when
+        // we finish merge delta we could recycle the node id as well
+        // as the RemoveNode
+        NodeID deleted_node_id = snapshot_p->node_id;
 
         JumpToLeftSibling(context_p);
 
@@ -4077,92 +4085,70 @@ before_switch:
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = \
           GetLatestNodeSnapshot(context_p);
-          
-        // Make sure we are still on the same level
-        assert(snapshot_p->is_leaf == left_snapshot_p->is_leaf);
 
+        // This is the left sibling of the merge delta node
         const BaseNode *left_sibling_p = left_snapshot_p->node_p;
+        
+        // This holds the merge node if installation is successful
+        // Not changed if CAS fails
+        const BaseNode *merge_node_p = nullptr;
 
-        // We save this before lbound_p which was once remove node lbound_p
-        // is overwritten with the lbound_p of left sibling
-        const KeyType *remove_node_lbound_p = lbound_p;
-
-        // Update current node information
-        // NOTE: node_p will not be used here since we have already
-        // saved merge sibling in merge_right_branch
-        node_p = left_sibling_p;
-        node_id = left_snapshot_p->node_id;
-        lbound_p = &left_snapshot_p->node_p->metadata.lbound;
-
-        // Now they are equal
+        // Update snapshot pointer
         snapshot_p = left_snapshot_p;
 
         bool ret = false;
 
         // If we are currently on leaf, just post leaf merge delta
-        // NOTE: node_p will be reset to the merge delta if CAS succeeds
         if(left_snapshot_p->is_leaf == true) {
           ret = \
             PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         remove_node_lbound_p,
+                                         merge_key_p,
                                          merge_right_branch,
-                                         &node_p);
+                                         deleted_node_id,
+                                         &merge_node_p);
         } else {
           ret = \
             PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          remove_node_lbound_p,
+                                          merge_key_p,
                                           merge_right_branch,
-                                          &node_p);
+                                          deleted_node_id,
+                                          &merge_node_p);
         }
 
         // If CAS fails just abort and return
         if(ret == true) {
           bwt_printf("Merge delta CAS succeeds. ABORT\n");
 
-          // Update the new merge node back to snapshot
-          //snapshot_p->SwitchPhysicalPointer(node_p);
-
-          // Then we abort, because it is possible for us to immediately
-          // posting on the merge delta
+          // TODO: Do not abort here and directly proceed to processing
+          // merge delta
           context_p->abort_flag = true;
 
           return false;
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
-          // TODO: We could choose to look at the delta chain and find out
-          // what happened. If that's a trivial case (just another insert/delete
-          // get posted then we could retry)
-          // Currently we just abort
+          assert(merge_node_p == nullptr);
           context_p->abort_flag = true;
 
           return false;
         } // if ret == true
 
-        // CURRENT WE DO NOT CONTINUE
-
         assert(false);
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
-        bwt_printf("Helping along merge delta, ID = %lu\n", node_id);
+        bwt_printf("Helping along merge delta\n");
 
         // First consolidate parent node and find the left/right
         // sep pair plus left node ID
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
-        // Consolidate parent node
-        if(parent_snapshot_p->has_data == false) {
-          CollectAllSepsOnInner(parent_snapshot_p);
-        }
-
-        assert(parent_snapshot_p->has_data == true);
-        assert(parent_snapshot_p->is_leaf == false);
-
-        // DUMMY PLACEHOLDER; DO NOT USE OR MODIFY
+        // This is stored inside merge delta node. We fill in the value
+        // below
         NodeID deleted_node_id = INVALID_NODE_ID;
 
+        // This is the key being deleted in parent node, if exists
         const KeyType *merge_key_p = nullptr;
 
         // These three needs to be found in the parent node
@@ -5145,6 +5131,7 @@ before_switch:
   bool PostMergeNode(const NodeSnapshot *snapshot_p,
                      const KeyType *merge_key_p,
                      const BaseNode *merge_branch_p,
+                     NodeID deleted_node_id,
                      const BaseNode **node_p_p) {
     // This is the child node of merge delta
     const BaseNode *node_p = snapshot_p->node_p;
@@ -5165,6 +5152,7 @@ before_switch:
     const MergeNodeType *merge_node_p = \
       new MergeNodeType{*merge_key_p,
                         merge_branch_p,
+                        deleted_node_id,
                         depth,
                         node_p};
 
