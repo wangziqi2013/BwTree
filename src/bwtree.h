@@ -1363,8 +1363,9 @@ class BwTree {
    */
   class LeafInsertNode : public DeltaNode {
    public:
-    const KeyType insert_key;
-    const ValueType value;
+    // Use an item to store key-value internally
+    // to make leaf consolidation faster
+    KeyValuePair inserted_item;
 
     /*
      * Constructor
@@ -1374,8 +1375,7 @@ class BwTree {
                    int p_depth,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafInsertType, p_depth, p_child_node_p},
-      insert_key{p_insert_key},
-      value{p_value} {
+      inserted_item{p_insert_key, p_value} {
       // We set node metadata using parent node (direct copy)
       this->SetNodeMetaData(p_child_node_p);
       
@@ -1392,8 +1392,9 @@ class BwTree {
    */
   class LeafDeleteNode : public DeltaNode {
    public:
-    KeyType delete_key;
-    ValueType value;
+    // Use an deleted item to store deleted key and value
+    // to make leaf consolidation faster
+    KeyValuePair deleted_item;
 
     /*
      * Constructor
@@ -1403,8 +1404,7 @@ class BwTree {
                    int p_depth,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafDeleteType, p_depth, p_child_node_p},
-      delete_key{p_delete_key},
-      value{p_value} {
+      deleted_item{p_delete_key, p_value} {
       // Set node metadata using child node
       this->SetNodeMetaData(p_child_node_p);
       
@@ -2514,8 +2514,8 @@ class BwTree {
                                std::make_pair{search_key, INVALID_NODE_ID},
                                [this](const KeyNodeIDPair &knp1,
                                       const KeyNodeIDPair &knp2) {
-                                 return this->wrapped_key_cmp_obj(knp1.first,
-                                                                  knp2.first);
+                                 return this->key_node_id_pair_cmp_obj(knp1,
+                                                                       knp2);
                                });
                                
     // This is impossible since if the first element greater than key
@@ -2819,7 +2819,7 @@ class BwTree {
           auto copy_end_it = std::lower_bound(inner_node_p->sep_list.begin(),
                                               inner_node_p->sep_list.end(),
                                               metadata.ubound,
-                                              wrapped_key_cmp_obj);
+                                              key_node_id_pair_cmp_obj);
           // This could not be true since if this happens then all elements
           // in the sep list of inner node >= high key
           // which also implies low key >= high key
@@ -3028,9 +3028,10 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
-            if(deleted_set.find(insert_node_p->value) == deleted_set.end()) {
-              present_set.insert(insert_node_p->value);
+          if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
+            if(deleted_set.find(insert_node_p->inserted_item.second) == \
+               deleted_set.end()) {
+              present_set.insert(insert_node_p->inserted_item.second);
             }
           }
 
@@ -3042,9 +3043,10 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
-            if(present_set.find(delete_node_p->value) == present_set.end()) {
-              deleted_set.insert(delete_node_p->value);
+          if(KeyCmpEqual(search_key, delete_node_p->deleted_item.first)) {
+            if(present_set.find(delete_node_p->deleted_item.srcond) == \
+               present_set.end()) {
+              deleted_set.insert(delete_node_p->deleted_item.second);
             }
           }
 
@@ -3157,6 +3159,10 @@ class BwTree {
   /*
    * NavigateLeafNode() - Check existence for a certain value
    *
+   * Please note that this function is overloaded. This version is used for
+   * insert/delete/update that only checks existence of values, rather than
+   * collecting all values for a single key.
+   *
    * This function works by traversing down the delta chain and compare
    * values with those in delta nodes and in the base node. No special data
    * structure is required
@@ -3167,17 +3173,22 @@ class BwTree {
    */
   bool void NavigateLeafNode(Context *context_p,
                              ValueType &search_value) {
-    // This contains information for current node
+    assert(snapshot_p->is_leaf == true);
+    
+    // Snapshot pointer, node pointer, and metadata reference all need
+    // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    // This is used to control which values will be collected
+    // This is used to decide whether we have reached the incorrect
+    // leaf base node, by checking the high key against search key
+    // This could happen if there had been a split delta and was
+    // consolidated such that the current thread does not have a change
+    // to even jump to the left sibling
     const NodeMetaData &metadata = node_p->metadata;
 
-    // We only collect values for this key
+    // Save some typing
     const KeyType &search_key = context_p->search_key;
-
-    assert(snapshot_p->is_leaf == true);
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3225,8 +3236,9 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->insert_key)) {
-            if(ValueCmpEqual(insert_node_p->value, search_value) == true) {
+          if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
+            if(ValueCmpEqual(insert_node_p->inserted_item.second,
+                             search_value) == true) {
               return true;
             }
           }
@@ -3241,7 +3253,8 @@ class BwTree {
 
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->delete_key)) {
-            if(ValueCmpEqual(delete_node_p->value, search_value) == true) {
+            if(ValueCmpEqual(delete_node_p->deleted_item.second,
+                             search_value) == true) {
               return false;
             }
           }
@@ -3379,10 +3392,15 @@ class BwTree {
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
+          // This points copy_end_it to the first element >= current high key
+          // If no such element exists then copy_end_it is end() iterator
+          // which is also consistent behavior
+          // However, copy_end_it could not be begin() iterator since it
+          // implies all low key (which equals the first element) >= high key
           auto copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
                                               leaf_node_p->data_list.end(),
                                               metadata.ubound,
-                                              wrapped_key_cmp_obj);
+                                              key_value_pair_cmp_obj);
                                               
           assert(copy_end_it != leaf_node_p->data_list.begin());
 
@@ -3404,12 +3422,9 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(deleted_set.find(*it) == deleted_set.end()) {
-            // 1. If present_set does not contain the key, then it is inserted
-            // 2. If present_set already contains the key, then
-            //    it is not inserted by definition. This is desired behavior
-            //    since it means a more up-to-date insertion happened
-            present_set.insert(*it);
+          if(deleted_set.find(insert_node_p->inserted_item) == \
+             deleted_set.end()) {
+            present_set.insert(insert_node_p->inserted_item);
           }
 
           node_p = insert_node_p->child_node_p;
@@ -3420,19 +3435,9 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(collect_value == true) {
-            // Only collect delete delta if it is in the range
-            // i.e. < newest high key, since otherwise it will
-            // be in splited nodes
-            if(ubound_p != nullptr && \
-               KeyCmpGreaterEqual(delete_node_p->delete_key,
-                                  *ubound_p)) {
-              //bwt_printf("Delete key not in range (>= high key)\n");
-            } else {
-              logical_node_p->pointer_list.push_back(node_p);
-
-              log_count++;
-            }
+          if(present_set.find(delete_node_p->deleted_item) == \
+             present_set.end()) {
+            deletd_set.insert(delete_node_p->deleted_item);
           }
 
           node_p = delete_node_p->child_node_p;
@@ -3443,18 +3448,17 @@ class BwTree {
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
 
-          if(collect_value == true) {
-            // For update nodes we also need to check whether
-            // the updated key is in the range or not
-            if(ubound_p != nullptr && \
-               KeyCmpGreaterEqual(update_node_p->update_key,
-                                  *ubound_p)) {
-              //bwt_printf("Update key not in range (>= high key)\n");
-            } else {
-              logical_node_p->pointer_list.push_back(node_p);
-
-              log_count++;
-            }
+          KeyValuePair old_item = std::make_pair(update_node_p->update_key,
+                                                 update_node_p->old_value);
+          KeyValuePair new_item = std::make_pair(update_node_p->update_key,
+                                                 update_node_p->new_value);
+                                                 
+          if(deleted_set.find(new_item) == deleted_set.end()) {
+            present_set.insert(new_item);
+          }
+          
+          if(present_set.find(old_item) == present_set.end()) {
+            deletd_set.insert(old_item);
           }
 
           node_p = update_node_p->child_node_p;
@@ -3464,66 +3468,30 @@ class BwTree {
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: LeafRemoveNode not allowed\n");
 
-          // If we see a remove node, then this node is removed
-          // and in that case we just return silently
-          assert(first_time == true);
-
-          // These two are trivial but just put them here for safety
-          assert(logical_node_p->key_value_set.size() == 0);
-          assert(logical_node_p->pointer_list.size() == 0);
-
-          // Fail here
           assert(false);
         } // case LeafRemoveType
         case NodeType::LeafSplitType: {
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(node_p);
-
-          // If we have not seen a split node, then this is the first one
-          // and we need to remember the upperbound for the logical page
-          // Since this is the latest change to its upperbound
-          if(ubound_p == nullptr) {
-            ubound_p = &split_node_p->split_key;
-          }
-
-          // Must test collect_ubound since we only collect
-          // next node id for the right most node
-          if(collect_ubound == true && \
-             logical_node_p->next_node_id == INVALID_NODE_ID) {
-            // This logically updates the next node pointer for a
-            // logical node
-            logical_node_p->next_node_id = split_node_p->split_sibling;
-          }
-
+            
           node_p = split_node_p->child_node_p;
 
           break;
         } // case LeafSplitType
         case NodeType::LeafMergeType: {
-          //bwt_printf("Observe LeafMergeNode; recursively collect nodes\n");
-
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(node_p);
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
-                                          logical_node_p,
-                                          collect_lbound,
-                                          false,  // Always not collect ubound
-                                          collect_value);
+                                          metadata,
+                                          present_set,
+                                          deleted_set);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
-                                          logical_node_p,
-                                          false, // Always not collect lbound
-                                          collect_ubound,
-                                          collect_value);
-
-          if(collect_value == false) {
-            assert(log_count == 0);
-          } else {
-            // Replay the remaining log records on top of merge delta
-            logical_node_p->ReplayLog(log_count);
-          }
+                                          metadata,
+                                          present_set,
+                                          deleted_set);
 
           return;
         } // case LeafMergeType
@@ -3549,19 +3517,8 @@ class BwTree {
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
    */
-  inline void CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
     assert(snapshot_p->is_leaf == true);
-    
-    // We use the pointer as an indicator on whrther
-    // there is compressed data stored inside the node snapshot
-    if(snapshot_p->logical_node_p != nullptr) {
-      bwt_printf("Fast path: There is cached value.\n");
-
-      return;
-    }
-
-    // If there is no data then we allocate one
-    snapshot_p->logical_node_p = new LogicalLeafNode{this};
     
     // These two are used to replay the log
     // NOTE: We use the threshold for splitting leaf node
@@ -3573,15 +3530,64 @@ class BwTree {
                                 key_value_pair_hash_obj,
                                 key_value_pair_eq_obj};
 
-    // We want to collect both ubound and lbound in this call
-    // These two flags will be set to false for every node
-    // that is neither a left not right most node
-    CollectAllValuesOnLeafRecursive(snapshot_p->node_p,
-                                    snapshot_p->GetLogicalLeafNode(),
-                                    &present_set,
-                                    &deleted_set);
+    const BaseNode *node_p = snashot_p->node_p;
+    
+    // We collect all valid values in present_set
+    // and deleted_set is just for bookkeeping
+    CollectAllValuesOnLeafRecursive(node_p,
+                                    node_p->metadata,
+                                    present_set,
+                                    deleted_set);
 
-    return;
+    LeafNode *leaf_node_p = new LeafNode{node_p->metadata.lbound,
+                                         node_p->metadata.ubound,
+                                         node_p->metadata.next_node_id};
+
+    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
+    
+    size_t item_num = present_set.size();
+    
+    // Reserve that much space for items to avoid allocation in the future
+    data_list_p->reserve(item_num);
+    
+    // Copy the entire set into the vector
+    data_list_p->assign(present_set.begin(), present_set.end());
+    
+    // Sort using only key value
+    std::sort(data_list_p->begin(), data_list_p->end(), key_value_pair_cmp_obj);
+
+    // We reserve that many space for storing the prefix sum
+    // Note that if the node is going to be consolidated then this will
+    // definitely cause reallocation
+    leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
+
+    auto range_begin_it = data_list_p->begin();
+    auto end_it = data_list_p->end();
+
+    // This is used to compute prefix sum of distinct elements
+    int prefix_sum = 0;
+    
+    while(range_begin_it != end_it) {
+      // Search for the first item whose key > current key
+      // and their difference is the number of elements
+      auto range_end_it = std::upper_bound(range_begin_it,
+                                           end_it,
+                                           key_value_pair_cmp_obj);
+      
+      // The first element is always 0 since the index starts with 0
+      data_list_p->item_prefix_sum.push_back(prefix_sum);
+      
+      // Then increase prefix sum with the length of the range
+      // which is also the distance between the two variables
+      prefix_sum += (std::distance(range_begin_it, range_end_it));
+      
+      // Start from the end of current range which is the next key
+      // If there is no more elements then std::upper_bound() returns
+      // end() iterator, which would fail while loop testing
+      range_begin_it = range_end_it;
+    }
+
+    return leaf_node_p;
   }
 
   /*
