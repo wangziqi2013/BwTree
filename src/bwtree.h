@@ -2307,14 +2307,30 @@ class BwTree {
    * leaf level snapshot, with all SMOs, consolidation, and possibly
    * split/remove finished
    *
-   * NOTE: We could choose whether to let this function collect value given
-   * the key, or not collect value. Because sometimes we just want to locate
-   * the correct page that contains a certain key, so the option is useful
+   * NOTE: If value_p is given then this function calls NavigateLeafNode()
+   * to detect whether the desired key value pair exists or not. If value_p
+   * is nullptr then this function calls the overloaded version of
+   * NavigateLeafNode() to collect all values associated with the key
+   * and put them into value_list_p.
+   *
+   * If value_p is not nullptr, then the return value of this function denotes
+   * whether the key-value pair exists or not. Otherwise it always return true
+   *
+   * In both cases, when this function returns, the top of the NodeSnapshot
+   * list is always a leaf node snapshot in which current key is included
+   * in its range.
+   *
+   * For value_p and value_list_p, at most one of them could be non-nullptr
+   * If both are nullptr then we just traverse and do not do anything
    */
-  void Traverse(Context *context_p,
-                bool collect_value) {
+  bool Traverse(Context *context_p,
+                const ValueType *value_p,
+                std::vector<ValueType> *value_list_p) {
     // We must start from a clean state
     assert(context_p->path_list.size() == 0);
+    
+    // At most one could be non-nullptr
+    assert((value_p == nullptr) || (value_list_p == nullptr));
 
     // This will use lock
     #ifdef INTERACTIVE_DEBUG
@@ -2419,11 +2435,20 @@ class BwTree {
           break;
         } // case Inner
         case OpState::Leaf: {
-          // We do not collect value for this call
-          // since we only want to go to the right sibling
-          // if there is one
-          NavigateLeafNode(context_p,
-                           collect_value); // This is argument
+          bool ret = true;
+          if(value_list_p == nullptr) {
+            if(value_p = nullptr) {
+              // Do not overwrite ret here
+              NavigateLeafNode(context_p, ValueType{});
+            } else {
+              // ret stores the result about whether the key-value pair exists
+              // or not
+              ret = NavigateLeafNode(context_p, *value_p);
+            }
+          } else {
+            // NOTE: Even if NavigateLeafNode aborts, the vector is not affected
+            NavigateLeafNode(context_p, *value_list_p);
+          }
 
           if(context_p->abort_flag == true) {
             bwt_printf("NavigateLeafNode aborts. ABORT\n");
@@ -2438,7 +2463,7 @@ class BwTree {
                      context_p->current_level);
 
           // If there is no abort then we could safely return
-          return;
+          return ret;
 
           break;
         }
@@ -2494,7 +2519,8 @@ class BwTree {
       } // switch current_state
     } // while(1)
 
-    return;
+    assert(false);
+    return false;
   }
 
   /*
@@ -2973,7 +2999,7 @@ class BwTree {
    * map insert conflict
    */
   void NavigateLeafNode(Context *context_p,
-                        std::vector<ValueType> value_list) {
+                        std::vector<ValueType> &value_list) {
     // This contains information for current node
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
@@ -3190,7 +3216,7 @@ class BwTree {
    * function returns with value false.
    */
   bool void NavigateLeafNode(Context *context_p,
-                             ValueType &search_value) {
+                             const ValueType &search_value) {
     assert(snapshot_p->is_leaf == true);
     
     // Snapshot pointer, node pointer, and metadata reference all need
@@ -5101,7 +5127,7 @@ before_switch:
       Context context{key};
 
       // Collect values with node navigation
-      Traverse(&context, true);
+      bool value_exist = Traverse(&context, &value);
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
       LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
