@@ -1085,7 +1085,7 @@ class BwTree {
                       node_p->metadata.ubound,
                       node_p->metadata.next_node_id,
                       node_p->metadata.depth + 1);
-
+      
       return;
     }
     
@@ -1099,6 +1099,7 @@ class BwTree {
                                 const KeyType &p_ubound,
                                 NodeID p_next_node_id,
                                 int p_depth = 0) {
+      assert(p_lbound.type != ExtendedKeyValue::PosInf);
       metadata.lbound = p_lbound;
       metadata.ubound = p_ubound;
       metadata.next_node_id = p_next_node_id;
@@ -1210,7 +1211,7 @@ class BwTree {
       // so we call BaseNode::SetNodeMetaData() to initialize
       // metadata
       this->SetNodeMetaData(p_lbound, p_ubound, p_next_node_id);
-      
+
       return;
     }
 
@@ -1269,7 +1270,7 @@ class BwTree {
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
       const KeyType &split_key = copy_start_it->first;
-
+      
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = new LeafNode{split_key,
                                            this->metadata.ubound,
@@ -1550,7 +1551,7 @@ class BwTree {
       new_node_id{p_new_node_id} {
       // Set node metadata using child node
       this->SetNodeMetaData(p_child_node_p);
-      
+
       return;
     }
   };
@@ -1619,7 +1620,7 @@ class BwTree {
       // Low key is the low key of child node
       // High key is the split key
       // Next node ID is the split sibling's node ID
-      this->SetNodeMetaData(p_child_node_p->metadata.ubound,
+      this->SetNodeMetaData(p_child_node_p->metadata.lbound,
                             p_split_key,
                             p_split_sibling);
       
@@ -2253,7 +2254,6 @@ class BwTree {
           // NOTE: We do not traverse down in this state, just hand it
           // to Inner state and let it do all generic job
           context_p->current_state = OpState::Inner;
-          context_p->current_level++;
 
           break;
         } // case Init
@@ -3633,6 +3633,10 @@ class BwTree {
     if(parent_snapshot_p->node_p->IsInnerNode() == false) {
       inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
       
+      // Must adjust depth
+      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
+        parent_snapshot_p->node_p->metadata.depth + 1;
+      
       // As an optimization, we CAS the consolidated version of InnerNode
       // here. If CAS fails, we SHOULD NOT delete the inner node immediately
       // since its value is still being used by this function
@@ -4127,6 +4131,8 @@ before_switch:
           // TODO: Also recycle NodeID here
           ///////////////////////////////////////////
           
+          parent_snapshot_p->node_p = delete_node_p;
+          
           context_p->abort_flag = true;
 
           return false;
@@ -4245,20 +4251,26 @@ before_switch:
                                 split_node_id,
                                 parent_snapshot_p->node_p};
 
-          // CAS
+          // CAS Index Term Insert Delta onto the parent node
           bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
                                           insert_node_p,
                                           parent_snapshot_p->node_p);
+
           if(ret == true) {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
                        snapshot_p->node_id,
                        split_node_id);
 
+            // Since the abort process checks pointer we always need to update
+            // parent node's node pointer
+            parent_snapshot_p->node_p = insert_node_p;
+            
             context_p->abort_flag = true;
 
             return false;
           } else {
-            bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. ABORT\n",
+            bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
+                       "ABORT\n",
                        snapshot_p->node_id,
                        split_node_id);
 
@@ -4840,14 +4852,24 @@ before_switch:
 
     if(snapshot_p->node_p->IsInnerNode() == false) {
       inner_node_p = CollectAllSepsOnInner(snapshot_p);
+      
+      // Must adjust depth
+      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
+        snapshot_p->node_p->metadata.depth + 1;
 
       bool ret = InstallNodeToReplace(snapshot_p->node_id,
                                       inner_node_p,
                                       snapshot_p->node_p);
 
       if(ret == true) {
+        bwt_printf("Parent InnerNode optimization consolidation succeeds\n");
+        
+        // This is important
         snapshot_p->node_p = inner_node_p;
       } else {
+        bwt_printf("Parent InnerNode optimization consolidation fails"
+                   " - Put into garbage chain\n");
+        
         // Must delay deallocation since we return pointers pointing
         // into this node's data
         epoch_manager.AddGarbageNode(inner_node_p);
@@ -4864,21 +4886,32 @@ before_switch:
                                                         INVALID_NODE_ID),
                                          key_node_id_pair_cmp_obj);
 
+    for(auto &item : inner_node_p->sep_list) {
+      if(print_flag) printf("%d ", item.first.key);
+    }
+
+
+    if(print_flag) printf("\nsplit key it = %d; split key = %d\n",
+               split_key_it->first.key,
+               split_key_p->key);
+
+    if(print_flag) printf("high key = %d\n", inner_node_p->metadata.ubound.key);
+
+    // This is special case: the split key is higher than all keys
+    // inside the inner node
+    if(split_key_it == inner_node_p->sep_list.end()) {
+      *next_key_p_p = &inner_node_p->metadata.ubound;
+      
+      return true;
+    }
+
     // If the split key already exists then just return false
     if(KeyCmpEqual(split_key_it->first, *split_key_p) == true) {
       assert(split_key_it->second == insert_pid);
-      
       return false;
     }
 
-    // If lower_bound() returns end() then the split key will be the largest
-    // in the inner node. So just use the high key of the inner node as next
-    // key
-    if(split_key_it == inner_node_p->sep_list.end()) {
-      *next_key_p_p = &inner_node_p->metadata.ubound;
-    } else {
-      *next_key_p_p = &split_key_it->first;
-    }
+    *next_key_p_p = &split_key_it->first;
 
     return true;
   }
@@ -4912,6 +4945,10 @@ before_switch:
 
     if(snapshot_p->node_p->IsInnerNode() == false) {
       inner_node_p = CollectAllSepsOnInner(snapshot_p);
+      
+      // Must adjust depth
+      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
+        snapshot_p->node_p->metadata.depth + 1;
 
       bool ret = InstallNodeToReplace(snapshot_p->node_id,
                                       inner_node_p,
@@ -4932,10 +4969,13 @@ before_switch:
                                          std::make_pair(*merge_key_p,
                                                         INVALID_NODE_ID),
                                          key_node_id_pair_cmp_obj);
-                                         
+
     // If the lower bound of merge_key_p is not itself, then we
     // declare such key does not exist
-    if(KeyCmpEqual(merge_key_it->first, *merge_key_p) == false) {
+    // Another corner case is that merge key is end iterator
+    // then we know it does not exist
+    if(merge_key_it == inner_node_p->sep_list.end() || \
+       KeyCmpEqual(merge_key_it->first, *merge_key_p) == false) {
       return false;
     }
     
@@ -4951,6 +4991,8 @@ before_switch:
     auto merge_key_prev_it = merge_key_it - 1;
     auto merge_key_next_it = merge_key_it + 1;
     
+    // Since we already know merge_key_it could not be begin()
+    // so merge_key_prev must be a valid iterator
     *prev_key_p_p = &merge_key_prev_it->first;
     *prev_node_id_p = merge_key_prev_it->second;
     
@@ -5403,6 +5445,8 @@ before_switch:
    */
   void GetValue(const KeyType &search_key,
                 std::vector<ValueType> &value_list) {
+    bwt_printf("GetValue()\n");
+    
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     Context context{search_key};
@@ -5414,7 +5458,9 @@ before_switch:
     return;
   }
   
-  ValueSet &&GetValue(const KeyType &search_key) {
+  ValueSet GetValue(const KeyType &search_key) {
+    bwt_printf("GetValue()\n");
+    
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     Context context{search_key};
@@ -5430,7 +5476,7 @@ before_switch:
                        value_hash_obj,
                        value_eq_obj};
 
-    return std::move(value_set);
+    return value_set;
   }
 
  /*
