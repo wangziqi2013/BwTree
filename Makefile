@@ -28,6 +28,10 @@ test: main
 stress-test: main
 	LD_PRELOAD=./lib/libjemalloc.so ./main --stress-test
 
+prepare:
+	mkdir -p build
+	mkdir -p ./stl_test/bin
+
 clean:
 	rm -f ./build/*
 	rm -f *.log
