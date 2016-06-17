@@ -5085,36 +5085,6 @@ before_switch:
   }
 
   /*
-   * IsKeyPresent() - Check whether the key is present in the tree
-   *
-   * This function calls Traverse with value option in order to
-   * collect all values associated with the search key. If there is
-   * no such key in the resulting key value map, then return false
-   *
-   * TODO: This function is not the optimal one since there is overhead
-   * for copying the values which is discarded. In the future we may want
-   * to revise Traverse to make it able to detect for key existence request
-   */
-  bool IsKeyPresent(const KeyType &search_key) {
-    Context context{&search_key};
-
-    Traverse(&context, true);
-
-    NodeSnapshot *snapshot = GetLatestNodeSnapshot(&context);
-    LogicalLeafNode *logical_node_p = snapshot->GetLogicalLeafNode();
-    KeyValueSet &container = logical_node_p->GetContainer();
-
-    if(container.find(search_key) == container.end()) {
-      return false;
-    } else {
-      return true;
-    }
-
-    assert(false);
-    return false;
-  }
-
-  /*
    * Insert() - Insert a key-value pair
    *
    * This function returns false if value already exists
