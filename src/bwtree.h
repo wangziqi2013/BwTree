@@ -930,14 +930,19 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key) :
+    Context(const KeyType p_search_key, size_t p_tree_height) :
       search_key{p_search_key},
       current_state{OpState::Init},
       abort_flag{false},
       path_list{},
       abort_counter{0},
-      current_level{0}
-    {}
+      current_level{0} {
+      // This is an optimization - We preallocate that many slots for vector
+      // to avoid reallocating in std::vector
+      path_list.reserve(p_tree_height + 1);
+      
+      return;
+    }
 
     /*
      * Destructor - Cleanup
@@ -1490,9 +1495,11 @@ class BwTree {
     }
 
     /*
-     * GetSplitSibling() - Split the node into two halves
+     * GetSplitSibling() - Split InnerNode into two halves.
      *
-     * This functions is similar to that in LeafNode
+     * This function does not change the current node since all existing nodes
+     * should be read-only to avoid data race. It copies half of the inner node
+     * into the split sibling, and return the sibling node.
      */
     InnerNode *GetSplitSibling() const {
       int key_num = static_cast<int>(sep_list.size());
@@ -1804,6 +1811,8 @@ class BwTree {
       key_value_pair_cmp_obj{this},
       key_value_pair_eq_obj{this},
       key_value_pair_hash_obj{this},
+      
+      tree_height{0UL},
       
       // Statistical information
       next_unused_node_id{0},
@@ -2275,8 +2284,24 @@ class BwTree {
 
             break;
           }
+          
+          // We use this to check whether NavigateInnerNode() brings us
+          // to the correct inner node
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+          
+          assert(KeyCmpGreaterEqual(context_p->search_key,
+                                    snapshot_p->node_p->metadata.lbound));
+          assert(KeyCmpLess(context_p->search_key,
+                            snapshot_p->node_p->metadata.ubound));
+          if(print_flag) printf("low, search, high = %d, %d, %d\n",
+                                snapshot_p->node_p->metadata.lbound.key,
+                                context_p->search_key.key,
+                                snapshot_p->node_p->metadata.ubound.key);
 
           // This might load a leaf child
+          // Also LoadNodeID() does not guarantee the node bound matches
+          // seatch key. Since we could readjust using the split side link
+          // during Navigate...Node()
           LoadNodeID(child_node_id,
                      context_p);
 
@@ -2289,7 +2314,7 @@ class BwTree {
           }
 
           // This is the node we have just loaded
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+          snapshot_p = GetLatestNodeSnapshot(context_p);
 
           if(snapshot_p->is_leaf == true) {
             bwt_printf("The next node is a leaf\n");
@@ -2298,20 +2323,6 @@ class BwTree {
             // abort state
             context_p->current_state = OpState::Leaf;
           }
-
-          // Take care: Do not use conflict names in the
-          // outer scope
-          // NOTE: We directly use the metadata stored inside node
-          // here to avoid copying them around
-          const KeyType *snapshot_lbound_p = \
-            &snapshot_p->node_p->metadata.lbound;
-
-          // This must be true since the NodeID to low key mapping
-          // is constant (if the child node is merged into its
-          // left sibling, then we just see a remove node and go left
-          // in LoadNodeID() called above)
-          assert(KeyCmpGreaterEqual(context_p->search_key,
-                                    *snapshot_lbound_p) == true);
 
           // go to next level
           context_p->current_level++;
@@ -2391,13 +2402,8 @@ class BwTree {
               break;
             }
           }while(1);
-          // This calls destructor for all NodeSnapshot object, and
-          // will release memory for logical node object
-          //path_list_p->clear();
 
           context_p->abort_counter++;
-          //context_p->current_level = 0;
-          //context_p->current_state = OpState::Init;
           context_p->abort_flag = false;
 
           break;
@@ -2937,7 +2943,7 @@ class BwTree {
           // to the new path
           if(KeyCmpGreaterEqual(search_key, metadata_p->ubound) == true) {
             context_p->abort_flag = true;
-            
+
             return;
           }
           
@@ -3151,7 +3157,7 @@ class BwTree {
           // to the new path
           if(KeyCmpGreaterEqual(search_key, metadata_p->ubound) == true) {
             context_p->abort_flag = true;
-
+            
             return false;
           }
 
@@ -3355,6 +3361,8 @@ class BwTree {
                                               key_value_pair_cmp_obj);
 
           // If data list is empty then copy_end_it == begin() iterator
+          // And this happens if the leaf page was initially empty
+          // (i.e. the first leaf page created by constructor)
           //assert(copy_end_it != leaf_node_p->data_list.begin());
 
           for(auto it = leaf_node_p->data_list.begin();
@@ -3497,6 +3505,8 @@ class BwTree {
     std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
     
     // Reserve that much space for items to avoid allocation in the future
+    // Since the iterator from unordered_set is not a RamdomAccessIterator
+    // std::vector could not decide the size from these two iterators
     size_t item_num = present_set.size();
     data_list_p->reserve(item_num);
     
@@ -3504,12 +3514,21 @@ class BwTree {
     data_list_p->assign(present_set.begin(), present_set.end());
     
     // Sort using only key value
-    std::sort(data_list_p->begin(), data_list_p->end(), key_value_pair_cmp_obj);
+    // All items with the same key are grouped together, and their
+    // orderes are not defined (we do not use unstable sort)
+    std::sort(data_list_p->begin(),
+              data_list_p->end(),
+              key_value_pair_cmp_obj);
 
     // We reserve that many space for storing the prefix sum
     // Note that if the node is going to be consolidated then this will
     // definitely cause reallocation
     leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
+
+    // Next we compute prefix sum of key numbers
+    // We compute that by finding the upper bound of the current key
+    // and compute the distance, and switch the current key to the
+    // current upper bound, until we have reached end() iterator
 
     auto range_begin_it = data_list_p->begin();
     auto end_it = data_list_p->end();
@@ -3528,9 +3547,15 @@ class BwTree {
       // The first element is always 0 since the index starts with 0
       leaf_node_p->item_prefix_sum.push_back(prefix_sum);
       
+      // The distance should be > 0 otherwise the key is not found
+      // which is impossible because we know the key exists in
+      // the data list
+      int distance = std::distance(range_begin_it, range_end_it);
+      assert(distance > 0);
+      
       // Then increase prefix sum with the length of the range
       // which is also the distance between the two variables
-      prefix_sum += (std::distance(range_begin_it, range_end_it));
+      prefix_sum += distance;
       
       // Start from the end of current range which is the next key
       // If there is no more elements then std::upper_bound() returns
@@ -3777,6 +3802,8 @@ class BwTree {
                         Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
     std::vector<NodeSnapshot> *path_list_p = &context_p->path_list;
+    
+    bwt_printf("Is leaf node? - %d\n", node_p->IsOnLeafDeltaChain());
     
     // As an optimization we construct NodeSnapshot inside the vector
     // instead of copying it
@@ -4158,6 +4185,12 @@ before_switch:
         NodeID split_node_id = INVALID_NODE_ID;
         
         NodeType type = snapshot_p->node_p->GetType();
+        if(print_flag) printf("Split child Node lbound, ubound, type = %d, %d, %d; next = %lu; search key = %d\n",
+                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.lbound.key,
+                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.ubound.key,
+                              (int)((DeltaNode *)snapshot_p->node_p)->child_node_p->GetType(),
+                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.next_node_id,
+                              context_p->search_key.key);
 
         // NOTE: depth should not be read here, since we
         // need to know the depth on its parent node
@@ -4181,6 +4214,8 @@ before_switch:
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
            ***********************************************************/
+          assert(snapshot_p->is_root == true);
+          
           bwt_printf("Root splits!\n");
 
           // Allocate a new node ID for the newly created node
@@ -4205,7 +4240,10 @@ before_switch:
                                      new_root_id);
 
           if(ret == true) {
-            bwt_printf("Install root CAS succeeds\n");
+            tree_height.fetch_add(1);
+            
+            bwt_printf("Install root CAS succeeds. Height = %lu\n",
+                       tree_height.load());
             
             //context_p->abort_flag = true;
 
@@ -4895,7 +4933,10 @@ before_switch:
                split_key_it->first.key,
                split_key_p->key);
 
-    if(print_flag) printf("high key = %d\n", inner_node_p->metadata.ubound.key);
+    if(inner_node_p->metadata.next_node_id != INVALID_NODE_ID)
+    if(print_flag) printf("high key = %d; next low key = %d\n",
+                          inner_node_p->metadata.ubound.key,
+                          GetNode(inner_node_p->metadata.next_node_id)->metadata.lbound.key);
 
     // This is special case: the split key is higher than all keys
     // inside the inner node
@@ -5064,7 +5105,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key};
+      Context context{key, tree_height};
 
       // Check whether the key-value pair exists
       bool value_exist = Traverse(&context, &value, nullptr);
@@ -5146,7 +5187,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key};
+      Context context{key, tree_height};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5269,7 +5310,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key};
+      Context context{key, tree_height};
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
@@ -5337,7 +5378,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key};
+      Context context{key, tree_height};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5449,7 +5490,7 @@ before_switch:
     
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key};
+    Context context{search_key, tree_height};
 
     Traverse(&context, nullptr, &value_list);
 
@@ -5463,7 +5504,7 @@ before_switch:
     
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key};
+    Context context{search_key, tree_height};
 
     std::vector<ValueType> value_list{};
     Traverse(&context, nullptr, &value_list);
@@ -5534,6 +5575,10 @@ before_switch:
   const KeyValuePairComparator key_value_pair_cmp_obj;
   const KeyValuePairEqualityChecker key_value_pair_eq_obj;
   const KeyValuePairHashFunc key_value_pair_hash_obj;
+  
+  // This is used to preallocate space for vector to avoid reallocation
+  // for NodeSnapshot
+  std::atomic<size_t> tree_height;
 
   std::atomic<NodeID> root_id;
   NodeID first_node_id;

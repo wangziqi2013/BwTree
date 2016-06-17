@@ -83,13 +83,9 @@ using InnerNode = typename TreeType::InnerNode;
 using DeltaNode = typename TreeType::DeltaNode;
 
 using NodeType = typename TreeType::NodeType;
-using DataItem = typename TreeType::DataItem;
 using ValueSet = typename TreeType::ValueSet;
-using KeyValueSet = typename TreeType::KeyValueSet;
 using KeyType = typename TreeType::KeyType;
-using LogicalLeafNode = typename TreeType::LogicalLeafNode;
 using NodeSnapshot = typename TreeType::NodeSnapshot;
-using LogicalInnerNode = typename TreeType::LogicalInnerNode;
 using BaseNode = typename TreeType::BaseNode;
 
 using Context = typename TreeType::Context;
@@ -123,6 +119,8 @@ void GetNextNodeIDTest(TreeType *tree_p) {
 /////////////////////////////////////////////////////////////////////
 // Prepare test structures
 /////////////////////////////////////////////////////////////////////
+
+/*
 BaseNode *PrepareSplitMergeLeaf(TreeType *t) {
   LeafNode *leaf_node_1_p = \
     t->DebugGetLeafNode(1, 10, INVALID_NODE_ID, {1, 2, 4, 6},
@@ -197,6 +195,7 @@ BaseNode *PrepareSplitMergeInner(TreeType *t) {
 
   return delete_node_2_p;
 }
+*/
 
 /*
 void LocateLeftSiblingTest(TreeType *t) {
@@ -271,6 +270,7 @@ void CollectNewNodeSinceLastSnapshotTest(TreeType *t) {
 }
 */
 
+/*
 void TestCollectAllValuesOnLeaf(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeLeaf(t);
   NodeSnapshot *snapshot_p = new NodeSnapshot{true, t};
@@ -328,6 +328,7 @@ void TestCollectAllValuesOnLeaf(TreeType *t) {
 
   return;
 }
+*/
 
 /*
 void TestNavigateLeafNode(TreeType *t) {
@@ -394,6 +395,7 @@ void TestNavigateLeafNode(TreeType *t) {
 }
 */
 
+/*
 void TestCollectAllSepsOnInner(TreeType *t) {
   BaseNode *node_p = PrepareSplitMergeInner(t);
 
@@ -444,6 +446,8 @@ void TestCollectAllSepsOnInner(TreeType *t) {
 
   return;
 }
+
+*/
 
 /*
 void TestNavigateInnerNode(TreeType *t) {
@@ -652,19 +656,6 @@ void InsertGetValueTest(TreeType *t) {
   return;
 }
 
-void UpdateTest2(uint64_t thread_id, TreeType *t) {
-  for(int i = 0;i < key_num;i++) {
-    int key = thread_num * i + thread_id;
-
-    t->Update(key, 1.11L * key, 2.22L * key);
-    t->Update(key, 1.111L * key, 2.222L * key);
-    t->Update(key, 1.1111L * key, 2.2222L * key);
-    t->Update(key, 1.11111L * key, 2.22222L * key);
-  }
-
-  return;
-}
-
 std::atomic<size_t> insert_success;
 std::atomic<size_t> delete_success;
 std::atomic<size_t> delete_attempt;
@@ -721,6 +712,7 @@ void MixedGetValueTest(TreeType *t) {
   return;
 }
 
+/*
 void IteratorGetValueTest(TreeType *t) {
   auto it = t->Begin();
   
@@ -762,6 +754,7 @@ void IteratorGetValueTest(TreeType *t) {
   
   return;
 }
+*/
 
 void TestStdMapInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -898,8 +891,8 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   // Then test read performance
   
   start = std::chrono::system_clock::now();
-
-  int iter = 10;
+  print_flag = true;
+  int iter = 1;
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < 1024 * 1024;i++) {
       auto ret = t->GetValue(i);
@@ -1066,9 +1059,10 @@ int main(int argc, char **argv) {
 
     PrintStat(t1);
 
-    IteratorGetValueTest(t1);
-    printf("Finished scanning the tree\n");
+    //IteratorGetValueTest(t1);
+    //printf("Finished scanning the tree\n");
 
+    /*
     auto it = t1->Begin(888);
     auto it2 = it;
     for(int i = 0;i < 5;i++) {
@@ -1093,6 +1087,7 @@ int main(int argc, char **argv) {
 
     assert(it < it3);
     assert(it == it2);
+    */
 
     //////////////
 
@@ -1111,11 +1106,6 @@ int main(int argc, char **argv) {
     printf("Finished inserting all keys\n");
 
     PrintStat(t1);
-
-    //END_TEST
-
-    //LaunchParallelTestID(thread_num, UpdateTest2, t1);
-    //printf("Finished updating all keys\n");
 
     InsertGetValueTest(t1);
     printf("Finished verifying all inserted values\n");
