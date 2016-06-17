@@ -6,6 +6,8 @@ using namespace std;
 
 int main() {
 	vector<int> v{};
+	v.reserve(17);
+
 	cout << "Initial Capacity: " << v.capacity() << endl;
 	for(int i = 0;i < 100;i++) {
 		v.push_back(i);
