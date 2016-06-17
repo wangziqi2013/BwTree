@@ -4176,10 +4176,28 @@ before_switch:
                                         delete_node_p,
                                         parent_snapshot_p->node_p);
 
+        // If we installed the IndexTermDeleteDelta successfully the next
+        // step is to put the remove node into garbage chain
+        // and also recycle the deleted NodeID since now no new thread
+        // could access that NodeID until it is reused
         if(ret == true) {
           bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
                      parent_snapshot_p->node_id);
 
+          // The deleted node ID must resolve to a RemoveNode of either
+          // Inner or Leaf category
+          const BaseNode *gargabe_node_p = GetNode(deleted_node_id);
+          assert(garbage_node_p->IsRemoveNode());
+          
+          // Put the remove node into garbage chain
+          // This will not remove the child node of the remove node, which
+          // should be removed together with the merge node above it
+          epoch_manager.AddGarbageNode(gargabe_node_p);
+          
+          ///////////////////////////////////////////
+          // TODO: Also recycle NodeID here
+          ///////////////////////////////////////////
+          
           context_p->abort_flag = true;
 
           return false;
@@ -4197,12 +4215,14 @@ before_switch:
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
-        bwt_printf("Helping along split node (ID = %lu)\n", node_id);
+        bwt_printf("Helping along split node\n");
 
         // We need to read these three from split delta node
         const KeyType *split_key_p = nullptr;
         const KeyType *next_key_p = nullptr;
         NodeID split_node_id = INVALID_NODE_ID;
+        
+        NodeType type = snapshot_p->node_p->GetType();
 
         // NOTE: depth should not be read here, since we
         // need to know the depth on its parent node
@@ -4222,11 +4242,14 @@ before_switch:
 
         assert(context_p->path_list.size() > 0);
 
-        // SPLIT ROOT NODE!!
         if(context_p->path_list.size() == 1) {
+          /***********************************************************
+           * Root splits (don't have to consolidate parent node)
+           ***********************************************************/
           bwt_printf("Root splits!\n");
 
           // Allocate a new node ID for the newly created node
+          // If CAS fails we need to free the root ID
           NodeID new_root_id = GetNextNodeID();
 
           // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
@@ -4234,11 +4257,10 @@ before_switch:
           InnerNode *inner_node_p = \
             new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
 
-          SepItem item1{GetNegInfKey(), node_id};
-          SepItem item2{*split_key_p, split_node_id};
-
-          inner_node_p->sep_list.push_back(item1);
-          inner_node_p->sep_list.push_back(item2);
+          inner_node_p->sep_list.push_back(std::make_pair(GetNegInfKey(),
+                                                          node_id));
+          inner_node_p->sep_list.push_back(std::make_pair(*split_key_p,
+                                                          split_node_id));
 
           // First we need to install the new node with NodeID
           // This makes it visible
@@ -4270,13 +4292,6 @@ before_switch:
           NodeSnapshot *parent_snapshot_p = \
             GetLatestParentNodeSnapshot(context_p);
 
-          // Make sure there is data in the snapshot
-          if(parent_snapshot_p->has_data == false) {
-            CollectAllSepsOnInner(parent_snapshot_p);
-          }
-
-          assert(parent_snapshot_p->has_data == true);
-
           // If this is false then we know the index term has already
           // been inserted
           bool split_key_absent = \
@@ -4294,22 +4309,10 @@ before_switch:
             return true;
           }
 
-          // Determine the depth on parent delta chain
-          // If the parent node has delta node, then derive
-          // depth from delta node
-          int depth = 1;
-          if(parent_snapshot_p->node_p->IsDeltaNode()) {
-            const DeltaNode *delta_node_p = \
-              static_cast<const DeltaNode *>(parent_snapshot_p->node_p);
-
-            depth = delta_node_p->depth + 1;
-          }
-
           const InnerInsertNode *insert_node_p = \
             new InnerInsertNode{*split_key_p,
                                 *next_key_p,
                                 split_node_id,
-                                depth,
                                 parent_snapshot_p->node_p};
 
           // CAS
@@ -4320,9 +4323,6 @@ before_switch:
             bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
                        node_id,
                        split_node_id);
-
-            // Invalidate cached version of logical node
-            //parent_snapshot_p->SwitchPhysicalPointer(insert_node_p);
 
             context_p->abort_flag = true;
 
@@ -4375,6 +4375,8 @@ before_switch:
                        bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
+    // Do not overwrite this pointer since we will use this
+    // to locate garbage delta chain
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
@@ -4386,11 +4388,8 @@ before_switch:
       return false;
     }
 
-    const DeltaNode *delta_node_p = \
-      static_cast<const DeltaNode *>(node_p);
-
     // If depth does not exceeds threshold then we check recommendation flag
-    int depth = delta_node_p->depth;
+    int depth = node_p->metadata.depth;
     if(snapshot_p->is_leaf == true) {
       // Adjust the length a little bit using this variable
       // NOTE: The length of the delta chain on leaf coule be a
@@ -4417,21 +4416,9 @@ before_switch:
       bwt_printf("Consolidate root node\n");
     }
 
-    if(snapshot_p->has_data == false) {
-      if(snapshot_p->is_leaf) {
-        CollectAllValuesOnLeaf(snapshot_p);
-      } else {
-        CollectAllSepsOnInner(snapshot_p);
-      }
-    }
-
-    assert(snapshot_p->has_data == true);
-    assert(snapshot_p->has_metadata == true);
-
     if(snapshot_p->is_leaf) {
-      // This function implicitly allocates a leaf node
-      const LeafNode *leaf_node_p = \
-        snapshot_p->GetLogicalLeafNode()->ToLeafNode();
+      // This function returns a leaf node object
+      const LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
 
       // CAS leaf node
       bool ret = InstallNodeToReplace(node_id, leaf_node_p, node_p);
@@ -4440,7 +4427,7 @@ before_switch:
                    node_id);
 
         // Update current snapshot using our best knowledge
-        snapshot_p->SwitchPhysicalPointer(leaf_node_p);
+        snapshot_p->node_p = leaf_node_p;
 
         // Add the old delta chain to garbage list and its
         // deallocation is delayed
@@ -4457,15 +4444,14 @@ before_switch:
         return false;
       } // if CAS succeeds / fails
     } else {
-      const InnerNode *inner_node_p = \
-        snapshot_p->GetLogicalInnerNode()->ToInnerNode();
+      const InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
 
       bool ret = InstallNodeToReplace(node_id, inner_node_p, node_p);
       if(ret == true) {
         bwt_printf("Inner node consolidation (ID %lu) CAS succeeds\n",
                    node_id);
 
-        snapshot_p->SwitchPhysicalPointer(inner_node_p);
+        snapshot_p->node_p = inner_node_p;
 
         // Add the old delta into garbage list
         epoch_manager.AddGarbageNode(node_p);
@@ -4516,7 +4502,13 @@ before_switch:
       const LeafNode *leaf_node_p = \
         static_cast<const LeafNode *>(node_p);
 
-      size_t node_size = leaf_node_p->data_list.size();
+      // NOTE: We use key number as the size of the node
+      // because using item count might result in a very unstable
+      // split, in a sense that we could not always split the node
+      // evenly, and in the worst case if there is one key in the
+      // node the node could not be splited while having a large
+      // item count
+      size_t node_size = leaf_node_p->item_prefix_sum.size();
 
       // Perform corresponding action based on node size
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
@@ -4535,7 +4527,9 @@ before_switch:
           new LeafSplitNode{*split_key_p, new_node_id, depth, node_p};
 
         //  First install the NodeID -> split sibling mapping
+        // If CAS fails we also need to recycle the node ID allocated here
         InstallNewNode(new_node_id, new_leaf_node_p);
+        
         // Then CAS split delta into current node's NodeID
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
@@ -4552,6 +4546,8 @@ before_switch:
           return;
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
+          
+          // TODO: Recycle node ID here
 
           // We have two nodes to delete here
           delete split_node_p;
@@ -4607,12 +4603,7 @@ before_switch:
           return;
         }
 
-        // TODO: If we support removing non-base nodes, then we need
-        // to fill into this will actual depth of the delta node
-        int depth = 1;
-
-        const LeafRemoveNode *remove_node_p = \
-          new LeafRemoveNode{depth, node_p};
+        const LeafRemoveNode *remove_node_p = new LeafRemoveNode{node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -4640,10 +4631,9 @@ before_switch:
         }
       }
     } else {   // If this is an inner node
-      const InnerNode *inner_node_p = \
-        static_cast<const InnerNode *>(node_p);
+      const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
 
-      size_t node_size = inner_node_p->sep_list.size();
+      size_t node_size = inner_node_p->item_prefix_sum.size();
 
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
@@ -4674,9 +4664,7 @@ before_switch:
 
         // If the type is remove then we just continue without abort
         // If we abort then it might introduce deadlock
-        NodeType split_key_child_node_type = split_key_child_node_p->GetType();
-        if(split_key_child_node_type == NodeType::LeafRemoveType || \
-           split_key_child_node_type == NodeType::InnerRemoveType) {
+        if(split_key_child_node_p->IsRemoveType()) {
           bwt_printf("Found a removed node (type %d) on split key child "
                      "CONTINUE \n",
                      static_cast<int>(split_key_child_node_type));
@@ -4688,15 +4676,12 @@ before_switch:
 
         NodeID new_node_id = GetNextNodeID();
 
-        // TODO: If we add support to split base node with a delta chain
-        // then this is the length of the delta chain
-        int depth = 1;
-
         const InnerSplitNode *split_node_p = \
-          new InnerSplitNode{*split_key_p, new_node_id, depth, node_p};
+          new InnerSplitNode{*split_key_p, new_node_id, node_p};
 
         //  First install the NodeID -> split sibling mapping
         InstallNewNode(new_node_id, new_inner_node_p);
+        
         // Then CAS split delta into current node's NodeID
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
@@ -4715,6 +4700,8 @@ before_switch:
           // We have two nodes to delete here
           delete split_node_p;
           delete new_inner_node_p;
+          
+          // TODO: Also need to remove the allocated NodeID
 
           return;
         } // if CAS fails
@@ -4777,12 +4764,7 @@ before_switch:
           return;
         }
 
-        // TODO: If we support removing non-base inner nodes then we should
-        // fill in actual delta chain depth here
-        int depth = 1;
-
-        const InnerRemoveNode *remove_node_p = \
-          new InnerRemoveNode{depth, node_p};
+        const InnerRemoveNode *remove_node_p = new InnerRemoveNode{node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -4919,8 +4901,6 @@ before_switch:
    *
    * Returns true if split key is not found (i.e. we could insert index term)
    *
-   * NOTE: This function assumes the snapshot already has data and metadata
-   *
    * NOTE 2: This function checks whether the PID has already been inserted
    * using both the sep key and NodeID. These two must match, otherwise we
    * observed an inconsistent state
@@ -4930,41 +4910,51 @@ before_switch:
                         const KeyType **next_key_p_p,
                         const NodeID insert_pid) {
     assert(snapshot_p->is_leaf == false);
-    assert(snapshot_p->has_data == true);
-    assert(snapshot_p->has_metadata == true);
+
+    const InnerNode *inner_node_p = \
+      static_cast<const InnerNode *>(parent_snapshot_p->node_p);
+
+    if(parent_snapshot_p->node_p->IsInnerNode() == false) {
+      inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
+
+      bool ret = InstallNodeToReplace(parent_snapshot_p.node_id,
+                                      inner_node_p,
+                                      parent_snapshot_p->node_p);
+
+      if(ret == true) {
+        parent_snapshot_p->node_p = inner_node_p;
+      } else {
+        // Must delay deallocation since we return pointers pointing
+        // into this node's data
+        epoch_manager.AddGarbageNode(inner_node_p);
+      }
+    }
     
-    (void)insert_pid;
+    // This returns an it pointing to the pair whose key >= split key
+    // If it is not split key then the iterator exactly points
+    // to the key we are looking for
+    // If it is split key then we do not need to insert and return false
+    auto split_key_it = std::lower_bound(inner_node_p->sep_list.begin(),
+                                         inner_node_p->sep_list.end(),
+                                         std::make_pair(*split_key_p,
+                                                        INVALID_NODE_ID),
+                                         key_node_id_pair_cmp_obj);
 
-    KeyNodeIDMap &sep_map = \
-      snapshot_p->GetLogicalInnerNode()->GetContainer();
-
-    assert(sep_map.size() >= 1);
-
-    typename KeyNodeIDMap::iterator it1 = sep_map.begin();
-
-    while(it1 != sep_map.end()) {
-      // We have inserted the same key before
-      if(KeyCmpEqual(it1->first, *split_key_p) == true) {
-        // Make sure the SepItem is used to map newly splitted node
-        //idb_assert_key(snapshot_p->node_id,
-        //               , insert_pid == it1->second);
-
-        return false;
-      }
-
-      // if we have found its next key, return it in the parameter
-      if(KeyCmpGreater(it1->first, *split_key_p) == true) {
-        *next_key_p_p = &it1->first;
-
-        return true;
-      }
-
-      it1++;
+    // If the split key already exists then just return false
+    if(KeyCmpEqual(split_key_it->first, *split_key_p) == true) {
+      assert(split_key_it->second == insert_pid);
+      
+      return false;
     }
 
-    // If we reach here, then the split key is larger than all
-    // existing keys in the inner node
-    *next_key_p_p = snapshot_p->GetHighKey();
+    // If lower_bound() returns end() then the split key will be the largest
+    // in the inner node. So just use the high key of the inner node as next
+    // key
+    if(split_key_it == inner_node_p->sep_list.end()) {
+      *next_key_p_p = &inner_node_p->metadata.ubound;
+    } else {
+      *next_p_p = &split_key_it->first;
+    }
 
     return true;
   }
