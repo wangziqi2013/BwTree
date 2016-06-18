@@ -1,0 +1,18 @@
+language: cpp
+compiler:
+    - g++
+
+install:
+    # get c++11 support
+    - if [ "$CXX" = "g++" ]; then export CXX="g++-4.8" CC="gcc-4.8"; fi
+addons:
+    apt:
+        sources:
+            - ubuntu-toolchain-r-test
+            - boost-latest
+        packages:
+            - gcc-4.8
+            - g++-4.8
+
+script:
+    - make benchmark-all
