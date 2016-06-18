@@ -1,6 +1,8 @@
 
 #include <cstring>
 #include <unordered_map>
+#include <random>
+#include <map>
 
 #include "bwtree.h"
 #include "../benchmark/btree.h"
@@ -900,6 +902,8 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < 1024 * 1024;i++) {
       t->GetValue(i, v);
+      
+      v.clear();
     }
   }
 
@@ -925,6 +929,8 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < 1024 * 1024;i++) {
         t->GetValue(i, v);
+        
+        v.clear();
       }
     }
     

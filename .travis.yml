@@ -1,0 +1,21 @@
+language: cpp
+compiler:
+    - g++
+
+install:
+    # get c++11 support
+    - export CXX="g++-5" CC="gcc-5"
+addons:
+    apt:
+        sources:
+            - ubuntu-toolchain-r-test
+            - boost-latest
+        packages:
+            - gcc-5
+            - g++-5
+            - libjemalloc-dev
+
+script:
+    - make prepare
+    - make benchmark-all
+    - make benchmark-bwtree
