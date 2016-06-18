@@ -26,14 +26,10 @@
 #include <atomic>
 #include <algorithm>
 #include <cassert>
-#include <unordered_map>
 #include <mutex>
 #include <string>
 #include <iostream>
-#include <set>
 #include <unordered_set>
-#include <map>
-#include <stack>
 #include <thread>
 #include <chrono>
 
@@ -331,7 +327,7 @@ class BwTree {
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 32;
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 15;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 14;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 6;
   
   constexpr static int64_t max_thread_count = 888888;
