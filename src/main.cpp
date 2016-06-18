@@ -893,9 +893,13 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   start = std::chrono::system_clock::now();
 
   int iter = 10;
+  std::vector<double> v{};
+  
+  v.reserve(100);
+  
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < 1024 * 1024;i++) {
-      t->GetValue(i);
+      t->GetValue(i, v);
     }
   }
 
@@ -914,9 +918,13 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
   
   auto func = [](uint64_t thread_id, TreeType *t) {
     int iter = 10;
+    std::vector<double> v{};
+    
+    v.reserve(100);
+    
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < 1024 * 1024;i++) {
-        t->GetValue(i);
+        t->GetValue(i, v);
       }
     }
     
