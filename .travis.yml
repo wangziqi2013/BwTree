@@ -15,4 +15,6 @@ addons:
             - g++-5
 
 script:
+    - make prepare
     - make benchmark-all
+    - make benchmark-bwtree
