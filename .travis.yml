@@ -4,15 +4,15 @@ compiler:
 
 install:
     # get c++11 support
-    - if [ "$CXX" = "g++" ]; then export CXX="g++-4.8" CC="gcc-4.8"; fi
+    - export CXX="g++-4.9" CC="gcc-4.9"
 addons:
     apt:
         sources:
             - ubuntu-toolchain-r-test
             - boost-latest
         packages:
-            - gcc-4.9
-            - g++-4.9
+            - gcc-5
+            - g++-5
 
 script:
     - make benchmark-all
