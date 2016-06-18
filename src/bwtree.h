@@ -340,8 +340,9 @@ class BwTree {
    * enum class NodeType - Bw-Tree node type
    */
   enum class NodeType {
+    LeafStart = 0,
     // Data page type
-    LeafType = 0,
+    LeafType = 1,
     
     // Only valid for leaf
     LeafInsertType,
@@ -350,9 +351,14 @@ class BwTree {
     LeafUpdateType,
     LeafRemoveType,
     LeafMergeType,
+    
+    // This serves as sentinel
+    LeafEnd,
 
     // We separate leaf and inner into two different intervals
     // to make it possible for compiler to optimize
+    
+    InnerStart,
     
     InnerType,
     
@@ -363,6 +369,8 @@ class BwTree {
     InnerRemoveType,
     InnerMergeType,
     InnerAbortType, // Unconditional abort
+    
+    InnerEnd,
   };
 
   /*
@@ -1113,15 +1121,14 @@ class BwTree {
      *
      * Note 2: Avoid calling this in multiple places. Currently we only
      * call this in TakeNodeSnapshot() or in the debugger
+     *
+     * This function makes use of the fact that leaf types occupie a
+     * continuous region of NodeType numerical space, so that we could
+     * the identity of leaf or Inner using only one comparison
+     *
      */
     inline bool IsOnLeafDeltaChain() const {
-      return (type == NodeType::LeafType || \
-              type == NodeType::LeafInsertType || \
-              type == NodeType::LeafDeleteType || \
-              type == NodeType::LeafSplitType || \
-              type == NodeType::LeafMergeType || \
-              type == NodeType::LeafRemoveType || \
-              type == NodeType::LeafUpdateType);
+      return type < NodeType::LeafEnd;
     }
   };
 
