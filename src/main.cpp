@@ -891,12 +891,11 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   // Then test read performance
   
   start = std::chrono::system_clock::now();
-  print_flag = true;
-  int iter = 1;
+
+  int iter = 10;
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < 1024 * 1024;i++) {
-      auto ret = t->GetValue(i);
-      (void)ret;
+      t->GetValue(i);
     }
   }
 
@@ -906,6 +905,33 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   std::cout << "BwTree: " << (1.0 * iter) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
+  return;
+}
+
+void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
+  const int num_thread = 8;
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  
+  auto func = [](uint64_t thread_id, TreeType *t) {
+    int iter = 10;
+    for(int j = 0;j < iter;j++) {
+      for(int i = 0;i < 1024 * 1024;i++) {
+        t->GetValue(i);
+      }
+    }
+    
+    std::cout << "[Thread " << thread_id << " Done]" << std::endl;
+  };
+  
+  start = std::chrono::system_clock::now();
+  LaunchParallelTestID(num_thread, func, t);
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+  std::cout << num_thread << " Threads BwTree: "
+            << (1.0 * 10 * num_thread) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+            
   return;
 }
 
@@ -1022,6 +1048,7 @@ int main(int argc, char **argv) {
     print_flag = false;
                       
     TestBwTreeInsertReadPerformance(t1);
+    TestBwTreeMultiThreadReadPerformance(t1);
     
     print_flag = true;
     delete t1;

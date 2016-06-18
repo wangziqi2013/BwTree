@@ -323,7 +323,7 @@ class BwTree {
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 18;
 
   // If the length of delta chain exceeds this then we consolidate the node
-  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 10;
   // So maximum delta chain length on leaf is 12
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = -4;
 
@@ -332,7 +332,7 @@ class BwTree {
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
 
   constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 15;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 7;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 6;
   
   constexpr static int64_t max_thread_count = 888888;
 
@@ -1007,31 +1007,13 @@ class BwTree {
      */
     NodeMetaData(const KeyType &p_lbound,
                  const KeyType &p_ubound,
-                 NodeID p_next_node_id) :
+                 NodeID p_next_node_id,
+                 int p_depth) :
       lbound{p_lbound},
       ubound{p_ubound},
       next_node_id{p_next_node_id},
-      depth{0}
+      depth{p_depth}
     {}
-    
-    /*
-     * Copy Constructor
-     *
-     * This could be used to copy a metadata from other node. 
-     */
-    NodeMetaData(const NodeMetaData &nmd) :
-      lbound{nmd.lbound},
-      ubound{nmd.ubound},
-      next_node_id{nmd.next_node_id},
-      depth{nmd.depth}
-    {}
-    
-    /*
-     * Default Constructor - This is used to initialize a base node since
-     *                       BaseNode needs to initialize a blank NodeMetaData
-     *                       structure first
-     */
-    NodeMetaData() {}
   };
 
   /*
@@ -1048,8 +1030,13 @@ class BwTree {
     /*
      * Constructor - Initialize type and metadata
      */
-    BaseNode(NodeType p_type) :
-      type{p_type}
+    BaseNode(NodeType p_type,
+             const KeyType &p_lbound,
+             const KeyType &p_ubound,
+             NodeID p_next_node_id,
+             int p_depth) :
+      type{p_type},
+      metadata{p_lbound, p_ubound, p_next_node_id, p_depth}
     {}
 
     /*
@@ -1074,43 +1061,6 @@ class BwTree {
      */
     inline const NodeMetaData &GetNodeMetaData() const {
       return metadata;
-    }
-    
-    /*
-     * SetNodeMetaData() - This is a wrapper to the expanded version below
-     *
-     * Argument node_p must be the child node of current node being initialized
-     *
-     * The other node being copied from should be the child node of the
-     * current node, since we assume the depth of current metadata object
-     * always equals the from node's depth + 1
-     */
-    inline void SetNodeMetaData(const BaseNode *node_p) {
-      SetNodeMetaData(node_p->metadata.lbound,
-                      node_p->metadata.ubound,
-                      node_p->metadata.next_node_id,
-                      node_p->metadata.depth + 1);
-      
-      return;
-    }
-    
-    /*
-     * SetNodeMetaData() - Set node metadata using given values
-     *
-     * Note: Node depth is by default set to 0, since this function
-     * is called for InnerNode and LeafNode, the depth of which is always 0
-     */
-    inline void SetNodeMetaData(const KeyType &p_lbound,
-                                const KeyType &p_ubound,
-                                NodeID p_next_node_id,
-                                int p_depth = 0) {
-      assert(p_lbound.type != ExtendedKeyValue::PosInf);
-      metadata.lbound = p_lbound;
-      metadata.ubound = p_ubound;
-      metadata.next_node_id = p_next_node_id;
-      metadata.depth = p_depth;
-      
-      return;
     }
 
     /*
@@ -1185,8 +1135,12 @@ class BwTree {
      * Constructor
      */
     DeltaNode(NodeType p_type,
-              const BaseNode *p_child_node_p) :
-      BaseNode{p_type},
+              const BaseNode *p_child_node_p,
+              const KeyType &p_lbound,
+              const KeyType &p_ubound,
+              NodeID p_next_node_id,
+              int p_depth) :
+      BaseNode{p_type, p_lbound, p_ubound, p_next_node_id, p_depth},
       child_node_p{p_child_node_p}
     {}
   };
@@ -1211,14 +1165,8 @@ class BwTree {
     LeafNode(const KeyType &p_lbound,
              const KeyType &p_ubound,
              NodeID p_next_node_id) :
-      BaseNode{NodeType::LeafType} {
-      // This needs to be done inside BaseNode
-      // so we call BaseNode::SetNodeMetaData() to initialize
-      // metadata
-      this->SetNodeMetaData(p_lbound, p_ubound, p_next_node_id);
-
-      return;
-    }
+      BaseNode{NodeType::LeafType, p_lbound, p_ubound, p_next_node_id, 0}
+    {}
 
     /*
      * GetSplitSibling() - Split the node into two halves
@@ -1313,13 +1261,14 @@ class BwTree {
     LeafInsertNode(const KeyType &p_insert_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafInsertType, p_child_node_p},
-      inserted_item{p_insert_key, p_value} {
-      // We set node metadata using parent node (direct copy)
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      DeltaNode{NodeType::LeafInsertType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
+      inserted_item{p_insert_key, p_value}
+    {}
   };
 
   /*
@@ -1341,13 +1290,14 @@ class BwTree {
     LeafDeleteNode(const KeyType &p_delete_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafDeleteType, p_child_node_p},
-      deleted_item{p_delete_key, p_value} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      DeltaNode{NodeType::LeafDeleteType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
+      deleted_item{p_delete_key, p_value}
+    {}
   };
 
   /*
@@ -1369,7 +1319,12 @@ class BwTree {
                    const ValueType &p_old_value,
                    const ValueType &p_new_value,
                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafUpdateType, p_child_node_p},
+      DeltaNode{NodeType::LeafUpdateType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
       update_key{p_update_key},
       old_value{p_old_value},
       new_value{p_new_value} {
@@ -1397,19 +1352,15 @@ class BwTree {
     LeafSplitNode(const KeyType &p_split_key,
                   NodeID p_split_sibling,
                   const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafSplitType, p_child_node_p},
+      DeltaNode{NodeType::LeafSplitType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_split_key,
+                p_split_sibling,
+                p_child_node_p->metadata.depth + 1},
       split_key{p_split_key},
-      split_sibling{p_split_sibling} {
-      // For a split node, the metadata should be set using split key
-      // Low key does not change
-      // high key is the split key
-      // next node ID should be the new node's ID
-      this->SetNodeMetaData(p_child_node_p->metadata.lbound,
-                            p_split_key,
-                            p_split_sibling);
-
-      return;
-    }
+      split_sibling{p_split_sibling}
+    {}
   };
 
   /*
@@ -1425,12 +1376,13 @@ class BwTree {
      * Constructor
      */
     LeafRemoveNode(const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafRemoveType, p_child_node_p} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      DeltaNode{NodeType::LeafRemoveType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1}
+    {}
   };
 
   /*
@@ -1458,21 +1410,16 @@ class BwTree {
                   const BaseNode *p_right_merge_p,
                   NodeID p_deleted_node_id,
                   const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafMergeType, p_child_node_p},
+      DeltaNode{NodeType::LeafMergeType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_right_merge_p->metadata.ubound,
+                p_right_merge_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
-      deleted_node_id{p_deleted_node_id} {
-      // For merge node, node metadata should be set according to
-      // two merge branches
-      // Low key is the low key of the left branch
-      // High key is the high key of the right branch
-      // Next node ID is the next node ID of the right branch
-      this->SetNodeMetaData(p_child_node_p->metadata.lbound,
-                            p_right_merge_p->metadata.ubound,
-                            p_right_merge_p->metadata.next_node_id);
-                      
-      return;
-    }
+      deleted_node_id{p_deleted_node_id}
+    {}
   };
 
   /*
@@ -1488,11 +1435,8 @@ class BwTree {
     InnerNode(const KeyType &p_lbound,
               const KeyType &p_ubound,
               NodeID p_next_node_id) :
-      BaseNode{NodeType::InnerType} {
-      this->SetNodeMetaData(p_lbound, p_ubound, p_next_node_id);
-      
-      return;
-    }
+      BaseNode{NodeType::InnerType, p_lbound, p_ubound, p_next_node_id, 0}
+    {}
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -1552,15 +1496,16 @@ class BwTree {
                     const KeyType &p_next_key,
                     NodeID p_new_node_id,
                     const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerInsertType, p_child_node_p},
+      DeltaNode{NodeType::InnerInsertType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
       insert_key{p_insert_key},
       next_key{p_next_key},
-      new_node_id{p_new_node_id} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-
-      return;
-    }
+      new_node_id{p_new_node_id}
+    {}
   };
 
   /*
@@ -1590,16 +1535,17 @@ class BwTree {
                     const KeyType &p_prev_key,
                     NodeID p_prev_node_id,
                     const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerDeleteType, p_child_node_p},
+      DeltaNode{NodeType::InnerDeleteType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
       delete_key{p_delete_key},
       next_key{p_next_key},
       prev_key{p_prev_key},
-      prev_node_id{p_prev_node_id} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      prev_node_id{p_prev_node_id}
+    {}
   };
 
   /*
@@ -1620,19 +1566,15 @@ class BwTree {
     InnerSplitNode(const KeyType &p_split_key,
                    NodeID p_split_sibling,
                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerSplitType, p_child_node_p},
+      DeltaNode{NodeType::InnerSplitType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_split_key,
+                p_split_sibling,
+                p_child_node_p->metadata.depth + 1},
       split_key{p_split_key},
-      split_sibling{p_split_sibling} {
-      // For split node metddata is set in the following way:
-      // Low key is the low key of child node
-      // High key is the split key
-      // Next node ID is the split sibling's node ID
-      this->SetNodeMetaData(p_child_node_p->metadata.lbound,
-                            p_split_key,
-                            p_split_sibling);
-      
-      return;
-    }
+      split_sibling{p_split_sibling}
+    {}
   };
 
   /*
@@ -1645,12 +1587,13 @@ class BwTree {
      * Constructor
      */
     InnerRemoveNode(const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerRemoveType, p_child_node_p} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      DeltaNode{NodeType::InnerRemoveType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1}
+    {}
   };
 
   /*
@@ -1673,20 +1616,16 @@ class BwTree {
                    const BaseNode *p_right_merge_p,
                    NodeID p_deleted_node_id,
                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerMergeType, p_child_node_p},
+      DeltaNode{NodeType::InnerMergeType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_right_merge_p->metadata.ubound,
+                p_right_merge_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
-      deleted_node_id{p_deleted_node_id} {
-      // Set node metadata using two branches
-      // Low key is the low key of the left branch
-      // High key is the high key of the right branch
-      // Next node ID is the next node ID of the right branch
-      this->SetNodeMetaData(p_child_node_p->metadata.lbound,
-                            p_right_merge_p->metadata.ubound,
-                            p_right_merge_p->metadata.next_node_id);
-
-      return;
-    }
+      deleted_node_id{p_deleted_node_id}
+    {}
   };
 
   /*
@@ -1699,12 +1638,13 @@ class BwTree {
      * Constructor
      */
     InnerAbortNode(const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerAbortType, p_child_node_p} {
-      // Set node metadata using child node
-      this->SetNodeMetaData(p_child_node_p);
-      
-      return;
-    }
+      DeltaNode{NodeType::InnerAbortType,
+                p_child_node_p,
+                p_child_node_p->metadata.lbound,
+                p_child_node_p->metadata.ubound,
+                p_child_node_p->metadata.next_node_id,
+                p_child_node_p->metadata.depth + 1}
+    {}
   };
 
   /*
@@ -2293,10 +2233,6 @@ class BwTree {
                                     snapshot_p->node_p->metadata.lbound));
           assert(KeyCmpLess(context_p->search_key,
                             snapshot_p->node_p->metadata.ubound));
-          if(print_flag) printf("low, search, high = %d, %d, %d\n",
-                                snapshot_p->node_p->metadata.lbound.key,
-                                context_p->search_key.key,
-                                snapshot_p->node_p->metadata.ubound.key);
 
           // This might load a leaf child
           // Also LoadNodeID() does not guarantee the node bound matches
@@ -4185,12 +4121,6 @@ before_switch:
         NodeID split_node_id = INVALID_NODE_ID;
         
         NodeType type = snapshot_p->node_p->GetType();
-        if(print_flag) printf("Split child Node lbound, ubound, type = %d, %d, %d; next = %lu; search key = %d\n",
-                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.lbound.key,
-                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.ubound.key,
-                              (int)((DeltaNode *)snapshot_p->node_p)->child_node_p->GetType(),
-                              ((DeltaNode *)snapshot_p->node_p)->child_node_p->metadata.next_node_id,
-                              context_p->search_key.key);
 
         // NOTE: depth should not be read here, since we
         // need to know the depth on its parent node
@@ -4282,7 +4212,7 @@ before_switch:
             // node to prevent further encountering the "false" split delta
             return true;
           }
-
+          
           const InnerInsertNode *insert_node_p = \
             new InnerInsertNode{*split_key_p,
                                 *next_key_p,
@@ -4884,6 +4814,17 @@ before_switch:
                                const KeyType **next_key_p_p,
                                const NodeID insert_pid) {
     assert(snapshot_p->is_leaf == false);
+    
+    // If the split key is out of range then just ignore
+    // we do not worry that through split sibling link
+    // we would traverse to the child of a differemt parent node
+    // than the current one, since we always guarantee that after
+    // NavigateInnerNode() returns if it does not abort, then we
+    // are on the correct node for the current key
+    if(KeyCmpGreaterEqual(*split_key_p,
+                          snapshot_p->node_p->metadata.ubound) == true) {
+      return false;
+    }
 
     const InnerNode *inner_node_p = \
       static_cast<const InnerNode *>(snapshot_p->node_p);
@@ -4923,20 +4864,6 @@ before_switch:
                                          std::make_pair(*split_key_p,
                                                         INVALID_NODE_ID),
                                          key_node_id_pair_cmp_obj);
-
-    for(auto &item : inner_node_p->sep_list) {
-      if(print_flag) printf("%d ", item.first.key);
-    }
-
-
-    if(print_flag) printf("\nsplit key it = %d; split key = %d\n",
-               split_key_it->first.key,
-               split_key_p->key);
-
-    if(inner_node_p->metadata.next_node_id != INVALID_NODE_ID)
-    if(print_flag) printf("high key = %d; next low key = %d\n",
-                          inner_node_p->metadata.ubound.key,
-                          GetNode(inner_node_p->metadata.next_node_id)->metadata.lbound.key);
 
     // This is special case: the split key is higher than all keys
     // inside the inner node
