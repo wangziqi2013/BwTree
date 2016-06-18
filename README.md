@@ -3,6 +3,8 @@ This is a street strength implementation of Bw-Tree, the Microsoft's implementat
 
 ![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/master/cover.png)
 
+![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-17.jpg)
+
 
 Paper for reference
 ===================
