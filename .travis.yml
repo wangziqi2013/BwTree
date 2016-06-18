@@ -13,6 +13,7 @@ addons:
         packages:
             - gcc-5
             - g++-5
+            - libjemalloc-dev
 
 script:
     - make prepare

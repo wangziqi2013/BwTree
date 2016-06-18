@@ -1,6 +1,7 @@
 
 GMON_FLAG = 
 OPT_FLAG = -O3
+JEMALLOC_LIB = /usr/lib/x86_64-linux-gnu/libjemalloc.so
 
 all: main
 
@@ -18,16 +19,16 @@ gprof:
 	make all GMON_FLAG=-pg
 
 benchmark-all: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main --benchmark-all
+	LD_PRELOAD=$(JEMALLOC_LIB) ./main --benchmark-all
 
 benchmark-bwtree: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main --benchmark-bwtree
+	LD_PRELOAD=$(JEMALLOC_LIB) ./main --benchmark-bwtree
 
 test: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main --test
+	LD_PRELOAD=$(JEMALLOC_LIB) ./main --test
 
 stress-test: main
-	LD_PRELOAD=./lib/libjemalloc.so ./main --stress-test
+	LD_PRELOAD=$(JEMALLOC_LIB) ./main --stress-test
 
 prepare:
 	mkdir -p build
