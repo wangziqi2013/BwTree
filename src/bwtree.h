@@ -320,7 +320,7 @@ class BwTree {
   using EpochNode = typename EpochManager::EpochNode;
 
   // The maximum number of nodes we could map in this index
-  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 18;
+  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 10;
