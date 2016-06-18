@@ -11,8 +11,8 @@ addons:
             - ubuntu-toolchain-r-test
             - boost-latest
         packages:
-            - gcc-4.8
-            - g++-4.8
+            - gcc-4.9
+            - g++-4.9
 
 script:
     - make benchmark-all
