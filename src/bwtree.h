@@ -342,8 +342,7 @@ class BwTree {
   enum class NodeType {
     // Data page type
     LeafType = 0,
-    InnerType,
-
+    
     // Only valid for leaf
     LeafInsertType,
     LeafSplitType,
@@ -352,6 +351,11 @@ class BwTree {
     LeafRemoveType,
     LeafMergeType,
 
+    // We separate leaf and inner into two different intervals
+    // to make it possible for compiler to optimize
+    
+    InnerType,
+    
     // Only valid for inner
     InnerInsertType,
     InnerSplitType,
