@@ -17,5 +17,5 @@ addons:
 
 script:
     - make prepare
-    - make benchmark-all
-    - make benchmark-bwtree
+    - make benchmark-all CXX=g++-5 PRELOAD_LIB=
+    - make benchmark-bwtree CXX=g++-5 PRELOAD_LIB=
