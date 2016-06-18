@@ -4,7 +4,7 @@ compiler:
 
 install:
     # get c++11 support
-    - export CXX="g++-4.9" CC="gcc-4.9"
+    - export CXX="g++-5" CC="gcc-5"
 addons:
     apt:
         sources:
