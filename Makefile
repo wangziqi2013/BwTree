@@ -25,6 +25,9 @@ benchmark-all: main
 benchmark-bwtree: main
 	$(PRELOAD_LIB) ./main --benchmark-bwtree
 
+benchmark-bwtree-full: main
+	$(PRELOAD_LIB) ./main --benchmark-bwtree-full
+
 test: main
 	$(PRELOAD_LIB) ./main --test
 
