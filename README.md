@@ -3,10 +3,19 @@ This is a street strength implementation of Bw-Tree, the Microsoft's implementat
 
 ![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/master/cover.png)
 
+Benchmark
+=========
+
+1 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
+
 ![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-17.jpg)
 
+30 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
 
-Paper for reference
+![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-18.jpg)
+
+
+References
 ===================
 http://research.microsoft.com/pubs/246926/p2067-makreshanski.pdf
 
@@ -20,7 +29,7 @@ http://db.disi.unitn.eu/pages/VLDBProgram/pdf/DBRank/dbrank2013-invited2.pdf
 
 Here is again an interesting paper which has nothing new about Bw-Tree but there is a short summary of Bw-Tree in section 1.1
 
-Potential Problem with the Paper
+Improvements
 ================================
 In the official paper of Bw-Tree, removing a node is described as posting a node remove delta on the removed node first, and then we make progress with this SMO using the help-along protocol, finishing it by posting an index term delete delta on top of its parent. This procedure has a potential problem when the parent is undergoing a split, and the split key is unfortunately chosen to be pointing to the removed node. In this case, after parent node split, its left most child is logically merged into the left sibling of the parent node, which implicitly changes both the low key of the parent and the high key of its left sibling.
 
@@ -28,5 +37,10 @@ Our approach to avoid this problem is to post a special ABORT node on the parent
 
 Compile and Run
 ===============
-This Bw-Tree implementation heavily makes use of template, but is flexible enough for those data types that have a default comparator and hasher. In order to test, you will have to include bwtree.h into your source file, and instancicate a Bw-Tree with appropriate template arguments. After that it is ready to use.
+make prepare ; This prepares build directory
+make         ; This only compiles and links
+make benchmark-bwtree ; This compiles and runs benchmark for bwtree only
+make benchmark-all    ; This compiles and runs benchmark for bwtree, std::map, std::unordered_map and std::btree
+make stress-test      ; Runs stress test on BwTree until NodeID runs out and assertion fails
+make test             ; Runs insert-read-delete test for multiple times with different patterns
 
