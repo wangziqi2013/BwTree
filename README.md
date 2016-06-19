@@ -37,10 +37,16 @@ Our approach to avoid this problem is to post a special ABORT node on the parent
 
 Compile and Run
 ===============
-make prepare ; This prepares build directory
-make         ; This only compiles and links
-make benchmark-bwtree ; This compiles and runs benchmark for bwtree only
-make benchmark-all    ; This compiles and runs benchmark for bwtree, std::map, std::unordered_map and std::btree
-make stress-test      ; Runs stress test on BwTree until NodeID runs out and assertion fails
-make test             ; Runs insert-read-delete test for multiple times with different patterns
+make prepare -> This prepares build directory
+
+make         -> This only compiles and links
+
+make benchmark-bwtree -> This compiles and runs benchmark for bwtree only
+
+make benchmark-all    -> This compiles and runs benchmark for bwtree, std::map, std::unordered_map and std::btree
+
+make stress-test      -> Runs stress test on BwTree until NodeID runs out and assertion fails
+
+make test             -> Runs insert-read-delete test for multiple times with different patterns
+
 
