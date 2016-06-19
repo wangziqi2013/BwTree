@@ -879,7 +879,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
-  for(int i = 0;i < 1024 * 1024;i++) {
+  for(int i = 0;i < 1024 * 1024 * 30;i++) {
     t->Insert(i, i * 1.11L);
   }
 
@@ -887,7 +887,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "BwTree: " << 1.0 / elapsed_seconds.count()
+  std::cout << "BwTree: " << (30.0) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
             
   // Then test read performance
@@ -900,7 +900,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   v.reserve(100);
   
   for(int j = 0;j < iter;j++) {
-    for(int i = 0;i < 1024 * 1024;i++) {
+    for(int i = 0;i < 1024 * 1024 * 30;i++) {
       t->GetValue(i, v);
       
       v.clear();
@@ -910,7 +910,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "BwTree: " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "BwTree: " << (30.0 * iter) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
@@ -927,7 +927,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
     v.reserve(100);
     
     for(int j = 0;j < iter;j++) {
-      for(int i = 0;i < 1024 * 1024;i++) {
+      for(int i = 0;i < 1024 * 1024 * 30;i++) {
         t->GetValue(i, v);
         
         v.clear();
@@ -943,7 +943,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
   std::cout << num_thread << " Threads BwTree: "
-            << (1.0 * 10 * num_thread) / elapsed_seconds.count()
+            << (30.0 * 10 * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
             
   return;
