@@ -50,6 +50,8 @@
 #include "index/index.h"
 #endif
 
+#include "bloom_filter.h"
+
 /*
  * BWTREE_DEBUG - This flag enables assertions that check for
  *                structural consistency
@@ -2154,7 +2156,7 @@ class BwTree {
    * NOTE: If value_p is given then this function calls NavigateLeafNode()
    * to detect whether the desired key value pair exists or not. If value_p
    * is nullptr then this function calls the overloaded version of
-   * NavigateLeafNode() to collect all values associated with the key
+   *  NavigateLeafNode() to collect all values associated with the key
    * and put them into value_list_p.
    *
    * If value_p is not nullptr, then the return value of this function denotes
@@ -2823,7 +2825,8 @@ class BwTree {
   }
 
   /*
-   * NavigateLeafNode() - Find search key on a logical leaf node
+   * NavigateLeafNode() - Find search key on a logical leaf node and collect
+   *                      values associated with the key
    *
    * This function correctly deals with merge and split, starting on
    * the topmost node of a delta chain
@@ -2868,6 +2871,7 @@ class BwTree {
     
     // This two are used to replay the log
     // As an optimization we just use value set
+    /*
     ValueSet present_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
                          value_hash_obj,
                          value_eq_obj};
@@ -2875,6 +2879,10 @@ class BwTree {
     ValueSet deleted_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
                          value_hash_obj,
                          value_eq_obj};
+    */
+    
+    BloomFilter<ValueType> present_set{value_hash_obj};
+    BloomFilter<ValueType> deleted_set{value_hash_obj};
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2908,8 +2916,12 @@ class BwTree {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
             // the key value pair
-            if(deleted_set.find(copy_start_it->second) == deleted_set.end()) {
-              present_set.insert(copy_start_it->second);
+            if(deleted_set.Exists(copy_start_it->second) == false) {
+              if(present_set.Exists(copy_start_it->second) == false) {
+                present_set.Insert(copy_start_it->second);
+
+                value_list.push_back(copy_start_it->second);
+              }
             }
             
             copy_start_it++;
@@ -2917,10 +2929,10 @@ class BwTree {
           
           // Reserve that much space to hold all values.
           // We use reserve to avoid reallocation
-          value_list.reserve(present_set.size());
+          //value_list.reserve(present_set.size());
           
           // Copy all elements in present_set to the vector
-          value_list.assign(present_set.begin(), present_set.end());
+          // value_list.assign(present_set.begin(), present_set.end());
 
           return;
         }
@@ -2929,9 +2941,12 @@ class BwTree {
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
-            if(deleted_set.find(insert_node_p->inserted_item.second) == \
-               deleted_set.end()) {
-              present_set.insert(insert_node_p->inserted_item.second);
+            if(deleted_set.Exists(insert_node_p->inserted_item.second) == false) {
+              if(present_set.Exists(insert_node_p->inserted_item.second) == false) {
+                present_set.Insert(insert_node_p->inserted_item.second);
+
+                value_list.push_back(insert_node_p->inserted_item.second);
+              }
             }
           }
 
@@ -2944,9 +2959,8 @@ class BwTree {
             static_cast<const LeafDeleteNode *>(node_p);
 
           if(KeyCmpEqual(search_key, delete_node_p->deleted_item.first)) {
-            if(present_set.find(delete_node_p->deleted_item.second) == \
-               present_set.end()) {
-              deleted_set.insert(delete_node_p->deleted_item.second);
+            if(present_set.Exists(delete_node_p->deleted_item.second) == false) {
+              deleted_set.Insert(delete_node_p->deleted_item.second);
             }
           }
 
@@ -2957,9 +2971,10 @@ class BwTree {
         case NodeType::LeafUpdateType: {
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
-
+          assert(false);
           // Internally we treat update node as two operations
           // but they must be packed together to make an atomic step
+          /*
           if(KeyCmpEqual(search_key, update_node_p->update_key)) {
             if(deleted_set.find(update_node_p->new_value) == deleted_set.end()) {
               present_set.insert(update_node_p->new_value);
@@ -2969,6 +2984,7 @@ class BwTree {
               deleted_set.insert(update_node_p->old_value);
             }
           }
+          */
 
           node_p = update_node_p->child_node_p;
 
@@ -3014,8 +3030,8 @@ class BwTree {
             // there should not be any record with search key in
             // the chain from where we come since otherwise these
             // records are misplaced
-            assert(present_set.size() == 0UL);
-            assert(deleted_set.size() == 0UL);
+            //assert(present_set.size() == 0UL);
+            //assert(deleted_set.size() == 0UL);
 
             NodeID split_sibling_id = split_node_p->split_sibling;
 

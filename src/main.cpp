@@ -875,11 +875,11 @@ void TestBTreeInsertReadPerformance() {
   return;
 }
 
-void TestBwTreeInsertReadPerformance(TreeType *t) {
+void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
-  for(int i = 0;i < 1024 * 1024;i++) {
+  for(int i = 0;i < key_num;i++) {
     t->Insert(i, i * 1.11L);
   }
 
@@ -887,7 +887,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "BwTree: " << 1.0 / elapsed_seconds.count()
+  std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
             
   // Then test read performance
@@ -900,7 +900,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   v.reserve(100);
   
   for(int j = 0;j < iter;j++) {
-    for(int i = 0;i < 1024 * 1024;i++) {
+    for(int i = 0;i < key_num;i++) {
       t->GetValue(i, v);
       
       v.clear();
@@ -910,24 +910,25 @@ void TestBwTreeInsertReadPerformance(TreeType *t) {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "BwTree: " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
 }
 
-void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
+void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
+  int iter = 10;
+  
   std::chrono::time_point<std::chrono::system_clock> start, end;
   
-  auto func = [](uint64_t thread_id, TreeType *t) {
-    int iter = 10;
+  auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
     std::vector<double> v{};
     
     v.reserve(100);
     
     for(int j = 0;j < iter;j++) {
-      for(int i = 0;i < 1024 * 1024;i++) {
+      for(int i = 0;i < key_num;i++) {
         t->GetValue(i, v);
         
         v.clear();
@@ -943,7 +944,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t) {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
   std::cout << num_thread << " Threads BwTree: "
-            << (1.0 * 10 * num_thread) / elapsed_seconds.count()
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
             
   return;
@@ -1010,6 +1011,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_all = false;
   bool run_test = false;
   bool run_benchmark_bwtree = false;
+  bool run_benchmark_bwtree_full = false;
   bool run_stress = false;
   
   int opt_index = 1;
@@ -1022,6 +1024,8 @@ int main(int argc, char **argv) {
       run_test = true;
     } else if(strcmp(opt_p, "--benchmark-bwtree") == 0) {
       run_benchmark_bwtree = true;
+    } else if(strcmp(opt_p, "--benchmark-bwtree-full") == 0) {
+      run_benchmark_bwtree_full = true;
     } else if(strcmp(opt_p, "--stress-test") == 0) {
       run_stress = true;
     }
@@ -1055,14 +1059,26 @@ int main(int argc, char **argv) {
     print_flag = false;
   }
   
-  if(run_benchmark_bwtree == true) {
+  if(run_benchmark_bwtree == true ||
+     run_benchmark_bwtree_full == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
+    
+    int key_num = 1024 * 1024;
+    
+    if(run_benchmark_bwtree_full == true) {
+      key_num *= 30;
+    }
+    
+    bwt_printf("Using key size = %d (%f million)\n",
+               key_num,
+               key_num / (1024.0 * 1024.0));
+               
     print_flag = false;
-                      
-    TestBwTreeInsertReadPerformance(t1);
-    TestBwTreeMultiThreadReadPerformance(t1);
+    
+    TestBwTreeInsertReadPerformance(t1, key_num);
+    TestBwTreeMultiThreadReadPerformance(t1, key_num);
     
     print_flag = true;
     delete t1;
@@ -1073,12 +1089,18 @@ int main(int argc, char **argv) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
+
+    int key_num = 1024 * 1024;
+    bwt_printf("Using key size = %d (%f million)\n",
+               key_num,
+               key_num / (1024.0 * 1024.0));
+                      
     print_flag = false;
     
     TestStdMapInsertReadPerformance();
     TestStdUnorderedMapInsertReadPerformance();
     TestBTreeInsertReadPerformance();
-    TestBwTreeInsertReadPerformance(t1);
+    TestBwTreeInsertReadPerformance(t1, key_num);
     
     print_flag = true;
     delete t1;
