@@ -14,6 +14,9 @@ Benchmark
 
 ![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-18.jpg)
 
+Same as above, but with Bloom Filter
+
+![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-19.jpg)
 
 References
 ===================
