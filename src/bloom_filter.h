@@ -55,10 +55,12 @@ class BloomFilter {
   unsigned char bit_array_1[FILTER_SIZE];
   unsigned char bit_array_2[FILTER_SIZE];
   unsigned char bit_array_3[FILTER_SIZE];
+  /*
   unsigned char bit_array_4[FILTER_SIZE];
   unsigned char bit_array_5[FILTER_SIZE];
   unsigned char bit_array_6[FILTER_SIZE];
   unsigned char bit_array_7[FILTER_SIZE];
+  */
   
   const ValueType **data_p;
   int value_count;
@@ -100,10 +102,12 @@ class BloomFilter {
     memset(bit_array_1, 0, sizeof(bit_array_1));
     memset(bit_array_2, 0, sizeof(bit_array_2));
     memset(bit_array_3, 0, sizeof(bit_array_3));
+    /*
     memset(bit_array_4, 0, sizeof(bit_array_4));
     memset(bit_array_5, 0, sizeof(bit_array_5));
     memset(bit_array_6, 0, sizeof(bit_array_6));
     memset(bit_array_7, 0, sizeof(bit_array_7));
+    */
     
     return;
   }
@@ -145,7 +149,7 @@ class BloomFilter {
     bit_array_3[(hash_value & BYTE_OFFSET_MASK) >> 3] |= \
       (0x1 << (hash_value & BIT_OFFSET_MASK));
     hash_value >>= RIGHT_SHIFT_BIT;
-    
+    /*
     bit_array_4[(hash_value & BYTE_OFFSET_MASK) >> 3] |= \
       (0x1 << (hash_value & BIT_OFFSET_MASK));
     hash_value >>= RIGHT_SHIFT_BIT;
@@ -160,7 +164,7 @@ class BloomFilter {
     
     bit_array_7[(hash_value & BYTE_OFFSET_MASK) >> 3] |= \
       (0x1 << (hash_value & BIT_OFFSET_MASK));
-    
+    */
     return;
   }
   
@@ -210,7 +214,7 @@ class BloomFilter {
     } else {
       hash_value >>= RIGHT_SHIFT_BIT;
     }
-    
+    /*
     if((bit_array_4[(hash_value & BYTE_OFFSET_MASK) >> 3] & \
       (0x1 << (hash_value & BIT_OFFSET_MASK))) == 0x00) {
       return false;
@@ -238,6 +242,7 @@ class BloomFilter {
     } else {
       hash_value >>= RIGHT_SHIFT_BIT;
     }
+    */
     
     // We are still not sure whether the element exists or not
     // even if we reach here - though it should be a rare event
