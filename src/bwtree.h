@@ -33,6 +33,11 @@
 #include <thread>
 #include <chrono>
 
+// We use this to avoid allocating temporary STL variable
+// on the heap if everything happens locally and could
+// be contained on the stack
+#include <alloca.h>
+
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
@@ -2857,28 +2862,35 @@ class BwTree {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
     
+    assert(snapshot_p->is_leaf == true);
+    
     // This is used to control which values will be collected
     const NodeMetaData *metadata_p = &node_p->metadata;
     
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
-
-    assert(snapshot_p->is_leaf == true);
     
-    // This two are used to replay the log
-    // As an optimization we just use value set
-    /*
-    ValueSet present_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
-                         value_hash_obj,
-                         value_eq_obj};
-                         
-    ValueSet deleted_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
-                         value_hash_obj,
-                         value_eq_obj};
-    */
+    // The maximum size of present set and deleted set is just
+    // the length of the delta chain. Since when we reached the leaf node
+    // we just probe and add to value set
+    const int set_max_size = node_p->metadata.depth;
     
-    BloomFilter<ValueType> present_set{value_hash_obj};
-    BloomFilter<ValueType> deleted_set{value_hash_obj};
+    // 1. This works even if depth is 0
+    // 2. We choose to store const ValueType * because we want to bound the
+    // size of stack array. It should be upper bounded by max delta chain
+    // length * pointer size. On the contrary, if the size of
+    // ValueType is huge, and we store ValueType, then we might cause
+    // a stack overflow
+    const ValueType *present_set_data_p[set_max_size];
+    const ValueType *deleted_set_data_p[set_max_size];
+    
+    BloomFilter<ValueType> present_set{present_set_data_p,
+                                       value_eq_obj,
+                                       value_hash_obj};
+                                       
+    BloomFilter<ValueType> deleted_set{deleted_set_data_p,
+                                       value_eq_obj,
+                                       value_hash_obj};
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2914,21 +2926,18 @@ class BwTree {
             // the key value pair
             if(deleted_set.Exists(copy_start_it->second) == false) {
               if(present_set.Exists(copy_start_it->second) == false) {
-                present_set.Insert(copy_start_it->second);
-
+                // Note: As an optimization, we do not have to Insert() the
+                // value element into present set here. Since we know it
+                // is already base leaf page, adding values into present set
+                // definitely will not block the remaining values, since we
+                // know they do not duplicate inside the leaf node
+                
                 value_list.push_back(copy_start_it->second);
               }
             }
             
             copy_start_it++;
           }
-          
-          // Reserve that much space to hold all values.
-          // We use reserve to avoid reallocation
-          //value_list.reserve(present_set.size());
-          
-          // Copy all elements in present_set to the vector
-          // value_list.assign(present_set.begin(), present_set.end());
 
           return;
         }
