@@ -330,6 +330,8 @@ class BwTree {
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 10;
   // So maximum delta chain length on leaf is 12
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = -4;
+  
+  constexpr static int STATIC_CONSOLIDATION_THREAHOLD = 10;
 
   // If node size goes above this then we split it
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 32;
@@ -942,17 +944,29 @@ class BwTree {
     
     // Current level (root = 0)
     int current_level;
+    
+    // This is set to true if the workload is read-only so that we adjust
+    // the strategy of consolidating nodes
+    // Basically with read only workload it is impossible to consolidate nodes
+    // using delta chain length since the length never changes
+    // In that case we increase a counter that counts read operations
+    // happened on a certain node, and consolidate if the delta chain
+    // is long and the read operation happens frequently
+    bool read_only;
 
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key, size_t p_tree_height) :
+    Context(const KeyType p_search_key,
+            size_t p_tree_height,
+            bool p_read_only) :
       search_key{p_search_key},
       current_state{OpState::Init},
       abort_flag{false},
       path_list{},
       abort_counter{0},
-      current_level{0} {
+      current_level{0},
+      read_only{p_read_only} {
       // This is an optimization - We preallocate that many slots for vector
       // to avoid reallocating in std::vector
       path_list.reserve(p_tree_height + 1);
@@ -1010,8 +1024,14 @@ class BwTree {
     
     NodeID next_node_id;
     
+    // This is the depth of current delta chain
     int depth;
-    //int access_counter;
+    
+    // This records read-only accesses on the delta chain
+    // If we are running read-only wordload and there is a hot spot
+    // then the delta chain will be consolidated after a certain number
+    // of accesses. Such cost could be amortized by improved read performance
+    int access_counter;
     
     /*
      * Constructor
@@ -1029,7 +1049,8 @@ class BwTree {
       lbound{p_lbound},
       ubound{p_ubound},
       next_node_id{p_next_node_id},
-      depth{p_depth}
+      depth{p_depth},
+      access_counter{0}
     {}
   };
 
@@ -4321,17 +4342,42 @@ before_switch:
     // to locate garbage delta chain
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
-
+    
     // We could only perform consolidation on delta node
     // because we want to see depth field
     if(node_p->IsDeltaNode() == false) {
       assert(recommend_consolidation == false);
+      
+      // The depth of base node may not be 0
+      // since if we consolidate parent node to finish the partial SMO,
+      // then parent node will have non-0 depth in order to avoid being too
+      // large (see FindSplitNextKey() and FindMergePrevNextKey() and
+      // JumpToLeftSibling())
+      // assert(node_p->metadata.depth == 0);
       
       return false;
     }
 
     // If depth does not exceeds threshold then we check recommendation flag
     int depth = node_p->metadata.depth;
+    
+    //bwt_printf("depth = %d, type = %d\n", depth, (int)node_p->GetType());
+    
+    // Increment read counter on top of the delta chain
+    /*
+    if(context_p->read_only == true) {
+      const_cast<BaseNode *>(node_p)->metadata.access_counter++;
+
+      if(node_p->metadata.access_counter * depth > \
+         STATIC_CONSOLIDATION_THREAHOLD) {
+        bwt_printf("Delta chain length < threshold, "
+                   "but the delta chain has been read too many times\n");
+
+        recommend_consolidation = true;
+      }
+    }
+    */
+    
     if(snapshot_p->is_leaf == true) {
       // Adjust the length a little bit using this variable
       // NOTE: The length of the delta chain on leaf coule be a
@@ -4350,7 +4396,7 @@ before_switch:
                    "but consolidation is recommended\n");
       }
     }
-
+    
     // After this pointer we decide to consolidate node
 
     // This is for debugging
@@ -5064,7 +5110,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key, tree_height, false};
 
       // Check whether the key-value pair exists
       bool value_exist = Traverse(&context, &value, nullptr);
@@ -5146,7 +5192,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key, tree_height, false};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5269,7 +5315,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key, tree_height, false};
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
@@ -5337,7 +5383,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key, tree_height, false};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5449,7 +5495,7 @@ before_switch:
     
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key, tree_height, true};
 
     Traverse(&context, nullptr, &value_list);
 
@@ -5463,7 +5509,7 @@ before_switch:
     
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key, tree_height, true};
 
     std::vector<ValueType> value_list{};
     Traverse(&context, nullptr, &value_list);
