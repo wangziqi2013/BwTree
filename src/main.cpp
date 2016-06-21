@@ -894,7 +894,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   
   start = std::chrono::system_clock::now();
 
-  int iter = 10;
+  int iter = 100;
   std::vector<double> v{};
   
   v.reserve(100);
@@ -961,7 +961,7 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   
   std::random_device r;
 
-  // Choose a random mean between 1 and 6
+  // Choose a random mean between 0 and max key value
   std::default_random_engine e1(r());
   std::uniform_int_distribution<int> uniform_dist(0, max_key - 1);
   
@@ -1078,7 +1078,9 @@ int main(int argc, char **argv) {
     print_flag = false;
     
     TestBwTreeInsertReadPerformance(t1, key_num);
-    TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    if(run_benchmark_bwtree_full == true) {
+      TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    }
     
     print_flag = true;
     delete t1;
