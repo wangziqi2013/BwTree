@@ -60,7 +60,8 @@
 /*
  * BWTREE_DEBUG - This flag enables assertions that check for
  *                structural consistency
- *                DO NOT RECOMMEND REMOVING
+ *
+ * REMOVING THIS FLAG FOR RELEASE
  */
 #define BWTREE_DEBUG
 
@@ -1010,6 +1011,7 @@ class BwTree {
     NodeID next_node_id;
     
     int depth;
+    //int access_counter;
     
     /*
      * Constructor
@@ -1787,6 +1789,9 @@ class BwTree {
 
     InitMappingTable();
     InitNodeLayout();
+    
+    bwt_printf("sizeof(NodeMetaData) = %lu is the overhead for each node\n",
+               sizeof(NodeMetaData));
 
     bwt_printf("Starting epoch manager thread...\n");
     epoch_manager.StartThread();
@@ -2011,7 +2016,6 @@ class BwTree {
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
                first_node_id);
-    bwt_printf("Plugging in new node\n");
 
     InstallNewNode(root_id, root_node_p);
 
@@ -2917,15 +2921,10 @@ class BwTree {
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
-                             
-          auto copy_end_it = \
-            std::upper_bound(copy_start_it,
-                             leaf_node_p->data_list.end(),
-                             std::make_pair(search_key, ValueType{}),
-                             key_value_pair_cmp_obj);
 
           // If there is something to copy
-          while(copy_start_it != copy_end_it) {
+          while((copy_start_it != leaf_node_p->data_list.end()) && \
+                (KeyCmpEqual(search_key, copy_start_it->first))) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
             // the key value pair
