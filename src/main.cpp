@@ -894,7 +894,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   
   start = std::chrono::system_clock::now();
 
-  int iter = 100;
+  int iter = 10;
   std::vector<double> v{};
   
   v.reserve(100);
@@ -1077,10 +1077,9 @@ int main(int argc, char **argv) {
                
     print_flag = false;
     
+    TestBwTreeInsertReadPerformance(t1, key_num);
     if(run_benchmark_bwtree_full == true) {
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
-    } else {
-      TestBwTreeInsertReadPerformance(t1, key_num);
     }
     
     print_flag = true;
