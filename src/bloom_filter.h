@@ -53,17 +53,6 @@ class BloomFilter {
  private:
   unsigned char bit_array_0[FILTER_SIZE];
   
-  unsigned char bit_array_1[FILTER_SIZE];
-  unsigned char bit_array_2[FILTER_SIZE];
-  unsigned char bit_array_3[FILTER_SIZE];
-  
-  /*
-  unsigned char bit_array_4[FILTER_SIZE];
-  unsigned char bit_array_5[FILTER_SIZE];
-  unsigned char bit_array_6[FILTER_SIZE];
-  unsigned char bit_array_7[FILTER_SIZE];
-  */
-  
   const ValueType **data_p;
   int value_count;
   
@@ -152,14 +141,6 @@ class BloomFilter {
    */
   inline bool __ExistsScalar(const ValueType &value) {
     register size_t hash_value = value_hash_obj(value);
-    
-    hash_value ^= ((hash_value >> 8) ^
-                   (hash_value >> 16) ^
-                   (hash_value >> 24) ^
-                   (hash_value >> 32) ^
-                   (hash_value >> 40) ^
-                   (hash_value >> 48) ^
-                   (hash_value >> 56));
 
     if((bit_array_0[(hash_value & BYTE_OFFSET_MASK) >> 3] & \
       (0x1 << (hash_value & BIT_OFFSET_MASK))) == 0x00) {
