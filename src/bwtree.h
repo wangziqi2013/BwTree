@@ -2447,10 +2447,6 @@ class BwTree {
    * After returning of this function please remember to check the flag
    * and update path history. (Such jump may happen multiple times, so
    * do not make any assumption about how jump is performed)
-   *
-   * NOTE 2: This function is different from Navigate leaf version because it
-   * takes an extra argument for remembering the separator key associated
-   * with the NodeID.
    */
   inline NodeID NavigateInnerNode(Context *context_p) {
     // First get the snapshot from context
@@ -2971,20 +2967,20 @@ class BwTree {
         case NodeType::LeafUpdateType: {
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
-          assert(false);
           // Internally we treat update node as two operations
           // but they must be packed together to make an atomic step
-          /*
+
           if(KeyCmpEqual(search_key, update_node_p->update_key)) {
-            if(deleted_set.find(update_node_p->new_value) == deleted_set.end()) {
-              present_set.insert(update_node_p->new_value);
+            if(deleted_set.Exists(update_node_p->new_value) == false) {
+              present_set.Insert(update_node_p->new_value);
+              
+              value_list.push_back(update_node_p->new_value);
             }
             
-            if(present_set.find(update_node_p->old_value) == present_set.end()) {
-              deleted_set.insert(update_node_p->old_value);
+            if(present_set.Exists(update_node_p->old_value) == false) {
+              deleted_set.Insert(update_node_p->old_value);
             }
           }
-          */
 
           node_p = update_node_p->child_node_p;
 
