@@ -1077,9 +1077,10 @@ int main(int argc, char **argv) {
                
     print_flag = false;
     
-    TestBwTreeInsertReadPerformance(t1, key_num);
     if(run_benchmark_bwtree_full == true) {
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    } else {
+      TestBwTreeInsertReadPerformance(t1, key_num);
     }
     
     print_flag = true;
