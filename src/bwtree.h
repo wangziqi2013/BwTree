@@ -2917,10 +2917,15 @@ class BwTree {
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
+                             
+          auto copy_end_it = \
+            std::upper_bound(copy_start_it,
+                             leaf_node_p->data_list.end(),
+                             std::make_pair(search_key, ValueType{}),
+                             key_value_pair_cmp_obj);
 
           // If there is something to copy
-          while((copy_start_it != leaf_node_p->data_list.end()) && \
-                (KeyCmpEqual(copy_start_it->first, search_key))) {
+          while(copy_start_it != copy_end_it) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
             // the key value pair
