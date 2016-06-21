@@ -927,6 +927,10 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     
     v.reserve(100);
     
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+
+    start = std::chrono::system_clock::now();
+    
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
         t->GetValue(i, v);
@@ -935,7 +939,14 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
       }
     }
     
-    std::cout << "[Thread " << thread_id << " Done]" << std::endl;
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million read/sec" << "\n";
+              
+    return;
   };
   
   start = std::chrono::system_clock::now();
@@ -943,7 +954,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   end = std::chrono::system_clock::now();
 
   std::chrono::duration<double> elapsed_seconds = end - start;
-  std::cout << num_thread << " Threads BwTree: "
+  std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
             
