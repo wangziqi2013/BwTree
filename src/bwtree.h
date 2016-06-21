@@ -1703,12 +1703,6 @@ class BwTree {
     // NOTE: This will not change once it is fixed
     const bool is_leaf;
 
-    // Set to true only if the snapshot is created for a root node
-    // such that we know there is no more parent node.
-    // A node with this flag set to true must be the first node
-    // in the stack
-    bool is_root;
-
     /*
      * Constructor - Initialize every member to invalid state
      *
@@ -1721,8 +1715,7 @@ class BwTree {
                  BwTree *tree_p) :
       node_id{INVALID_NODE_ID},
       node_p{nullptr},
-      is_leaf{p_is_leaf},
-      is_root{false}
+      is_leaf{p_is_leaf}
     {}
 
     /*
@@ -3801,9 +3794,6 @@ class BwTree {
 
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
-    
-    // If current state is Init state then we know we are now on the root
-    snapshot_p->is_root = (context_p->current_state == OpState::Init);
 
     return;
   }
@@ -3849,12 +3839,6 @@ class BwTree {
     assert(snapshot_p->node_id != node_id);
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
-
-    // We only call UpdateNodeSnapshot() when we switch to split
-    // sibling in Navigate function and jump to left sibling
-    // When updating the physical pointer of a root node after posting
-    // a delta, please call SwitchPhysicalPointer() instead
-    snapshot_p->is_root = false;
 
     return;
   }
@@ -4197,8 +4181,6 @@ before_switch:
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
            ***********************************************************/
-          assert(snapshot_p->is_root == true);
-          
           bwt_printf("Root splits!\n");
 
           // Allocate a new node ID for the newly created node
@@ -4399,11 +4381,6 @@ before_switch:
     
     // After this pointer we decide to consolidate node
 
-    // This is for debugging
-    if(snapshot_p->is_root == true) {
-      bwt_printf("Consolidate root node\n");
-    }
-
     if(snapshot_p->is_leaf) {
       // This function returns a leaf node object
       const LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
@@ -4541,8 +4518,6 @@ before_switch:
         }
 
       } else if(node_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
-        // Leaf node could not be root
-        assert(snapshot_p->is_root == false);
         
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
@@ -4622,11 +4597,6 @@ before_switch:
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
 
-        // This flag is only set when
-        if(snapshot_p->is_root) {
-          bwt_printf("Posting split delta on root node\n");
-        }
-
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
         const KeyType *split_key_p = &new_inner_node_p->metadata.lbound;
 
@@ -4688,7 +4658,7 @@ before_switch:
           return;
         } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
-        if(snapshot_p->is_root == true) {
+        if(context_p->path_list.size() == 1UL) {
           bwt_printf("Root underflow - let it be\n");
           
           return;
