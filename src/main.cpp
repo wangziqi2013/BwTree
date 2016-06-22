@@ -978,7 +978,6 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   return;
 }
 
-
 void StressTest(uint64_t thread_id, TreeType *t) {
   static std::atomic<size_t> tree_size;
   static std::atomic<size_t> insert_success;
@@ -1024,7 +1023,37 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+void TestEpochManager(TreeType *t) {
+  std::atomic<int> thread_finished;
+  
+  thread_finished = 1;
+  
+  auto func = [t, &thread_finished](uint64_t thread_id, int iter) {
+    for(int i = 0;i < iter;i++) {
+      auto node = t->epoch_manager.JoinEpoch();
 
+      // Copied from stack overflow:
+      // http://stackoverflow.com/questions/7577452/random-time-delay
+
+      std::mt19937_64 eng{std::random_device{}()};  // or seed however you want
+      std::uniform_int_distribution<> dist{1, 100};
+      std::this_thread::sleep_for(std::chrono::milliseconds{dist(eng) +
+                                                            thread_id});
+
+      t->epoch_manager.LeaveEpoch(node);
+    }
+
+    printf("Thread finished: %d        \r", thread_finished.fetch_add(1));
+
+    return;
+  };
+
+  LaunchParallelTestID(4, func, 10000);
+  
+  putchar('\n');
+
+  return;
+}
 
 #define END_TEST do{ \
                   print_flag = true; \
@@ -1041,6 +1070,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_bwtree = false;
   bool run_benchmark_bwtree_full = false;
   bool run_stress = false;
+  bool run_epoch_test = false;
   
   int opt_index = 1;
   while(opt_index < argc) {
@@ -1056,6 +1086,12 @@ int main(int argc, char **argv) {
       run_benchmark_bwtree_full = true;
     } else if(strcmp(opt_p, "--stress-test") == 0) {
       run_stress = true;
+    } else if(strcmp(opt_p, "--epoch-test") == 0) {
+      run_epoch_test = true;
+    } else {
+      printf("ERROR: Unknown option: %s\n", opt_p);
+      
+      return 0;
     }
     
     opt_index++;
@@ -1065,6 +1101,7 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
+  bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
   bwt_printf("======================================\n");
   
   //////////////////////////////////////////////////////
@@ -1074,13 +1111,13 @@ int main(int argc, char **argv) {
   TreeType *t1 = nullptr;
   tree_size = 0;
   
-  if(run_stress == true) {
+  if(run_epoch_test == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
-    LaunchParallelTestID(8, StressTest, t1);
+    TestEpochManager(t1);
 
     print_flag = true;
     delete t1;
@@ -1259,6 +1296,19 @@ int main(int argc, char **argv) {
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
     
+    print_flag = true;
+    delete t1;
+    print_flag = false;
+  }
+  
+  if(run_stress == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+
+    LaunchParallelTestID(8, StressTest, t1);
+
     print_flag = true;
     delete t1;
     print_flag = false;
