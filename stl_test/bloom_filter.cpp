@@ -7,7 +7,9 @@
 using namespace std;
 
 int main() {
-  BloomFilter<int> bf{};
+  const int *buffer[256];
+  
+  BloomFilter<int> bf{buffer};
   
   for(int i = 0;i < 256;i++) {
     bf.Insert(i);
