@@ -34,6 +34,9 @@ test: main
 stress-test: main
 	$(PRELOAD_LIB) ./main --stress-test
 
+epoch-test: main
+	$(PRELOAD_LIB) ./main --epoch-test
+
 prepare:
 	mkdir -p build
 	mkdir -p ./stl_test/bin
