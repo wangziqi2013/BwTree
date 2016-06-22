@@ -8,15 +8,19 @@ Benchmark
 
 1 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
 
-![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-17.jpg)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-17.jpg)
 
 30 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
 
-![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-18.jpg)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-18.jpg)
 
 Same as above, but with Bloom Filter
 
-![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result-2016-06-19.jpg)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-19.jpg)
+
+After removing std::vector from the traversal stack
+
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-22.jpg)
 
 References
 ===================

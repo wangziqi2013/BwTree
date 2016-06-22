@@ -838,10 +838,12 @@ void TestStdUnorderedMapInsertReadPerformance() {
 
 void TestBTreeInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
-  start = std::chrono::system_clock::now();
-
+  
   // Insert 1 million keys into std::map
   btree<int, double> test_map{};
+  
+  start = std::chrono::system_clock::now();
+  
   for(int i = 0;i < 1024 * 1024;i++) {
     test_map.insert(i, i * 1.11L);
   }
@@ -855,14 +857,19 @@ void TestBTreeInsertReadPerformance() {
 
   ////////////////////////////////////////////
   // Test read
+  std::vector<double> v{};
+  v.reserve(100);
+  
   start = std::chrono::system_clock::now();
 
   int iter = 10;
   for(int j = 0;j < iter;j++) {
     // Read 1 million keys from std::map
     for(int i = 0;i < 1024 * 1024;i++) {
-      auto t = test_map.find(i);
-      (void)t;
+      auto it = test_map.find(i);
+      
+      v.push_back(it->second);
+      v.clear();
     }
   }
 
@@ -892,13 +899,13 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
             
   // Then test read performance
   
-  start = std::chrono::system_clock::now();
-
   int iter = 10;
   std::vector<double> v{};
-  
+
   v.reserve(100);
   
+  start = std::chrono::system_clock::now();
+
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < key_num;i++) {
       t->GetValue(i, v);
