@@ -57,6 +57,8 @@
 
 #include "bloom_filter.h"
 
+// We use this to control from the compiler
+#ifndef BWTREE_NODEBUG
 /*
  * BWTREE_DEBUG - This flag enables assertions that check for
  *                structural consistency
@@ -64,6 +66,7 @@
  * REMOVING THIS FLAG FOR RELEASE
  */
 #define BWTREE_DEBUG
+#endif
 
 /*
  * INTERACTIVE_DEBUG - This flag enables interactive debugger
@@ -1684,19 +1687,11 @@ class BwTree {
    *
    * node_id and node_p are pairs that represents the state when we traverse
    * the node and use GetNode() to resolve the node ID.
-   *
-   * Also we need to distinguish between leaf snapshot and inner node snapshots
-   * which is achieved by a flag is_leaf
    */
   class NodeSnapshot {
    public:
     NodeID node_id;
     const BaseNode *node_p;
-
-    // Whether logical node pointer points to a logical leaf node
-    // or logical inner node
-    // NOTE: This will not change once it is fixed
-    const bool is_leaf;
 
     /*
      * Constructor - Initialize every member to invalid state
@@ -1706,10 +1701,9 @@ class BwTree {
      *
      * NOTE: We do not allocate any logical node structure here
      */
-    NodeSnapshot(bool p_is_leaf) :
+    NodeSnapshot() :
       node_id{INVALID_NODE_ID},
-      node_p{nullptr},
-      is_leaf{p_is_leaf}
+      node_p{nullptr}
     {}
 
     /*
@@ -1729,6 +1723,15 @@ class BwTree {
      */
     inline const KeyType *GetLowKey() {
       return &node_p->metadata.lbound;
+    }
+    
+    /*
+     * IsLeaf() - Test whether current snapshot is on leaf delta chain
+     *
+     * This function is just a wrapper of IsOnLeafDeltaChain() in BaseNode
+     */
+    inline bool IsLeaf() const {
+      return node_p->IsOnLeafDeltaChain();
     }
   };
 
@@ -2295,7 +2298,7 @@ class BwTree {
           // This is the node we have just loaded
           snapshot_p = GetLatestNodeSnapshot(context_p);
 
-          if(snapshot_p->is_leaf == true) {
+          if(snapshot_p->IsLeaf() == true) {
             bwt_printf("The next node is a leaf\n");
 
             // If there is an abort later on then we just go to
@@ -2345,7 +2348,7 @@ class BwTree {
           // If there is no abort then we could safely return
           return ret;
 
-          break;
+          assert(false);
         }
         case OpState::Abort: {
           assert(context_p->current_level >= 0);
@@ -2429,11 +2432,7 @@ class BwTree {
     auto it = std::upper_bound(sep_list_p->begin(),
                                sep_list_p->end(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               [this](const KeyNodeIDPair &knp1,
-                                      const KeyNodeIDPair &knp2) {
-                                 return this->key_node_id_pair_cmp_obj(knp1,
-                                                                       knp2);
-                               });
+                               key_node_id_pair_cmp_obj);
 
     // This is impossible since if the first element greater than key
     // then key < low key which is a violation of the invariant that search key
@@ -2489,7 +2488,7 @@ class BwTree {
     const KeyType &search_key = context_p->search_key;
 
     // Make sure the structure is valid
-    assert(snapshot_p->is_leaf == false);
+    assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
@@ -2887,7 +2886,7 @@ class BwTree {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    assert(snapshot_p->is_leaf == true);
+    assert(snapshot_p->IsLeaf() == true);
 
     // This is used to control which values will be collected
     const NodeMetaData *metadata_p = &node_p->metadata;
@@ -2941,11 +2940,17 @@ class BwTree {
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
-                             key_value_pair_cmp_obj);
+                             // We know keys will not be +/-Inf so simply use
+                             // raw key comparator
+                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+                                return this->key_cmp_obj(kvp1.first.key, kvp2.first.key);
+                             });
 
           // If there is something to copy
+          // NOTE: Since we know on leaf level data items will not have
+          // +/-Inf keys, we could safely use raw key equality checker
           while((copy_start_it != leaf_node_p->data_list.end()) && \
-                (KeyCmpEqual(search_key, copy_start_it->first))) {
+                (key_eq_obj(search_key.key, copy_start_it->first.key))) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
             // the key value pair
@@ -3122,7 +3127,7 @@ class BwTree {
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    assert(snapshot_p->is_leaf == true);
+    assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -3466,7 +3471,7 @@ class BwTree {
    * it replays delta records on top of them.
    */
   inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
-    assert(snapshot_p->is_leaf == true);
+    assert(snapshot_p->IsLeaf() == true);
 
     // These two are used to replay the log
     // NOTE: We use the threshold for splitting leaf node
@@ -3632,7 +3637,7 @@ class BwTree {
 
     // Get its parent node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
-    assert(parent_snapshot_p->is_leaf == false);
+    assert(parent_snapshot_p->IsLeaf() == false);
 
     // We either consolidate the parent node to get an inner node
     // or directly use the parent node_p if it is already inner node
@@ -3799,8 +3804,7 @@ class BwTree {
     context_p->path_list_p++;
 
     // Call placement new to call constructor on existing memory buffer
-    NodeSnapshot *snapshot_p = \
-      new (context_p->path_list_p) NodeSnapshot(node_p->IsOnLeafDeltaChain());
+    NodeSnapshot *snapshot_p = new (context_p->path_list_p) NodeSnapshot{};
 
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
@@ -3830,9 +3834,6 @@ class BwTree {
    * NOTE 5: IF NODE ID DOES NOT CHANGE, DO NOT CALL THIS FUNCTION
    * SINCE THIS FUNCTION RESETS ROOT IDENTITY
    * Call SwitchPhysicalPointer() instead
-   *
-   * TODO: In the future add an option to make it turn off self-checking
-   * (i.e. checking whether switching to itself) whenever requested
    */
   void UpdateNodeSnapshot(NodeID node_id,
                           Context *context_p) {
@@ -3843,7 +3844,7 @@ class BwTree {
 
     // Assume we always use this function to traverse on the same
     // level
-    assert(node_p->IsOnLeafDeltaChain() == snapshot_p->is_leaf);
+    assert(node_p->IsOnLeafDeltaChain() == snapshot_p->IsLeaf());
 
     // Make sure we are not switching to itself
     assert(snapshot_p->node_id != node_id);
@@ -4003,7 +4004,7 @@ before_switch:
         bool ret = false;
 
         // If we are currently on leaf, just post leaf merge delta
-        if(left_snapshot_p->is_leaf == true) {
+        if(left_snapshot_p->IsLeaf() == true) {
           ret = \
             PostMergeNode<LeafMergeNode>(left_snapshot_p,
                                          merge_key_p,
@@ -4375,7 +4376,7 @@ before_switch:
     }
     */
 
-    if(snapshot_p->is_leaf == true) {
+    if(snapshot_p->IsLeaf() == true) {
       // Adjust the length a little bit using this variable
       // NOTE: The length of the delta chain on leaf coule be a
       // little bit longer than on inner
@@ -4396,7 +4397,7 @@ before_switch:
 
     // After this pointer we decide to consolidate node
 
-    if(snapshot_p->is_leaf) {
+    if(snapshot_p->IsLeaf()) {
       // This function returns a leaf node object
       const LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
 
@@ -4478,7 +4479,7 @@ before_switch:
 
     NodeID node_id = snapshot_p->node_id;
 
-    if(snapshot_p->is_leaf == true) {
+    if(snapshot_p->IsLeaf() == true) {
       const LeafNode *leaf_node_p = \
         static_cast<const LeafNode *>(node_p);
 
@@ -4876,7 +4877,7 @@ before_switch:
                                const KeyType *split_key_p,
                                const KeyType **next_key_p_p,
                                const NodeID insert_pid) {
-    assert(snapshot_p->is_leaf == false);
+    assert(snapshot_p->IsLeaf() == false);
 
     // If the split key is out of range then just ignore
     // we do not worry that through split sibling link
@@ -4969,7 +4970,7 @@ before_switch:
                                    NodeID *prev_node_id_p,
                                    NodeID deleted_node_id) {
     // We could only post merge key on merge node
-    assert(snapshot_p->is_leaf == false);
+    assert(snapshot_p->IsLeaf() == false);
 
     const InnerNode *inner_node_p = \
       static_cast<const InnerNode *>(snapshot_p->node_p);
