@@ -5623,7 +5623,7 @@ before_switch:
     struct EpochNode {
       // We need this to be atomic in order to accurately
       // count the number of threads
-      std::atomic<int64_t> active_thread_count;
+      std::atomic<int> active_thread_count;
 
       // We need this to be atomic to be able to
       // add garbage nodes without any race condition
@@ -5719,6 +5719,26 @@ before_switch:
       // 0, and therefore this should proceed way to the end
       ClearEpoch();
 
+      // If we have a bug (currently there is one) then as a temporary
+      // measure just force cleaning all epoches no matter whether they
+      // are cleared or not
+      if(head_epoch_p != nullptr) {
+        printf("ERROR: After cleanup there is still epoch left\n");
+        printf("==============================================\n");
+        printf("DUMP\n");
+
+        for(EpochNode *epoch_node_p = head_epoch_p;
+            epoch_node_p != nullptr;
+            epoch_node_p = epoch_node_p->next_p) {
+          printf("Active thread count: %d\n",
+                 epoch_node_p->active_thread_count.load());
+          epoch_node_p->active_thread_count = 0;
+        }
+        
+        printf("RETRY CLEANING...\n");
+        ClearEpoch();
+      }
+      
       assert(head_epoch_p == nullptr);
       bwt_printf("Clean up for garbage collector\n");
 
