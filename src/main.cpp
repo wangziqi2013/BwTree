@@ -777,6 +777,9 @@ void TestStdMapInsertReadPerformance() {
 
   ////////////////////////////////////////////
   // Test read
+  std::vector<double> v{};
+  v.reserve(100);
+  
   start = std::chrono::system_clock::now();
 
   int iter = 10;
@@ -784,7 +787,9 @@ void TestStdMapInsertReadPerformance() {
     // Read 1 million keys from std::map
     for(int i = 0;i < 1024 * 1024;i++) {
       double t = test_map[i];
-      (void)t;
+      
+      v.push_back(t);
+      v.clear();
     }
   }
 
@@ -816,6 +821,9 @@ void TestStdUnorderedMapInsertReadPerformance() {
 
   ////////////////////////////////////////////
   // Test read
+  std::vector<double> v{};
+  v.reserve(100);
+  
   start = std::chrono::system_clock::now();
 
   int iter = 10;
@@ -823,7 +831,9 @@ void TestStdUnorderedMapInsertReadPerformance() {
     // Read 1 million keys from std::map
     for(int i = 0;i < 1024 * 1024;i++) {
       double t = test_map[i];
-      (void)t;
+      
+      v.push_back(t);
+      v.clear();
     }
   }
 
