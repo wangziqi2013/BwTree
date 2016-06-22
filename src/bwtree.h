@@ -334,11 +334,11 @@ class BwTree {
   constexpr static int STATIC_CONSOLIDATION_THREAHOLD = 10;
 
   // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 32;
-  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 16;
+  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
+  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 32;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 14;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 6;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
 
   constexpr static int64_t max_thread_count = 888888;
 
