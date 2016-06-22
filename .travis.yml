@@ -19,3 +19,4 @@ script:
     - make prepare
     - make benchmark-all CXX=g++-5 PRELOAD_LIB=
     - make benchmark-bwtree CXX=g++-5 PRELOAD_LIB=
+    - make test CXX=g++-5 PRELOAD_LIB=

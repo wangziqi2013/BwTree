@@ -927,6 +927,10 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     
     v.reserve(100);
     
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+
+    start = std::chrono::system_clock::now();
+    
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
         t->GetValue(i, v);
@@ -935,7 +939,14 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
       }
     }
     
-    std::cout << "[Thread " << thread_id << " Done]" << std::endl;
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million read/sec" << "\n";
+              
+    return;
   };
   
   start = std::chrono::system_clock::now();
@@ -943,7 +954,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   end = std::chrono::system_clock::now();
 
   std::chrono::duration<double> elapsed_seconds = end - start;
-  std::cout << num_thread << " Threads BwTree: "
+  std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
             
@@ -961,7 +972,7 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   
   std::random_device r;
 
-  // Choose a random mean between 1 and 6
+  // Choose a random mean between 0 and max key value
   std::default_random_engine e1(r());
   std::uniform_int_distribution<int> uniform_dist(0, max_key - 1);
   
@@ -1078,7 +1089,9 @@ int main(int argc, char **argv) {
     print_flag = false;
     
     TestBwTreeInsertReadPerformance(t1, key_num);
-    TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    if(run_benchmark_bwtree_full == true) {
+      TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    }
     
     print_flag = true;
     delete t1;

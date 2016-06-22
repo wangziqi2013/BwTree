@@ -9,10 +9,10 @@ all: main
 main: ./build/main.o ./build/bwtree.o
 	$(CXX) ./build/main.o ./build/bwtree.o -o ./main -pthread -std=c++11 -g -Wall $(OPT_FLAG) $(GMON_FLAG)
 
-./build/main.o: ./src/main.cpp ./src/bwtree.h
+./build/main.o: ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h
 	$(CXX) ./src/main.cpp -c -pthread -std=c++11 -o ./build/main.o -g -Wall $(OPT_FLAG) $(GMON_FLAG)
 
-./build/bwtree.o: ./src/bwtree.h ./src/bwtree.cpp
+./build/bwtree.o: ./src/bwtree.h ./src/bwtree.cpp ./src/bloom_filter.h
 	$(CXX) ./src/bwtree.cpp -c -std=c++11 -o ./build/bwtree.o -g -Wall $(OPT_FLAG) $(GMON_FLAG)
 
 gprof:
