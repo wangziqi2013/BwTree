@@ -417,12 +417,6 @@ class BwTree {
     ExtendedKeyValue type;
 
     /*
-     * Constructor - This is required by class NodeMetaData
-     *               since this object is initialized later
-     */
-    KeyType() {}
-
-    /*
      * Constructor  - Use RawKeyType object to initialize
      */
     KeyType(const RawKeyType &p_key) :
