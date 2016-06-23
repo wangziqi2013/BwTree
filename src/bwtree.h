@@ -3868,7 +3868,8 @@ class BwTree {
 
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p);
-
+    
+retry_load_node_id:
     bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
@@ -3886,6 +3887,14 @@ class BwTree {
     if(context_p->abort_flag == true) {
       return;
     }
+    
+    /*
+    if(retry_loading == true) {
+      bwt_printf("Retry loading node ID because node split/remove succeeds\n");
+      
+      goto retry_load_node_id;
+    }
+    */
 
     return;
   }
@@ -3903,7 +3912,8 @@ class BwTree {
 
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p);
-
+    
+retry_load_node_id:
     bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
@@ -3921,6 +3931,14 @@ class BwTree {
     if(context_p->abort_flag == true) {
       return;
     }
+
+    /*
+    if(retry_loading == true) {
+      bwt_printf("Retry loading node ID because node split/remove succeeds\n");
+
+      goto retry_load_node_id;
+    }
+    */
 
     return;
   }
@@ -4461,7 +4479,7 @@ before_switch:
    *
    * TODO: In the future we might want to change this
    */
-  void AdjustNodeSize(Context *context_p) {
+  bool AdjustNodeSize(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -4472,7 +4490,7 @@ before_switch:
       // Though it brings huge overhead because now we are consolidating
       // every node on the path
 
-      return;
+      return false;
     }
 
     NodeID node_id = snapshot_p->node_id;
@@ -4513,12 +4531,10 @@ before_switch:
                      node_id,
                      new_node_id);
 
-          // TODO: WE ABORT HERE TO AVOID THIS THREAD POSTING ANYTHING
-          // ON TOP OF IT WITHOUT HELPING ALONG AND ALSO BLOCKING OTHER
-          // THREAD TO HELP ALONG
-          context_p->abort_flag = true;
+          // Switch to the new node and we retry finishing partial SMO
+          snapshot_p->node_p = split_node_p;
 
-          return;
+          return true;
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
@@ -4528,7 +4544,7 @@ before_switch:
           delete split_node_p;
           delete new_leaf_node_p;
 
-          return;
+          return false;
         }
 
       } else if(node_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
@@ -4544,7 +4560,7 @@ before_switch:
         if(is_leftmost_child == true) {
           bwt_printf("Left most leaf node cannot be removed\n");
 
-          return;
+          return false;
         }
 
         // After this point we decide to remove leaf node
@@ -4573,7 +4589,7 @@ before_switch:
           // ABORT and return
           context_p->abort_flag = true;
 
-          return;
+          return false;
         }
 
         const LeafRemoveNode *remove_node_p = new LeafRemoveNode{node_p};
@@ -4582,13 +4598,14 @@ before_switch:
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT.\n");
 
-          context_p->abort_flag = true;
-
           RemoveAbortOnParent(parent_node_id,
                               abort_node_p,
                               abort_child_node_p);
 
-          return;
+          // Switch to the new node and retry finishing partial SMO
+          snapshot_p->node_p = remove_node_p;
+
+          return true;
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
 
@@ -4600,7 +4617,7 @@ before_switch:
                               abort_node_p,
                               abort_child_node_p);
 
-          return;
+          return false;
         }
       }
     } else {   // If this is an inner node
@@ -4635,9 +4652,10 @@ before_switch:
         if(split_key_child_node_p->IsRemoveNode()) {
           bwt_printf("Found a removed node on split key child. CONTINUE \n");
 
-          //context_p->abort_flag = true;
+          // NOTE: Otherwise memory leak here
+          delete new_inner_node_p;
 
-          return;
+          return false;
         }
 
         NodeID new_node_id = GetNextNodeID();
@@ -4656,10 +4674,10 @@ before_switch:
                      node_id,
                      new_node_id);
 
-          // Same reason as in leaf node
-          context_p->abort_flag = true;
+          // Switch to the new node and retry finishing partial SMO
+          snapshot_p->node_p = split_node_p;
 
-          return;
+          return true;
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
@@ -4669,13 +4687,13 @@ before_switch:
 
           // TODO: Also need to remove the allocated NodeID
 
-          return;
+          return false;
         } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
         if(context_p->current_level == 0) {
           bwt_printf("Root underflow - let it be\n");
 
-          return;
+          return false;
         }
 
         // After this point we know there is at least a parent
@@ -4697,7 +4715,7 @@ before_switch:
         if(is_leftmost_child == true) {
           bwt_printf("Left most inner node cannot be removed\n");
 
-          return;
+          return false;
         }
 
         // After this point we decide to remove
@@ -4727,7 +4745,7 @@ before_switch:
           // ABORT and return
           context_p->abort_flag = true;
 
-          return;
+          return false;
         }
 
         const InnerRemoveNode *remove_node_p = new InnerRemoveNode{node_p};
@@ -4736,17 +4754,17 @@ before_switch:
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
 
-          // We abort after installing a node remove delta
-          context_p->abort_flag = true;
-
           // Even if we success we need to remove the abort
           // on the parent, and let parent split thread to detect the remove
           // delta on child
           RemoveAbortOnParent(parent_node_id,
                               abort_node_p,
                               abort_child_node_p);
+                              
+          // Swith to the new node and retry finishing partial SMO
+          snapshot_p->node_p = remove_node_p;
 
-          return;
+          return true;
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
 
@@ -4761,12 +4779,12 @@ before_switch:
                               abort_node_p,
                               abort_child_node_p);
 
-          return;
+          return false;
         }
       } // if split/remove
     }
 
-    return;
+    return false;
   }
 
   /*
