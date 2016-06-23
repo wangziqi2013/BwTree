@@ -3062,6 +3062,7 @@ class BwTree {
             // there should not be any record with search key in
             // the chain from where we come since otherwise these
             // records are misplaced
+            // Note: May be we should check the size of the bloom filter
             //assert(present_set.size() == 0UL);
             //assert(deleted_set.size() == 0UL);
 
@@ -4141,9 +4142,9 @@ before_switch:
 
           parent_snapshot_p->node_p = delete_node_p;
 
-          context_p->abort_flag = true;
+          //context_p->abort_flag = true;
 
-          return false;
+          return true;
         } else {
           bwt_printf("Index term delete delta install failed. ABORT\n");
 
@@ -4281,9 +4282,9 @@ before_switch:
             // parent node's node pointer
             parent_snapshot_p->node_p = insert_node_p;
 
-            context_p->abort_flag = true;
+            //context_p->abort_flag = true;
 
-            return false;
+            return true;
           } else {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
                        "ABORT\n",
