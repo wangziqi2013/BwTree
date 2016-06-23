@@ -3680,6 +3680,26 @@ class BwTree {
     // This is the address of the parent node
     return context_p->path_list_p - 1;
   }
+  
+  /*
+   * RollBackToParent() - Reset current node to the parent node
+   *
+   * This function is usually called after we have posted a split node or
+   * merge node on non-root nodes. This makes the control sequence bahaves
+   * as if we have just finished loading the parent node, and the next call
+   * to NavigateInnerNode() would retraverse parent node to find the current
+   * node, and complete SMO
+   */
+  inline void RollBackToParent(Context *context_p) {
+    // Make sure the current node has a parent
+    assert(context_p->current_level >= 1);
+    
+    // Now the pointer points to the parent node
+    context_p->path_list_p--;
+    context_p->current_level--;
+    
+    return;
+  }
 
   /*
    * JumpToLeftSibling() - Jump to the left sibling given a node
@@ -4614,10 +4634,7 @@ before_switch:
                      node_id,
                      new_node_id);
 
-          // TODO: WE ABORT HERE TO AVOID THIS THREAD POSTING ANYTHING
-          // ON TOP OF IT WITHOUT HELPING ALONG AND ALSO BLOCKING OTHER
-          // THREAD TO HELP ALONG
-          context_p->abort_flag = true;
+          RollBackToParent(context_p);
 
           return;
         } else {
@@ -4683,11 +4700,11 @@ before_switch:
         if(ret == true) {
           bwt_printf("LeafRemoveNode CAS succeeds. ABORT.\n");
 
-          context_p->abort_flag = true;
-
           RemoveAbortOnParent(parent_node_id,
                               abort_node_p,
                               abort_child_node_p);
+                              
+          RollBackToParent(context_p);
 
           return;
         } else {
@@ -4765,7 +4782,16 @@ before_switch:
                      new_node_id);
 
           // Same reason as in leaf node
-          context_p->abort_flag = true;
+          //context_p->abort_flag = true;
+          
+          // For inner node split, we should take care since
+          // if root splits then we should reload root node rather
+          // than roll back to the non-existing parent
+          if(context_p->current_level != 0) {
+            RollBackToParent(context_p);
+          } else {
+            context_p->abort_flag = true;
+          }
 
           return;
         } else {
@@ -4787,6 +4813,9 @@ before_switch:
         }
 
         // After this point we know there is at least a parent
+        // 1. GetLatestParentNodeSnapshot() could be called
+        // 2. RollBackToParent() could be called
+        
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
@@ -4842,10 +4871,7 @@ before_switch:
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
-          bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
-
-          // We abort after installing a node remove delta
-          context_p->abort_flag = true;
+          bwt_printf("InnerRemoveNode CAS succeeds. ABORT\n");
 
           // Even if we success we need to remove the abort
           // on the parent, and let parent split thread to detect the remove
@@ -4853,10 +4879,12 @@ before_switch:
           RemoveAbortOnParent(parent_node_id,
                               abort_node_p,
                               abort_child_node_p);
+                              
+          RollBackToParent(context_p);
 
           return;
         } else {
-          bwt_printf("LeafRemoveNode CAS failed\n");
+          bwt_printf("InnerRemoveNode CAS failed\n");
 
           delete remove_node_p;
 
