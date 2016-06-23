@@ -897,7 +897,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   start = std::chrono::system_clock::now();
 
   for(int i = 0;i < key_num;i++) {
-    t->Insert(i, i * 1.11L);
+    t->Insert(i, i * 1.11);
   }
 
   end = std::chrono::system_clock::now();
@@ -919,7 +919,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   for(int j = 0;j < iter;j++) {
     for(int i = 0;i < key_num;i++) {
       t->GetValue(i, v);
-      
+
       v.clear();
     }
   }
