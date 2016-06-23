@@ -272,7 +272,6 @@ template <typename RawKeyType,
           typename KeyComparator = std::less<RawKeyType>,
           typename KeyEqualityChecker = std::equal_to<RawKeyType>,
           typename KeyHashFunc = std::hash<RawKeyType>,
-          typename ValueComparator = std::less<ValueType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
@@ -1749,7 +1748,6 @@ class BwTree {
   BwTree(KeyComparator p_key_cmp_obj = KeyComparator{},
          KeyEqualityChecker p_key_eq_obj = KeyEqualityChecker{},
          KeyHashFunc p_key_hash_obj = KeyHashFunc{},
-         ValueComparator p_value_cmp_obj = ValueComparator{},
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
          ValueHashFunc p_value_hash_obj = ValueHashFunc{}) :
       // Key Comparison object: raw key, wrapped key and wrapped raw key
@@ -1764,8 +1762,7 @@ class BwTree {
       key_hash_obj{p_key_hash_obj},
       wrapped_key_hash_obj{&key_hash_obj},
 
-      // Value comparator, equality checker and hasher
-      value_cmp_obj{p_value_cmp_obj},
+      // Value equality checker and hasher
       value_eq_obj{p_value_eq_obj},
       value_hash_obj{p_value_hash_obj},
 
@@ -5465,6 +5462,40 @@ before_switch:
   }
 
   #endif
+  
+  /*
+   * DebugNoEpochGotoLeaf() - Go to leaf page without actually copying values
+   *                          and joining epoch
+   *
+   * This is used for debugging to measure the overhead brought by epoch
+   */
+  void DebugNoEpochGotoLeaf(const KeyType &search_key) {
+    bwt_printf("DebugNoEpochGotoLeaf()\n");
+
+    Context context{search_key, tree_height, true};
+    Traverse(&context, nullptr, nullptr);
+
+    return;
+  }
+  
+  /*
+   * DebugGotoLeaf() - Go to leaf page without actually copying values
+   *
+   * This is used to measure the overhead of copying values
+   */
+  void DebugGotoLeaf(const KeyType &search_key) {
+    bwt_printf("DebugGotoLeaf()\n");
+
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+
+    Context context{search_key, tree_height, true};
+
+    Traverse(&context, nullptr, nullptr);
+
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
+    return;
+  }
 
   /*
    * GetValue() - Fill a value list with values stored
@@ -5545,9 +5576,6 @@ before_switch:
 
   // Wrapped key hasher
   const WrappedKeyHashFunc wrapped_key_hash_obj;
-
-  // Compares values for a < relation
-  const ValueComparator value_cmp_obj;
 
   // Check whether values are equivalent
   const ValueEqualityChecker value_eq_obj;
