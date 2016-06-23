@@ -1018,11 +1018,10 @@ class BwTree {
     // This is the depth of current delta chain
     int depth;
 
-    // This records read-only accesses on the delta chain
-    // If we are running read-only wordload and there is a hot spot
-    // then the delta chain will be consolidated after a certain number
-    // of accesses. Such cost could be amortized by improved read performance
-    int access_counter;
+    // This counts the number of items alive inside the Node
+    // when consolidating nodes, we use this piece of information
+    // to reserve space for the new node
+    int item_count;
 
     /*
      * Constructor
@@ -1036,12 +1035,13 @@ class BwTree {
     NodeMetaData(const KeyType &p_lbound,
                  const KeyType &p_ubound,
                  NodeID p_next_node_id,
-                 int p_depth) :
+                 int p_depth,
+                 int p_item_count) :
       lbound{p_lbound},
       ubound{p_ubound},
       next_node_id{p_next_node_id},
       depth{p_depth},
-      access_counter{0}
+      item_count{p_item_count}
     {}
   };
 
@@ -1063,9 +1063,10 @@ class BwTree {
              const KeyType &p_lbound,
              const KeyType &p_ubound,
              NodeID p_next_node_id,
-             int p_depth) :
+             int p_depth,
+             int p_item_count) :
       type{p_type},
-      metadata{p_lbound, p_ubound, p_next_node_id, p_depth}
+      metadata{p_lbound, p_ubound, p_next_node_id, p_depth, p_item_count}
     {}
 
     /*
@@ -1167,8 +1168,14 @@ class BwTree {
               const KeyType &p_lbound,
               const KeyType &p_ubound,
               NodeID p_next_node_id,
-              int p_depth) :
-      BaseNode{p_type, p_lbound, p_ubound, p_next_node_id, p_depth},
+              int p_depth,
+              int p_item_count) :
+      BaseNode{p_type,
+               p_lbound,
+               p_ubound,
+               p_next_node_id,
+               p_depth,
+               p_item_count},
       child_node_p{p_child_node_p}
     {}
   };
@@ -1192,8 +1199,14 @@ class BwTree {
      */
     LeafNode(const KeyType &p_lbound,
              const KeyType &p_ubound,
-             NodeID p_next_node_id) :
-      BaseNode{NodeType::LeafType, p_lbound, p_ubound, p_next_node_id, 0}
+             NodeID p_next_node_id,
+             int p_item_count) :
+      BaseNode{NodeType::LeafType,
+               p_lbound,
+               p_ubound,
+               p_next_node_id,
+               0,               // Depth of the node - always 0
+               p_item_count}
     {}
 
     /*
@@ -1222,6 +1235,11 @@ class BwTree {
     LeafNode *GetSplitSibling() const {
       int key_num = static_cast<int>(item_prefix_sum.size());
       assert(key_num >= 2);
+      
+      // When we split a leaf node, it is certain that there is no delta
+      // chain on top of it. As a result, the number of items must equal
+      // the actual size of the data list
+      assert(static_cast<int>(data_list.size()) == this->metadata.item_count);
 
       // This is the index of the key in prefix sum array
       int split_key_index = key_num / 2;
@@ -1253,9 +1271,14 @@ class BwTree {
       const KeyType &split_key = copy_start_it->first;
 
       // This will call SetMetaData inside its constructor
-      LeafNode *leaf_node_p = new LeafNode{split_key,
-                                           this->metadata.ubound,
-                                           this->metadata.next_node_id};
+      LeafNode *leaf_node_p = \
+        new LeafNode{split_key,
+                     this->metadata.ubound,
+                     this->metadata.next_node_id,
+                     // The number of items is also
+                     // part of leaf node metadata
+                     static_cast<int>(std::distance(copy_start_it,
+                                                    copy_end_it))};
 
       // Copy data item into the new node using batch assign()
       leaf_node_p->data_list.assign(copy_start_it, copy_end_it);
@@ -1294,7 +1317,10 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                // For insert nodes, the item count is inheried from the child
+                // node + 1 since it inserts new item
+                p_child_node_p->metadata.item_count + 1},
       inserted_item{p_insert_key, p_value}
     {}
   };
@@ -1323,7 +1349,10 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                // For delete node it inherits item count from its child
+                // and - 1 from it since one element was deleted
+                p_child_node_p->metadata.item_count - 1},
       deleted_item{p_delete_key, p_value}
     {}
   };
@@ -1352,7 +1381,11 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                // For update node since it removes one
+                // element and inserts a new element the item count
+                // does not change
+                p_child_node_p->metadata.item_count},
       update_key{p_update_key},
       old_value{p_old_value},
       new_value{p_new_value} {
@@ -1376,16 +1409,27 @@ class BwTree {
 
     /*
      * Constructor
+     *
+     * NOTE: The constructor requires that the physical pointer to the split
+     * sibling being passed as an argument. It will not be stored inside the
+     * split delta, but it will be used to compute the new item count for
+     * the current node
      */
     LeafSplitNode(const KeyType &p_split_key,
                   NodeID p_split_sibling,
-                  const BaseNode *p_child_node_p) :
+                  const BaseNode *p_child_node_p,
+                  const BaseNode *p_split_node_p) :
       DeltaNode{NodeType::LeafSplitType,
                 p_child_node_p,
                 p_child_node_p->metadata.lbound,
                 p_split_key,
                 p_split_sibling,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                // For split node it is a little bit tricky - we must
+                // know the item count of its sibling to decide how many
+                // items were removed by the split delta
+                p_child_node_p->metadata.item_count - \
+                  p_split_node_p->metadata.item_count},
       split_key{p_split_key},
       split_sibling{p_split_sibling}
     {}
@@ -1409,7 +1453,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1}
+                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.item_count}
     {}
   };
 
@@ -1444,7 +1489,11 @@ class BwTree {
                 p_right_merge_p->metadata.ubound,
                 p_right_merge_p->metadata.next_node_id,
                 std::max(p_child_node_p->metadata.depth,
-                         p_right_merge_p->metadata.depth) + 1},
+                         p_right_merge_p->metadata.depth) + 1,
+                // For merge node the item count should be the
+                // sum of items inside both branches
+                p_child_node_p->metadata.item_count + \
+                  p_right_merge_p->metadata.item_count},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
       deleted_node_id{p_deleted_node_id}
@@ -1463,8 +1512,14 @@ class BwTree {
      */
     InnerNode(const KeyType &p_lbound,
               const KeyType &p_ubound,
-              NodeID p_next_node_id) :
-      BaseNode{NodeType::InnerType, p_lbound, p_ubound, p_next_node_id, 0}
+              NodeID p_next_node_id,
+              int p_item_count) :
+      BaseNode{NodeType::InnerType,
+               p_lbound,
+               p_ubound,
+               p_next_node_id,
+               0,
+               p_item_count}
     {}
 
     /*
@@ -1479,6 +1534,11 @@ class BwTree {
 
       // Inner node size must be > 2 to avoid empty split node
       assert(key_num >= 2);
+      
+      // Same reason as in leaf node - since we only split inner node
+      // without a delta chain on top of it, the sep list size must equal
+      // the recorded item count
+      assert(static_cast<int>(sep_list.size()) == this->metadata.item_count);
 
       int split_item_index = key_num / 2;
 
@@ -1493,9 +1553,12 @@ class BwTree {
 
       // This sets metddata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
-      InnerNode *inner_node_p = new InnerNode{split_key,
-                                              this->metadata.ubound,
-                                              this->metadata.next_node_id};
+      InnerNode *inner_node_p = \
+        new InnerNode{split_key,
+                      this->metadata.ubound,
+                      this->metadata.next_node_id,
+                      static_cast<int>(std::distance(copy_start_it,
+                                                     copy_end_it))};
 
       // Batch copy from the current node to the new node
       inner_node_p->sep_list.assign(copy_start_it, copy_end_it);
@@ -1530,7 +1593,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.item_count + 1},
       insert_key{p_insert_key},
       next_key{p_next_key},
       new_node_id{p_new_node_id}
@@ -1569,7 +1633,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.item_count - 1},
       delete_key{p_delete_key},
       next_key{p_next_key},
       prev_key{p_prev_key},
@@ -1594,13 +1659,18 @@ class BwTree {
      */
     InnerSplitNode(const KeyType &p_split_key,
                    NodeID p_split_sibling,
-                   const BaseNode *p_child_node_p) :
+                   const BaseNode *p_child_node_p,
+                   const BaseNode *p_split_node_p) :
       DeltaNode{NodeType::InnerSplitType,
                 p_child_node_p,
                 p_child_node_p->metadata.lbound,
                 p_split_key,
                 p_split_sibling,
-                p_child_node_p->metadata.depth + 1},
+                p_child_node_p->metadata.depth + 1,
+                // For split node we need the physical pointer to the
+                // split sibling to compute item count
+                p_child_node_p->metadata.item_count - \
+                  p_split_node_p->metadata.item_count},
       split_key{p_split_key},
       split_sibling{p_split_sibling}
     {}
@@ -1621,7 +1691,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1}
+                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.item_count}
     {}
   };
 
@@ -1654,7 +1725,11 @@ class BwTree {
                 // as part of the same node, we use the larger one + 1
                 // as the depth of the merge node
                 std::max(p_child_node_p->metadata.depth,
-                         p_right_merge_p->metadata.depth) + 1},
+                         p_right_merge_p->metadata.depth) + 1,
+                // For merge node the item count is the sum of its two
+                // branches
+                p_child_node_p->metadata.item_count + \
+                  p_right_merge_p->metadata.item_count},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
       deleted_node_id{p_deleted_node_id}
@@ -1676,7 +1751,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1}
+                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.item_count}
     {}
   };
 
@@ -2015,8 +2091,10 @@ class BwTree {
 
     KeyNodeIDPair neg_si{GetNegInfKey(), first_node_id};
 
+    // Initially there is one element inside the root node
+    // so we set item count to be 1
     InnerNode *root_node_p = \
-      new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
+      new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID, 1};
 
     root_node_p->sep_list.push_back(neg_si);
 
@@ -2026,8 +2104,10 @@ class BwTree {
 
     InstallNewNode(root_id, root_node_p);
 
+    // Initially there is no element inside the leaf node so we set element
+    // count to be 0
     LeafNode *left_most_leaf = \
-      new LeafNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
+      new LeafNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID, 0};
 
     InstallNewNode(first_node_id, left_most_leaf);
 
@@ -2672,10 +2752,14 @@ class BwTree {
                                    present_set,
                                    deleted_set);
 
-    // The effect of this function is a comsolidation into inner node
+    // Since consolidation would not change item count they must be equal
+    assert(static_cast<int>(present_set.size()) == node_p->metadata.item_count);
+
+    // The effect of this function is a consolidation into inner node
     InnerNode *inner_node_p = new InnerNode{node_p->metadata.lbound,
                                             node_p->metadata.ubound,
-                                            node_p->metadata.next_node_id};
+                                            node_p->metadata.next_node_id,
+                                            node_p->metadata.item_count};
 
     // The size of the inner node is exactly the size of the present set
     size_t key_num = present_set.size();
@@ -3489,9 +3573,16 @@ class BwTree {
                                     present_set,
                                     deleted_set);
 
+    // Item count would not change during consolidation
+    assert(static_cast<int>(present_set.size()) == node_p->metadata.item_count);
+    
     LeafNode *leaf_node_p = new LeafNode{node_p->metadata.lbound,
                                          node_p->metadata.ubound,
-                                         node_p->metadata.next_node_id};
+                                         node_p->metadata.next_node_id,
+                                         // The item count of the consolidated
+                                         // leaf node is the set of items still
+                                         // present in the node
+                                         node_p->metadata.item_count};
 
     std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
 
@@ -4197,9 +4288,15 @@ before_switch:
 
           // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
           // NOTE: DO NOT MAKE IT CONSTANT since we will push separator into it
+          // NOTE: The new root node will have 2 items inside, so set item
+          // count to 2
           InnerNode *inner_node_p = \
-            new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID};
-
+            new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID, 2};
+            
+          // Add this line to reduce one memory allocation since std::vector
+          // allocates memory starting from size = 1
+          inner_node_p->sep_list.reserve(2);
+          
           inner_node_p->sep_list.push_back(std::make_pair(GetNegInfKey(),
                                                           snapshot_p->node_id));
 
@@ -4498,7 +4595,12 @@ before_switch:
         NodeID new_node_id = GetNextNodeID();
 
         const LeafSplitNode *split_node_p = \
-          new LeafSplitNode{*split_key_p, new_node_id, node_p};
+          new LeafSplitNode{*split_key_p,
+                            new_node_id,
+                            node_p,
+                            // We need this to compute the item count
+                            // of the current node being splited
+                            new_leaf_node_p};
 
         //  First install the NodeID -> split sibling mapping
         // If CAS fails we also need to recycle the node ID allocated here
@@ -4644,7 +4746,12 @@ before_switch:
         NodeID new_node_id = GetNextNodeID();
 
         const InnerSplitNode *split_node_p = \
-          new InnerSplitNode{*split_key_p, new_node_id, node_p};
+          new InnerSplitNode{*split_key_p,
+                             new_node_id,
+                             node_p,
+                             // We need this to compute item count of the
+                             // current node being splited
+                             new_inner_node_p};
 
         //  First install the NodeID -> split sibling mapping
         InstallNewNode(new_node_id, new_inner_node_p);
