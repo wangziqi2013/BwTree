@@ -1449,7 +1449,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_right_merge_p->metadata.ubound,
                 p_right_merge_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                std::max(p_child_node_p->metadata.depth,
+                         p_right_merge_p->metadata.depth) + 1},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
       deleted_node_id{p_deleted_node_id}
@@ -1655,7 +1656,11 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_right_merge_p->metadata.ubound,
                 p_right_merge_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1},
+                // Note: Since both children under merge node is considered
+                // as part of the same node, we use the larger one + 1
+                // as the depth of the merge node
+                std::max(p_child_node_p->metadata.depth,
+                         p_right_merge_p->metadata.depth) + 1},
       merge_key{p_merge_key},
       right_merge_p{p_right_merge_p},
       deleted_node_id{p_deleted_node_id}
