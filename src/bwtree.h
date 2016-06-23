@@ -4635,7 +4635,9 @@ before_switch:
         if(split_key_child_node_p->IsRemoveNode()) {
           bwt_printf("Found a removed node on split key child. CONTINUE \n");
 
-          //context_p->abort_flag = true;
+          // NOTE: There was a memory leak caused by not removing the node
+          // allocared above
+          delete new_inner_node_p;
 
           return;
         }
