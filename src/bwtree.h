@@ -276,7 +276,7 @@ template <typename RawKeyType,
           typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
  /*
-  * Private & Public declaration (no definition)
+  * Private & Public declaration
   */
 #ifndef ALL_PUBLIC
  private:
@@ -342,7 +342,7 @@ class BwTree {
   constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
 
-  constexpr static int64_t max_thread_count = 888888;
+  constexpr static int max_thread_count = 0x7FFFFFFF;
 
   /*
    * enum class NodeType - Bw-Tree node type
