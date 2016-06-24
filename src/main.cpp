@@ -505,8 +505,8 @@ void TestNavigateInnerNode(TreeType *t) {
 }
 */
 
-constexpr int key_num = 65536;
-constexpr int thread_num = 4;
+constexpr int key_num = 128 * 1024;
+constexpr int thread_num = 8;
 
 std::atomic<size_t> tree_size;
 
@@ -586,12 +586,6 @@ void DeleteTest2(uint64_t thread_id, TreeType *t) {
     t->Delete(key, 1.111L * key);
     t->Delete(key, 1.1111L * key);
     t->Delete(key, 1.11111L * key);
-
-    //tree_size_mutex.lock();
-    //tree_size += 4;
-    //tree_size_mutex.unlock();
-
-    //printf("Tree size = %lu\n", tree_size);
   }
 
   return;
@@ -647,10 +641,6 @@ void InsertGetValueTest(TreeType *t) {
     }
 
     if(value_set.size() != 4) {
-      //debug_stop_mutex.lock();
-      //t->idb.Start();
-      //debug_stop_mutex.unlock();
-
       assert(false);
     }
   }
@@ -668,9 +658,6 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
       int key = thread_num * i + thread_id;
 
       if(t->Insert(key, 1.11L * key)) insert_success.fetch_add(1);
-      //if(t->Insert(key, 1.111L * key)) insert_success.fetch_add(1);
-      //if(t->Insert(key, 1.1111L * key)) insert_success.fetch_add(1);
-      //if(t->Insert(key, 1.11111L * key)) insert_success.fetch_add(1);
     }
     
     printf("Finish inserting\n");
@@ -679,16 +666,8 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
       int key = thread_num * i + thread_id - 1;
 
       while(t->Delete(key, 1.11L * key) == false) ;
-      delete_success.fetch_add(1);
-      //while(t->Delete(key, 1.111L * key) == false) ;
-      //while(t->Delete(key, 1.1111L * key) == false) ;
-      //while(t->Delete(key, 1.11111L * key) == false) ;
-
-      //if(t->Delete(key, 1.11L * key)) delete_success.fetch_add(1);
-      //if(t->Delete(key, 1.111L * key)) delete_success.fetch_add(1);
-      //if(t->Delete(key, 1.1111L * key)) delete_success.fetch_add(1);
-      //if(t->Delete(key, 1.11111L * key)) delete_success.fetch_add(1);
       
+      delete_success.fetch_add(1);
       delete_attempt.fetch_add(1UL);
     }
   }
