@@ -2428,6 +2428,9 @@ class BwTree {
         }
         case OpState::Abort: {
           assert(context_p->current_level >= 0);
+          
+          // As long as we roll back this must happen
+          context_p->current_state = OpState::Inner;
 
           // We roll back for at least one level
           // and stop at the first node where node_p does not change
@@ -2437,16 +2440,13 @@ class BwTree {
 
             // In this case we reload the root ID
             // and reallocate memory for NodeSnapshot
-            // There is risk that we would overflow the stack but as
-            // long as the thrad finally makes progress this is very rare
+            // The stack space will be re-allocated
+            // but if we come here for many times then the stack
+            // might grow indefinitely
             if(context_p->current_level == -1) {
               context_p->current_state = OpState::Init;
 
               break;
-            } else {
-              // Even if we break on leaf level we are now
-              // on inner level
-              context_p->current_state = OpState::Inner;
             }
 
             // If we see a match after popping the first one
