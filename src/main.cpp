@@ -908,7 +908,6 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
             << " million insertion/sec" << "\n";
             
   // Then test read performance
-  
   int iter = 10;
   std::vector<double> v{};
 
@@ -1130,10 +1129,10 @@ int main(int argc, char **argv) {
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
     
-    int key_num = 1024 * 1024;
+    int key_num = 3 * 1024 * 1024;
     
     if(run_benchmark_bwtree_full == true) {
-      key_num *= 30;
+      key_num *= 10;
     }
     
     bwt_printf("Using key size = %d (%f million)\n",
