@@ -6029,6 +6029,13 @@ before_switch:
     // maintains its own memory
     #ifdef BWTREE_DEBUG
     std::atomic<size_t> freed_count;
+    
+    // These two are used for debugging
+    size_t epoch_created;
+    size_t epoch_freed;
+    
+    std::atomic<size_t> epoch_join;
+    std::atomic<size_t> epoch_leave;
     #endif
 
     /*
@@ -6039,6 +6046,7 @@ before_switch:
      */
     EpochManager() {
       current_epoch_p = new EpochNode{};
+      
       // These two are atomic variables but we could
       // simply assign to them
       current_epoch_p->active_thread_count = 0;
@@ -6058,6 +6066,13 @@ before_switch:
       // freed has been called inside epoch manager
       #ifdef BWTREE_DEBUG
       freed_count = 0UL;
+      
+      // It is not 0UL since we create an initial epoch on initialization
+      epoch_created = 1UL;
+      epoch_freed = 0UL;
+      
+      epoch_join = 0UL;
+      epoch_leave = 0UL;
       #endif
 
       return;
@@ -6114,6 +6129,14 @@ before_switch:
       #ifdef BWTREE_DEBUG
       bwt_printf("Stat: Freed %lu nodes by epoch manager\n",
                  freed_count.load());
+                 
+      bwt_printf("      Epoch created = %lu; epoch freed = %lu\n",
+                 epoch_created,
+                 epoch_freed);
+                 
+      bwt_printf("      Epoch join = %lu; epoch leave = %lu\n",
+                 epoch_join.load(),
+                 epoch_leave.load());
       #endif
 
       return;
@@ -6141,6 +6164,10 @@ before_switch:
 
       // And then switch current epoch pointer
       current_epoch_p = epoch_node_p;
+      
+      #ifdef BWTREE_DEBUG
+      epoch_created++;
+      #endif
 
       return;
     }
@@ -6211,6 +6238,10 @@ try_join_again:
         goto try_join_again;
       }
 
+      #ifdef BWTREE_DEBUG
+      epoch_join.fetch_add(1);
+      #endif
+
       return epoch_p;
     }
 
@@ -6221,7 +6252,13 @@ try_join_again:
      * and before that epoch could safely be deallocated
      */
     void LeaveEpoch(EpochNode *epoch_p) {
+      // This might return a negative value if the current epoch
+      // is being cleaned
       epoch_p->active_thread_count.fetch_sub(1);
+      
+      #ifdef BWTREE_DEBUG
+      epoch_leave.fetch_add(1);
+      #endif
 
       return;
     }
@@ -6400,9 +6437,14 @@ try_join_again:
           break;
         }
 
+        // Since it could only be acquired and released by worker thread
+        // the value must be >= 0
+        int active_thread_count = head_epoch_p->active_thread_count.load();
+        assert(active_thread_count >= 0);
+        
         // If we have seen an epoch whose count is not zero then all
         // epochs after that are protected and we stop
-        if(head_epoch_p->active_thread_count.load() != 0) {
+        if(active_thread_count != 0) {
           bwt_printf("Head epoch is not empty. Return\n");
 
           break;
@@ -6453,9 +6495,11 @@ try_join_again:
         EpochNode *next_epoch_node_p = head_epoch_p->next_p;
 
         delete head_epoch_p;
-        //*(reinterpret_cast<unsigned char *>(head_epoch_p) - 1) = 0x66;
-        //printf("delete head_epoch_p = %p\n", head_epoch_p);
-
+        
+        #ifdef BWTREE_DEBUG
+        epoch_freed++;
+        #endif
+        
         // Then advance to the next epoch
         // It is possible that head_epoch_p becomes nullptr
         // this happens during destruction, and should not
