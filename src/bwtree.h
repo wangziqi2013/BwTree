@@ -3988,6 +3988,305 @@ class BwTree {
 
     return;
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Read-Optimized functions
+  ///////////////////////////////////////////////////////////////////
+  
+  void FinishPartialSMOReadOptimized(Context *context_p) {
+    // Note: If the top of the path list changes then this pointer
+    // must also be updated
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
+before_switch:
+    switch(snapshot_p->node_p->GetType()) {
+      case NodeType::InnerAbortType: {
+        bwt_printf("Observed Inner Abort Node; ABORT\n");
+
+        snapshot_p->node_p = \
+          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
+
+        goto before_switch;
+      }
+      case NodeType::LeafRemoveType:
+      case NodeType::InnerRemoveType: {
+        bwt_printf("Helping along remove node...\n");
+
+        // The right branch for merging is the child node under remove node
+        const BaseNode *merge_right_branch = \
+          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
+
+        // This serves as the merge key
+        const KeyType *merge_key_p = &snapshot_p->node_p->metadata.lbound;
+
+        // This will also be recorded in merge delta such that when
+        // we finish merge delta we could recycle the node id as well
+        // as the RemoveNode
+        NodeID deleted_node_id = snapshot_p->node_id;
+
+        JumpToLeftSibling(context_p);
+
+        // If this aborts then we propagate this to the state machine driver
+        if(context_p->abort_flag == true) {
+          bwt_printf("Jump to left sibling in Remove help along ABORT\n");
+
+          return;
+        }
+
+        // That is the left sibling's snapshot
+        NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
+
+        // This holds the merge node if installation is successful
+        // Not changed if CAS fails
+        const BaseNode *merge_node_p = nullptr;
+
+        // Update snapshot pointer if we fall through to posting
+        // index term delete delta for merge node
+        snapshot_p = left_snapshot_p;
+
+        bool ret = false;
+
+        // If we are currently on leaf, just post leaf merge delta
+        if(left_snapshot_p->IsLeaf() == true) {
+          ret = \
+            PostMergeNode<LeafMergeNode>(left_snapshot_p,
+                                         merge_key_p,
+                                         merge_right_branch,
+                                         deleted_node_id,
+                                         &merge_node_p);
+        } else {
+          ret = \
+            PostMergeNode<InnerMergeNode>(left_snapshot_p,
+                                          merge_key_p,
+                                          merge_right_branch,
+                                          deleted_node_id,
+                                          &merge_node_p);
+        }
+
+        // If CAS fails just abort and return
+        if(ret == true) {
+          bwt_printf("Merge delta CAS succeeds. ABORT\n");
+
+          return;
+        } else {
+          bwt_printf("Merge delta CAS fails. ABORT\n");
+
+          assert(merge_node_p == nullptr);
+
+          return;
+        } // if ret == true
+
+        assert(false);
+      } // case Inner/LeafRemoveType
+      default: {
+        return;
+      }
+    } // switch
+    
+    assert(false);
+    return;
+  }
+  
+  inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
+    bwt_printf("Loading NodeID = %lu\n", node_id);
+
+    // This pushes a new snapshot into stack
+    TakeNodeSnapshot(node_id, context_p);
+
+    FinishPartialSMO(context_p);
+
+    return;
+  }
+  
+  bool TraverseReadOptimized(Context *context_p,
+                             const ValueType *value_p,
+                             std::vector<ValueType> *value_list_p) {
+    // At most one could be non-nullptr
+    assert((value_p == nullptr) || (value_list_p == nullptr));
+
+    // This will use lock
+    #ifdef INTERACTIVE_DEBUG
+    idb.AddKey(context_p->search_key);
+    #endif
+
+    while(1) {
+      // NOTE: break only breaks out this switch
+      switch(context_p->current_state) {
+        case OpState::Init: {
+          assert(context_p->abort_flag == false);
+          assert(context_p->current_level == -1);
+
+          // This is the serialization point for reading/writing root node
+          NodeID start_node_id = root_id.load();
+
+          // After fixing the node ID of root node, we could also fix the
+          // height of the tree, since the starting point of the traversal
+          // has been known, so the height of the tree is also known
+          // also tree_height is guaranteed to be >= actual tree height at
+          // any moment
+          int snapshot_tree_height = tree_height.load();
+
+          // NOTE: Since LoadNodeID will advance the pointer by 1
+          // so after this allocation path_list_p points to the
+          // element before the first valid element (take care when
+          // debugging using gdb)
+          context_p->path_list_p = \
+            static_cast<NodeSnapshot *>\
+              (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
+
+          // We use this to validate the pointer
+          context_p->buffer_size = snapshot_tree_height;
+
+          // We need to call this even for root node since there could
+          // be split delta posted on to root node
+          LoadNodeIDReadOptimized(start_node_id, context_p);
+
+          // There could be an abort here, and we could not directly jump
+          // to Init state since we would like to do some clean up or
+          // statistics after aborting
+          if(context_p->abort_flag == true) {
+            context_p->current_state = OpState::Abort;
+
+            // This goes to the beginning of loop
+            break;
+          }
+
+          bwt_printf("Successfully loading root node ID\n");
+
+          // root node must be an inner node
+          // NOTE: We do not traverse down in this state, just hand it
+          // to Inner state and let it do all generic job
+          context_p->current_state = OpState::Inner;
+
+          break;
+        } // case Init
+        case OpState::Inner: {
+          NodeID child_node_id = NavigateInnerNode(context_p);
+
+          // Navigate could abort since it might go to another NodeID
+          // if there is a split delta and the key is >= split key
+          if(context_p->abort_flag == true) {
+            bwt_printf("Navigate Inner Node abort. ABORT\n");
+
+            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+            // as a double check
+            // This is the only situation that this function returns
+            // INVALID_NODE_ID
+            assert(child_node_id == INVALID_NODE_ID);
+
+            context_p->current_state = OpState::Abort;
+
+            break;
+          }
+
+          // We use this to check whether NavigateInnerNode() brings us
+          // to the correct inner node
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
+          assert(KeyCmpGreaterEqual(context_p->search_key,
+                                    snapshot_p->node_p->metadata.lbound));
+          assert(KeyCmpLess(context_p->search_key,
+                            snapshot_p->node_p->metadata.ubound));
+
+          // This might load a leaf child
+          // Also LoadNodeID() does not guarantee the node bound matches
+          // seatch key. Since we could readjust using the split side link
+          // during Navigate...Node()
+          LoadNodeIDReadOptimized(child_node_id, context_p);
+
+          if(context_p->abort_flag == true) {
+            bwt_printf("LoadNodeID aborted. ABORT\n");
+
+            context_p->current_state = OpState::Abort;
+
+            break;
+          }
+
+          // This is the node we have just loaded
+          snapshot_p = GetLatestNodeSnapshot(context_p);
+
+          if(snapshot_p->IsLeaf() == true) {
+            bwt_printf("The next node is a leaf\n");
+
+            // If there is an abort later on then we just go to
+            // abort state
+            context_p->current_state = OpState::Leaf;
+          }
+
+          break;
+        } // case Inner
+        case OpState::Leaf: {
+          // For value collection it always returns true
+          bool ret = true;
+
+          if(value_list_p == nullptr) {
+            if(value_p == nullptr) {
+              // If both are nullptr then we just Traverse with a
+              // default constructed value which will lead us to the
+              // correct leaf page
+              // Do not overwrite ret here
+              NavigateLeafNode(context_p, ValueType{});
+            } else {
+              // If a value is given then use this value to Traverse down leaf
+              // page to find whether the value exists or not
+              ret = NavigateLeafNode(context_p, *value_p);
+            }
+          } else {
+            // If the value list is given then Traverse down leaf node with the
+            // intention of collecting value for the given key. Also do not
+            // overwrite ret here
+            // NOTE: Even if NavigateLeafNode aborts,
+            // the vector is not affected
+            NavigateLeafNode(context_p, *value_list_p);
+          }
+
+          if(context_p->abort_flag == true) {
+            bwt_printf("NavigateLeafNode aborts. ABORT\n");
+
+            context_p->current_state = OpState::Abort;
+
+            break;
+          }
+
+          bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
+                     context_p->abort_counter,
+                     context_p->current_level);
+
+          // If there is no abort then we could safely return
+          return ret;
+
+          assert(false);
+        }
+        case OpState::Abort: {
+          assert(context_p->current_level >= 0);
+
+          context_p->current_state = OpState::Init;
+          context_p->current_level = -1;
+
+          // Free stack space allocated earlier
+          alloca(-(context_p->buffer_size + 1));
+
+          context_p->abort_flag = false;
+          context_p->abort_counter++;
+
+          break;
+        } // case Abort
+        default: {
+          bwt_printf("ERROR: Unknown State: %d\n",
+                     static_cast<int>(context_p->current_state));
+          assert(false);
+          break;
+        }
+      } // switch current_state
+    } // while(1)
+
+    assert(false);
+    return false;
+  }
+  
+  ///////////////////////////////////////////////////////////////////
+  ///////////////////////////////////////////////////////////////////
+  ///////////////////////////////////////////////////////////////////
 
   /*
    * FinishPartialSMO() - Finish partial completed SMO if there is one
@@ -5597,7 +5896,7 @@ before_switch:
 
     Context context{search_key, tree_height, true};
 
-    Traverse(&context, nullptr, &value_list);
+    TraverseReadOptimized(&context, nullptr, &value_list);
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
