@@ -2256,7 +2256,7 @@ class BwTree {
    */
   bool Traverse(Context *context_p,
                 const ValueType *value_p,
-                std::vector<ValueType> *value_list_p) {
+                std::vector<ValueType> *value_list_p) __attribute__((always_inline)) {
     // At most one could be non-nullptr
     assert((value_p == nullptr) || (value_list_p == nullptr));
 
@@ -3708,18 +3708,22 @@ class BwTree {
       (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
         parent_snapshot_p->node_p->metadata.depth + 1;
 
+      const BaseNode *old_node_p = parent_snapshot_p->node_p;
+
       // As an optimization, we CAS the consolidated version of InnerNode
       // here. If CAS fails, we SHOULD NOT delete the inner node immediately
       // since its value is still being used by this function
       // So we delay allocation by putting it into the garbage chain
       bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
                                       inner_node_p,
-                                      parent_snapshot_p->node_p);
+                                      old_node_p);
 
       // If CAS succeeds we update the node_p in parent snapshot
       // If CAS fails we delete inner node allocated in CollectAllSeps..()
       if(ret == true) {
         parent_snapshot_p->node_p = inner_node_p;
+        
+        epoch_manager.AddGarbageNode(old_node_p);
       } else {
         epoch_manager.AddGarbageNode(inner_node_p);
       }
@@ -4689,23 +4693,6 @@ before_switch:
     // If depth does not exceeds threshold then we check recommendation flag
     int depth = node_p->metadata.depth;
 
-    //bwt_printf("depth = %d, type = %d\n", depth, (int)node_p->GetType());
-
-    // Increment read counter on top of the delta chain
-    /*
-    if(context_p->read_only == true) {
-      const_cast<BaseNode *>(node_p)->metadata.access_counter++;
-
-      if(node_p->metadata.access_counter * depth > \
-         STATIC_CONSOLIDATION_THREAHOLD) {
-        bwt_printf("Delta chain length < threshold, "
-                   "but the delta chain has been read too many times\n");
-
-        recommend_consolidation = true;
-      }
-    }
-    */
-
     if(snapshot_p->IsLeaf() == true) {
       // Adjust the length a little bit using this variable
       // NOTE: The length of the delta chain on leaf coule be a
@@ -4725,7 +4712,7 @@ before_switch:
       }
     }
 
-    // After this pointer we decide to consolidate node
+    // After this point we decide to consolidate node
 
     if(snapshot_p->IsLeaf()) {
       // This function returns a leaf node object
@@ -4751,7 +4738,6 @@ before_switch:
 
         delete leaf_node_p;
 
-        // Return false here since we did not consolidate
         return false;
       } // if CAS succeeds / fails
     } else {
@@ -4996,9 +4982,8 @@ before_switch:
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
         if(ret == true) {
-          bwt_printf("Inner split delta (from %lu to %lu) CAS succeeds. ABORT\n",
-                     node_id,
-                     new_node_id);
+          bwt_printf("Inner split delta (from %lu to %lu) CAS succeeds."
+                     " ABORT\n", node_id, new_node_id);
 
           // Same reason as in leaf node
           context_p->abort_flag = true;
@@ -5232,6 +5217,7 @@ before_switch:
       return false;
     }
 
+
     const InnerNode *inner_node_p = \
       static_cast<const InnerNode *>(snapshot_p->node_p);
 
@@ -5242,15 +5228,20 @@ before_switch:
       (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
         snapshot_p->node_p->metadata.depth + 1;
 
+      // We are going to garbage collect this node
+      const BaseNode *old_node_p = snapshot_p->node_p;
+
       bool ret = InstallNodeToReplace(snapshot_p->node_id,
                                       inner_node_p,
-                                      snapshot_p->node_p);
+                                      old_node_p);
 
       if(ret == true) {
         bwt_printf("Parent InnerNode optimization consolidation succeeds\n");
 
         // This is important
         snapshot_p->node_p = inner_node_p;
+        
+        epoch_manager.AddGarbageNode(old_node_p);
       } else {
         bwt_printf("Parent InnerNode optimization consolidation fails"
                    " - Put into garbage chain\n");
@@ -5324,12 +5315,17 @@ before_switch:
       (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
         snapshot_p->node_p->metadata.depth + 1;
 
+      // We are going to garbage collect this node
+      const BaseNode *old_node_p = snapshot_p->node_p;
+
       bool ret = InstallNodeToReplace(snapshot_p->node_id,
                                       inner_node_p,
-                                      snapshot_p->node_p);
+                                      old_node_p);
 
       if(ret == true) {
         snapshot_p->node_p = inner_node_p;
+        
+        epoch_manager.AddGarbageNode(old_node_p);
       } else {
         // Must delay deallocation since we return pointers pointing
         // into this node's data
