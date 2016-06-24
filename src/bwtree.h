@@ -3848,8 +3848,7 @@ class BwTree {
    * constructed on the path list which is a vector. This avoids copying the
    * NodeSnapshot object from the stack to vector
    */
-  void TakeNodeSnapshot(NodeID node_id,
-                        Context *context_p) {
+  void TakeNodeSnapshot(NodeID node_id, Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
 
     bwt_printf("Is leaf node? - %d\n", node_p->IsOnLeafDeltaChain());
@@ -4544,7 +4543,7 @@ before_switch:
                                                           split_node_id));
 
           // This needs to be done here to avoid some unfortunate thread
-          // seeing an un-updated tree height and overflowed its stack
+          // seeing an un-updated tree height and overflowing its stack
           tree_height.fetch_add(1);
 
           // First we need to install the new node with NodeID
@@ -4556,9 +4555,6 @@ before_switch:
           if(ret == true) {
             bwt_printf("Install root CAS succeeds. Height = %lu\n",
                        tree_height.load());
-
-            //context_p->abort_flag = true;
-
             return false;
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
@@ -4574,7 +4570,7 @@ before_switch:
           } // if CAS succeeds/fails
         } else {
           /***********************************************************
-           * Index term insert for non-root nodes
+           * Split delta for non-root nodes (either leaf or inner)
            ***********************************************************/
 
           // First consolidate parent node and find the right sep
@@ -4617,8 +4613,6 @@ before_switch:
             // Since the abort process checks pointer we always need to update
             // parent node's node pointer
             parent_snapshot_p->node_p = insert_node_p;
-
-            //context_p->abort_flag = true;
 
             return true;
           } else {
@@ -4666,14 +4660,12 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool ConsolidateNode(Context *context_p,
-                       bool recommend_consolidation) {
+  void ConsolidateNode(Context *context_p, bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Do not overwrite this pointer since we will use this
     // to locate garbage delta chain
     const BaseNode *node_p = snapshot_p->node_p;
-    NodeID node_id = snapshot_p->node_id;
 
     // We could only perform consolidation on delta node
     // because we want to see depth field
@@ -4687,8 +4679,11 @@ before_switch:
       // JumpToLeftSibling())
       // assert(node_p->metadata.depth == 0);
 
-      return false;
+      return;
     }
+    
+    // Moved here to avoid useless assignment
+    NodeID node_id = snapshot_p->node_id;
 
     // If depth does not exceeds threshold then we check recommendation flag
     int depth = node_p->metadata.depth;
@@ -4705,7 +4700,7 @@ before_switch:
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
       // If there is not recommended consolidation just return
       if(recommend_consolidation == false) {
-        return false;
+        return;
       } else {
         bwt_printf("Delta chian length < threshold, "
                    "but consolidation is recommended\n");
@@ -4737,8 +4732,6 @@ before_switch:
         // should abort here
 
         delete leaf_node_p;
-
-        return false;
       } // if CAS succeeds / fails
     } else {
       const InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
@@ -4758,12 +4751,10 @@ before_switch:
         context_p->abort_flag = true;
 
         delete inner_node_p;
-
-        return false;
       } // if CAS succeeds / fails
     } // if it is leaf / is inner
 
-    return true;
+    return;
   }
 
   /*
@@ -4816,6 +4807,10 @@ before_switch:
 
         NodeID new_node_id = GetNextNodeID();
 
+        //  First install the NodeID -> split sibling mapping
+        // If CAS fails we also need to recycle the node ID allocated here
+        InstallNewNode(new_node_id, new_leaf_node_p);
+
         const LeafSplitNode *split_node_p = \
           new LeafSplitNode{*split_key_p,
                             new_node_id,
@@ -4823,11 +4818,7 @@ before_switch:
                             // We need this to compute the item count
                             // of the current node being splited
                             new_leaf_node_p};
-
-        //  First install the NodeID -> split sibling mapping
-        // If CAS fails we also need to recycle the node ID allocated here
-        InstallNewNode(new_node_id, new_leaf_node_p);
-
+        
         // Then CAS split delta into current node's NodeID
         bool ret = InstallNodeToReplace(node_id, split_node_p, node_p);
 
@@ -5446,6 +5437,9 @@ before_switch:
         return false;
       }
 
+      // NOTE: If Traverse() is not inlined then this piece of code will
+      // access invalid memory which is not guaranteed to be the latest
+      // node snapshot
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
 
       // We will CAS on top of this
