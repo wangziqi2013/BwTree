@@ -4119,6 +4119,9 @@ before_switch:
           // so after this allocation path_list_p points to the
           // element before the first valid element (take care when
           // debugging using gdb)
+          // NOTE: For read optimied traverse, this does not have to be on
+          // caller's stack since the caller does not try to call
+          // GetNodeSnapshot() and will not access the stack
           context_p->path_list_p = \
             static_cast<NodeSnapshot *>\
               (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
@@ -4231,7 +4234,7 @@ before_switch:
           context_p->current_level = -1;
 
           // Free stack space allocated earlier
-          alloca(-(context_p->buffer_size + 1));
+          //alloca(-(context_p->buffer_size + 1));
 
           context_p->abort_flag = false;
           context_p->abort_counter++;
