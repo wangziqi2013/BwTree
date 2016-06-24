@@ -2429,36 +2429,14 @@ class BwTree {
         case OpState::Abort: {
           assert(context_p->current_level >= 0);
           
-          // As long as we roll back this must happen
-          context_p->current_state = OpState::Inner;
-
-          // We roll back for at least one level
-          // and stop at the first node where node_p does not change
-          do {
-            context_p->path_list_p--;
-            context_p->current_level--;
-
-            // In this case we reload the root ID
-            // and reallocate memory for NodeSnapshot
-            // The stack space will be re-allocated
-            // but if we come here for many times then the stack
-            // might grow indefinitely
-            if(context_p->current_level == -1) {
-              context_p->current_state = OpState::Init;
-
-              break;
-            }
-
-            // If we see a match after popping the first one
-            // then quit aborting
-            if(context_p->path_list_p->node_p == \
-               GetNode(context_p->path_list_p->node_id)) {
-              break;
-            }
-          }while(1);
-
-          context_p->abort_counter++;
+          context_p->current_state = OpState::Init;
+          context_p->current_level = -1;
+          
+          // Free stack space allocated earlier
+          alloca(-(context_p->buffer_size + 1));
+          
           context_p->abort_flag = false;
+          context_p->abort_counter++;
 
           break;
         } // case Abort
