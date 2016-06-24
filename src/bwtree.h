@@ -943,29 +943,18 @@ class BwTree {
     // and other functions just return on seeing this flag
     bool abort_flag;
 
-    // This is set to true if the workload is read-only so that we adjust
-    // the strategy of consolidating nodes
-    // Basically with read only workload it is impossible to consolidate nodes
-    // using delta chain length since the length never changes
-    // In that case we increase a counter that counts read operations
-    // happened on a certain node, and consolidate if the delta chain
-    // is long and the read operation happens frequently
-    bool read_only;
-
     /*
      * Constructor - Initialize a context object into initial state
      */
     Context(const KeyType p_search_key,
-            size_t p_tree_height,
-            bool p_read_only) :
+            size_t p_tree_height) :
       search_key{p_search_key},
       path_list_p{nullptr},
       abort_counter{0},
       current_level{-1},
       buffer_size{-1},
       current_state{OpState::Init},
-      abort_flag{false},
-      read_only{p_read_only}
+      abort_flag{false}
     {}
 
     /*
@@ -5449,7 +5438,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height, false};
+      Context context{key, tree_height};
 
       // Check whether the key-value pair exists
       bool value_exist = Traverse(&context, &value, nullptr);
@@ -5531,7 +5520,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height, false};
+      Context context{key, tree_height};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5654,7 +5643,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height, false};
+      Context context{key, tree_height};
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
@@ -5722,7 +5711,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height, false};
+      Context context{key, tree_height};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5828,7 +5817,7 @@ before_switch:
   void DebugNoEpochGotoLeaf(const KeyType &search_key) {
     bwt_printf("DebugNoEpochGotoLeaf()\n");
 
-    Context context{search_key, tree_height, true};
+    Context context{search_key, tree_height};
     Traverse(&context, nullptr, nullptr);
 
     return;
@@ -5844,7 +5833,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height, true};
+    Context context{search_key, tree_height};
 
     Traverse(&context, nullptr, nullptr);
 
@@ -5868,7 +5857,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height, true};
+    Context context{search_key, tree_height};
 
     TraverseReadOptimized(&context, &value_list);
 
@@ -5882,7 +5871,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height, true};
+    Context context{search_key, tree_height};
 
     std::vector<ValueType> value_list{};
     Traverse(&context, nullptr, &value_list);
