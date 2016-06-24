@@ -4093,17 +4093,13 @@ before_switch:
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p);
 
-    FinishPartialSMO(context_p);
+    FinishPartialSMOReadOptimized(context_p);
 
     return;
   }
   
-  bool TraverseReadOptimized(Context *context_p,
-                             const ValueType *value_p,
+  void TraverseReadOptimized(Context *context_p,
                              std::vector<ValueType> *value_list_p) {
-    // At most one could be non-nullptr
-    assert((value_p == nullptr) || (value_list_p == nullptr));
-
     // This will use lock
     #ifdef INTERACTIVE_DEBUG
     idb.AddKey(context_p->search_key);
@@ -4216,29 +4212,7 @@ before_switch:
           break;
         } // case Inner
         case OpState::Leaf: {
-          // For value collection it always returns true
-          bool ret = true;
-
-          if(value_list_p == nullptr) {
-            if(value_p == nullptr) {
-              // If both are nullptr then we just Traverse with a
-              // default constructed value which will lead us to the
-              // correct leaf page
-              // Do not overwrite ret here
-              NavigateLeafNode(context_p, ValueType{});
-            } else {
-              // If a value is given then use this value to Traverse down leaf
-              // page to find whether the value exists or not
-              ret = NavigateLeafNode(context_p, *value_p);
-            }
-          } else {
-            // If the value list is given then Traverse down leaf node with the
-            // intention of collecting value for the given key. Also do not
-            // overwrite ret here
-            // NOTE: Even if NavigateLeafNode aborts,
-            // the vector is not affected
-            NavigateLeafNode(context_p, *value_list_p);
-          }
+          NavigateLeafNode(context_p, *value_list_p);
 
           if(context_p->abort_flag == true) {
             bwt_printf("NavigateLeafNode aborts. ABORT\n");
@@ -4253,7 +4227,7 @@ before_switch:
                      context_p->current_level);
 
           // If there is no abort then we could safely return
-          return ret;
+          return;
 
           assert(false);
         }
@@ -4281,7 +4255,7 @@ before_switch:
     } // while(1)
 
     assert(false);
-    return false;
+    return;
   }
   
   ///////////////////////////////////////////////////////////////////
@@ -5896,7 +5870,7 @@ before_switch:
 
     Context context{search_key, tree_height, true};
 
-    TraverseReadOptimized(&context, nullptr, &value_list);
+    TraverseReadOptimized(&context, &value_list);
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
