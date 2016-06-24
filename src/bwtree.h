@@ -3950,10 +3950,8 @@ class BwTree {
     }
 
     AdjustNodeSize(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
-    }
+    
+    // Do not have to check for abort here because anyway we will return
 
     return;
   }
@@ -3986,9 +3984,7 @@ class BwTree {
 
     AdjustNodeSize(context_p);
 
-    if(context_p->abort_flag == true) {
-      return;
-    }
+    // Do not have to check for abort here because anyway we will return
 
     return;
   }
