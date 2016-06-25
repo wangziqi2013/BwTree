@@ -29,6 +29,8 @@
 
 *.asm
 *~
+*.S
+*.s
 
 # Misc
 main
