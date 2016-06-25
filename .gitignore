@@ -38,3 +38,5 @@ main
 *.txt
 *.doc
 *.swp
+
+bin
