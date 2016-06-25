@@ -907,6 +907,36 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   elapsed_seconds = end - start;
   std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million read/sec" << "\n";
+            
+  // Verify reads
+  for(int i = 0;i < key_num;i++) {
+    t->GetValue(i, v);
+
+    assert(v.size() == 1);
+    assert(v[0] == (i * 1.11));
+    
+    v.clear();
+  }
+
+  // Finally remove values
+
+  start = std::chrono::system_clock::now();
+
+  for(int i = 0;i < key_num;i++) {
+    t->Delete(i, i * 1.11);
+  }
+  
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+            << " million remove/sec" << "\n";
+
+  for(int i = 0;i < key_num;i++) {
+    t->GetValue(i, v);
+    
+    assert(v.size() == 0);
+  }
 
   return;
 }
