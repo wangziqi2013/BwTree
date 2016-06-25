@@ -1576,9 +1576,8 @@ class BwTree {
    */
   class InnerInsertNode : public DeltaNode {
    public:
-    KeyType insert_key;
+    KeyNodeIDPair insert_item;
     KeyType next_key;
-    NodeID new_node_id;
 
     /*
      * Constructor
@@ -1594,9 +1593,8 @@ class BwTree {
                 p_child_node_p->metadata.next_node_id,
                 p_child_node_p->metadata.depth + 1,
                 p_child_node_p->metadata.item_count + 1},
-      insert_key{p_insert_key},
-      next_key{p_next_key},
-      new_node_id{p_new_node_id}
+      insert_item{p_insert_key, p_new_node_id},
+      next_key{p_next_key}
     {}
   };
 
@@ -1609,7 +1607,8 @@ class BwTree {
    */
   class InnerDeleteNode : public DeltaNode {
    public:
-    KeyType delete_key;
+    KeyNodeIDPair delete_item;
+    
     // These two defines a new range associated with this delete node
     KeyType next_key;
     KeyType prev_key;
@@ -1634,7 +1633,7 @@ class BwTree {
                 p_child_node_p->metadata.next_node_id,
                 p_child_node_p->metadata.depth + 1,
                 p_child_node_p->metadata.item_count - 1},
-      delete_key{p_delete_key},
+      delete_item{p_delete_key, INVALID_NODE_ID},
       next_key{p_next_key},
       prev_key{p_prev_key},
       prev_node_id{p_prev_node_id}
@@ -2593,9 +2592,9 @@ class BwTree {
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
 
-          const KeyType &insert_low_key = insert_node_p->insert_key;
+          const KeyType &insert_low_key = insert_node_p->insert_item.first;
           const KeyType &insert_high_key = insert_node_p->next_key;
-          NodeID target_id = insert_node_p->new_node_id;
+          NodeID target_id = insert_node_p->insert_item.second;
 
           if(KeyCmpGreaterEqual(search_key, insert_low_key) && \
              KeyCmpLess(search_key, insert_high_key)) {
@@ -2710,50 +2709,48 @@ class BwTree {
    * sorted by the key order
    */
   inline InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
-
-    // TODO: May need to find a better bucket size to initialize the hash
-    // set in order to decrease rehash
-
-    KeyNodeIDPairSet present_set{INNER_NODE_SIZE_UPPER_THRESHOLD,
-                                 key_node_id_pair_hash_obj,
-                                 key_node_id_pair_eq_obj};
-
-    KeyNodeIDPairSet deleted_set{INNER_NODE_SIZE_UPPER_THRESHOLD,
-                                 key_node_id_pair_hash_obj,
-                                 key_node_id_pair_eq_obj};
-
+    
     // Note that in the recursive call node_p might change
     // but we should not change the metadata
     const BaseNode *node_p = snapshot_p->node_p;
+    
+    // This is the number of insert + delete records which contributes
+    // to the size of the bloom filter
+    int delta_record_num = node_p->metadata.depth;
+    
+    const KeyNodeIDPair *present_set_data_p[delta_record_num];
+    const KeyNodeIDPair *deleted_set_data_p[delta_record_num];
+    
+    // The effect of this function is a consolidation into inner node
+    InnerNode *inner_node_p = new InnerNode{node_p->metadata.lbound,
+                                            node_p->metadata.ubound,
+                                            node_p->metadata.next_node_id,
+                                            node_p->metadata.item_count};
+                                            
+    // Save some typing
+    auto sep_list_p = &inner_node_p->sep_list;
+    
+    // Use item count recorded inside node metadata to reserve memory block
+    sep_list_p->reserve(node_p->metadata.item_count);
+
+    KeyNodeIDPairBloomFilter present_set{present_set_data_p,
+                                         key_node_id_pair_eq_obj,
+                                         key_node_id_pair_hash_obj};
+                                         
+    KeyNodeIDPairBloomFilter deleted_set{deleted_set_data_p,
+                                         key_node_id_pair_eq_obj,
+                                         key_node_id_pair_hash_obj};
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
     CollectAllSepsOnInnerRecursive(node_p,
                                    node_p->metadata,
                                    present_set,
-                                   deleted_set);
+                                   deleted_set,
+                                   inner_node_p);
 
     // Since consolidation would not change item count they must be equal
-    assert(static_cast<int>(present_set.size()) == node_p->metadata.item_count);
-
-    // The effect of this function is a consolidation into inner node
-    InnerNode *inner_node_p = new InnerNode{node_p->metadata.lbound,
-                                            node_p->metadata.ubound,
-                                            node_p->metadata.next_node_id,
-                                            node_p->metadata.item_count};
-
-    // The size of the inner node is exactly the size of the present set
-    size_t key_num = present_set.size();
-
-    // Save some typing
-    auto sep_list_p = &inner_node_p->sep_list;
-
-    // So we reserve that much space inside sep list to avoid allocation
-    // overhead
-    sep_list_p->reserve(key_num);
-
-    // Copy the set into the vector using bulk load
-    sep_list_p->assign(present_set.begin(), present_set.end());
+    assert(static_cast<int>(sep_list_p->size()) == node_p->metadata.item_count);
 
     // Sort the key-NodeId array using std::sort and the comparison object
     // we defined
@@ -2773,9 +2770,9 @@ class BwTree {
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
                                  const NodeMetaData &metadata,
-                                 KeyNodeIDPairSet &present_set,
-                                 KeyNodeIDPairSet &deleted_set) const {
-
+                                 KeyNodeIDPairBloomFilter &present_set,
+                                 KeyNodeIDPairBloomFilter &deleted_set,
+                                 InnerNode *new_inner_node_p) const {
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -2802,12 +2799,10 @@ class BwTree {
           for(auto it = inner_node_p->sep_list.begin();
               it != copy_end_it;
               it++) {
-            if(deleted_set.find(*it) == deleted_set.end()) {
-              // 1. If present_set does not contain the key, then it is inserted
-              // 2. If present_set already contains the key, then
-              //    it is not inserted by definition. This is desired behavior
-              //    since it means a more up-to-date insertion happened
-              present_set.insert(*it);
+            if(deleted_set.Exists(*it) == false) {
+              if(present_set.Exists(*it) == false) {
+                new_inner_node_p->sep_list.push_back(*it);
+              }
             }
           }
 
@@ -2823,20 +2818,16 @@ class BwTree {
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
 
-          const KeyType &insert_key = insert_node_p->insert_key;
-          assert(insert_node_p->new_node_id != INVALID_NODE_ID);
-
           // Only consider insertion if it is inside the range of
           // current node
-          if(KeyCmpLess(insert_key, metadata.ubound) == true) {
-            // This is the pair we construct from InnerInsertNode
-            // Note that this must use the newly inserted ID
-            // instead of INVALID_NODE_ID
-            KeyNodeIDPair inserted_item = \
-              std::make_pair(insert_key, insert_node_p->new_node_id);
-
-            if(deleted_set.find(inserted_item) == deleted_set.end()) {
-              present_set.insert(inserted_item);
+          if(KeyCmpLess(insert_node_p->insert_item.first,
+                        metadata.ubound) == true) {
+            if(deleted_set.Exists(insert_node_p->insert_item) == false) {
+              if(present_set.Exists(insert_node_p->insert_item) == false) {
+                present_set.Insert(insert_node_p->insert_item);
+                
+                new_inner_node_p->sep_list.push_back(insert_node_p->insert_item);
+              }
             }
           }
 
@@ -2849,18 +2840,10 @@ class BwTree {
           const InnerDeleteNode *delete_node_p = \
             static_cast<const InnerDeleteNode *>(node_p);
 
-          const KeyType &delete_key = delete_node_p->delete_key;
-
-          if(KeyCmpLess(delete_key, metadata.ubound) == true) {
-            // Since pairs in deleted_set are not used, we use
-            // INVALID_NODE_ID as a placeholder.
-            // And also key_node_id_cmp_obj, hash_obj, eq_obj
-            // does not use NodeID
-            KeyNodeIDPair deleted_item = \
-              std::make_pair(delete_node_p->delete_key, INVALID_NODE_ID);
-
-            if(present_set.find(deleted_item) == present_set.end()) {
-              deleted_set.insert(deleted_item);
+          if(KeyCmpLess(delete_node_p->delete_item.first,
+                        metadata.ubound) == true) {
+            if(present_set.Exists(delete_node_p->delete_item) == false) {
+              deleted_set.Insert(delete_node_p->delete_item);
             }
           }
 
@@ -2885,12 +2868,14 @@ class BwTree {
           CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
                                          metadata,
                                          present_set,
-                                         deleted_set);
+                                         deleted_set,
+                                         new_inner_node_p);
 
           CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
                                          metadata,
                                          present_set,
-                                         deleted_set);
+                                         deleted_set,
+                                         new_inner_node_p);
 
           // There is no unvisited node
           return;
