@@ -2422,7 +2422,7 @@ class BwTree {
           context_p->current_level = -1;
           
           // Free stack space allocated earlier
-          alloca(-(context_p->buffer_size + 1));
+          //alloca(-(context_p->buffer_size + 1));
           
           context_p->abort_flag = false;
           context_p->abort_counter++;
