@@ -312,16 +312,20 @@ class BwTree {
   using KeyNodeIDPairSet = std::unordered_set<KeyNodeIDPair,
                                               KeyNodeIDPairHashFunc,
                                               KeyNodeIDPairEqualityChecker>;
+  using KeyNodeIDPairBloomFilter = BloomFilter<KeyNodeIDPair,
+                                               KeyNodeIDPairEqualityChecker,
+                                               KeyNodeIDPairHashFunc>;
 
   // KeyType-ValueType pair
   using KeyValuePair = std::pair<KeyType, ValueType>;
-  using KeyValuePairSet = std::unordered_set<KeyValuePair,
-                                             KeyValuePairHashFunc,
-                                             KeyValuePairEqualityChecker>;
-
+  using KeyValuePairBloomFilter = BloomFilter<KeyValuePair,
+                                              KeyValuePairEqualityChecker,
+                                              KeyValuePairHashFunc>;
+                                              
   using ValueSet = std::unordered_set<ValueType,
                                       ValueHashFunc,
                                       ValueEqualityChecker>;
+
 
   using EpochNode = typename EpochManager::EpochNode;
 
@@ -3034,6 +3038,9 @@ class BwTree {
 
           if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
             if(deleted_set.Exists(insert_node_p->inserted_item.second) == false) {
+              // We must do this, since inserted set does not detect for
+              // duplication, and if the value has already been in present set
+              // then we inserted the same value twice
               if(present_set.Exists(insert_node_p->inserted_item.second) == false) {
                 present_set.Insert(insert_node_p->inserted_item.second);
 
@@ -3389,8 +3396,9 @@ class BwTree {
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
                                   const NodeMetaData &metadata,
-                                  KeyValuePairSet &present_set,
-                                  KeyValuePairSet &deleted_set) const {
+                                  KeyValuePairBloomFilter &present_set,
+                                  KeyValuePairBloomFilter &deleted_set,
+                                  LeafNode *new_leaf_node_p) const {
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -3420,12 +3428,10 @@ class BwTree {
           for(auto it = leaf_node_p->data_list.begin();
               it != copy_end_it;
               it++) {
-            if(deleted_set.find(*it) == deleted_set.end()) {
-              // 1. If present_set does not contain the key, then it is inserted
-              // 2. If present_set already contains the key, then
-              //    it is not inserted by definition. This is desired behavior
-              //    since it means a more up-to-date insertion happened
-              present_set.insert(*it);
+            if(deleted_set.Exists(*it) == false) {
+              if(present_set.Exists(*it) == false) {
+                new_leaf_node_p->data_list.push_back(*it);
+              }
             }
           }
 
@@ -3435,9 +3441,12 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(deleted_set.find(insert_node_p->inserted_item) == \
-             deleted_set.end()) {
-            present_set.insert(insert_node_p->inserted_item);
+          if(deleted_set.Exists(insert_node_p->inserted_item) == false) {
+            if(present_set.Exists(insert_node_p->inserted_item) == false) {
+              present_set.Insert(insert_node_p->inserted_item);
+              
+              new_leaf_node_p->data_list.push_back(insert_node_p->inserted_item);
+            }
           }
 
           node_p = insert_node_p->child_node_p;
@@ -3448,9 +3457,8 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(present_set.find(delete_node_p->deleted_item) == \
-             present_set.end()) {
-            deleted_set.insert(delete_node_p->deleted_item);
+          if(present_set.Exists(delete_node_p->deleted_item) == false) {
+            deleted_set.Insert(delete_node_p->deleted_item);
           }
 
           node_p = delete_node_p->child_node_p;
@@ -3460,20 +3468,14 @@ class BwTree {
         case NodeType::LeafUpdateType: {
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
-
+            
+          assert(false);
+          
           KeyValuePair old_item = std::make_pair(update_node_p->update_key,
                                                  update_node_p->old_value);
           KeyValuePair new_item = std::make_pair(update_node_p->update_key,
                                                  update_node_p->new_value);
-
-          if(deleted_set.find(new_item) == deleted_set.end()) {
-            present_set.insert(new_item);
-          }
-
-          if(present_set.find(old_item) == present_set.end()) {
-            deleted_set.insert(old_item);
-          }
-
+                                                 
           node_p = update_node_p->child_node_p;
 
           break;
@@ -3499,12 +3501,14 @@ class BwTree {
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
                                           metadata,
                                           present_set,
-                                          deleted_set);
+                                          deleted_set,
+                                          new_leaf_node_p);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
                                           metadata,
                                           present_set,
-                                          deleted_set);
+                                          deleted_set,
+                                          new_leaf_node_p);
 
           return;
         } // case LeafMergeType
@@ -3531,27 +3535,17 @@ class BwTree {
   inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
     assert(snapshot_p->IsLeaf() == true);
 
-    // These two are used to replay the log
-    // NOTE: We use the threshold for splitting leaf node
-    // as the number of bucket
-    KeyValuePairSet present_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
-                                key_value_pair_hash_obj,
-                                key_value_pair_eq_obj};
-    KeyValuePairSet deleted_set{LEAF_NODE_SIZE_UPPER_THRESHOLD,
-                                key_value_pair_hash_obj,
-                                key_value_pair_eq_obj};
-
     const BaseNode *node_p = snapshot_p->node_p;
-
-    // We collect all valid values in present_set
-    // and deleted_set is just for bookkeeping
-    CollectAllValuesOnLeafRecursive(node_p,
-                                    node_p->metadata,
-                                    present_set,
-                                    deleted_set);
-
-    // Item count would not change during consolidation
-    assert(static_cast<int>(present_set.size()) == node_p->metadata.item_count);
+    
+    // This is the number of delta records inside the logical node
+    // including merged delta chains
+    int delta_change_num = node_p->metadata.depth;
+    
+    // We only need to keep those on the delta chian into a set
+    // and those in the data list of leaf page do not need to be
+    // put in the set
+    const KeyValuePair *present_set_data_p[delta_change_num];
+    const KeyValuePair *deleted_set_data_p[delta_change_num];
     
     LeafNode *leaf_node_p = new LeafNode{node_p->metadata.lbound,
                                          node_p->metadata.ubound,
@@ -3560,17 +3554,35 @@ class BwTree {
                                          // leaf node is the set of items still
                                          // present in the node
                                          node_p->metadata.item_count};
-
+                                         
     std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
 
     // Reserve that much space for items to avoid allocation in the future
     // Since the iterator from unordered_set is not a RamdomAccessIterator
     // std::vector could not decide the size from these two iterators
-    size_t item_num = present_set.size();
-    data_list_p->reserve(item_num);
+    data_list_p->reserve(node_p->metadata.item_count);
 
-    // Copy the entire set into the vector
-    data_list_p->assign(present_set.begin(), present_set.end());
+    // These two are used to replay the log
+    // NOTE: We use the threshold for splitting leaf node
+    // as the number of bucket
+    KeyValuePairBloomFilter present_set{present_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+    KeyValuePairBloomFilter deleted_set{deleted_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+
+    // We collect all valid values in present_set
+    // and deleted_set is just for bookkeeping
+    CollectAllValuesOnLeafRecursive(node_p,
+                                    node_p->metadata,
+                                    present_set,
+                                    deleted_set,
+                                    leaf_node_p);
+
+    // Item count would not change during consolidation
+    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
+           node_p->metadata.item_count);
 
     // Sort using only key value
     // All items with the same key are grouped together, and their
