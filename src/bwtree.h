@@ -1413,7 +1413,10 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_split_key,
                 p_split_sibling,
-                p_child_node_p->metadata.depth + 1,
+                // NOTE: split node is SMO and does not introduce
+                // new piece of data
+                // So we set its depth the same as its child
+                p_child_node_p->metadata.depth,
                 // For split node it is a little bit tricky - we must
                 // know the item count of its sibling to decide how many
                 // items were removed by the split delta
@@ -1442,7 +1445,8 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1,
+                // REMOVE node is an SMO and does not introduce data
+                p_child_node_p->metadata.depth,
                 p_child_node_p->metadata.item_count}
     {}
   };
@@ -1477,8 +1481,10 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_right_merge_p->metadata.ubound,
                 p_right_merge_p->metadata.next_node_id,
-                std::max(p_child_node_p->metadata.depth,
-                         p_right_merge_p->metadata.depth) + 1,
+                //std::max(p_child_node_p->metadata.depth,
+                //         p_right_merge_p->metadata.depth) + 1,
+                p_child_node_p->metadata.depth + \
+                  p_right_merge_p->metadata.depth,
                 // For merge node the item count should be the
                 // sum of items inside both branches
                 p_child_node_p->metadata.item_count + \
@@ -1655,7 +1661,9 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_split_key,
                 p_split_sibling,
-                p_child_node_p->metadata.depth + 1,
+                // For split node depth does not change since it does not
+                // introduce new data
+                p_child_node_p->metadata.depth,
                 // For split node we need the physical pointer to the
                 // split sibling to compute item count
                 p_child_node_p->metadata.item_count - \
@@ -1680,7 +1688,7 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.depth,
                 p_child_node_p->metadata.item_count}
     {}
   };
@@ -1713,8 +1721,10 @@ class BwTree {
                 // Note: Since both children under merge node is considered
                 // as part of the same node, we use the larger one + 1
                 // as the depth of the merge node
-                std::max(p_child_node_p->metadata.depth,
-                         p_right_merge_p->metadata.depth) + 1,
+                //std::max(p_child_node_p->metadata.depth,
+                //         p_right_merge_p->metadata.depth) + 1,
+                p_child_node_p->metadata.depth + \
+                  p_right_merge_p->metadata.depth,
                 // For merge node the item count is the sum of its two
                 // branches
                 p_child_node_p->metadata.item_count + \
@@ -1740,7 +1750,7 @@ class BwTree {
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
-                p_child_node_p->metadata.depth + 1,
+                p_child_node_p->metadata.depth,
                 p_child_node_p->metadata.item_count}
     {}
   };
@@ -1764,9 +1774,9 @@ class BwTree {
      *
      * NOTE: We do not allocate any logical node structure here
      */
-    NodeSnapshot() :
-      node_id{INVALID_NODE_ID},
-      node_p{nullptr}
+    NodeSnapshot(NodeID p_node_id, const BaseNode *p_node_p) :
+      node_id{p_node_id},
+      node_p{p_node_p}
     {}
 
     /*
@@ -3863,10 +3873,7 @@ class BwTree {
     context_p->path_list_p++;
 
     // Call placement new to call constructor on existing memory buffer
-    NodeSnapshot *snapshot_p = new (context_p->path_list_p) NodeSnapshot{};
-
-    snapshot_p->node_id = node_id;
-    snapshot_p->node_p = node_p;
+    new (context_p->path_list_p) NodeSnapshot{node_id, node_p};
 
     return;
   }
