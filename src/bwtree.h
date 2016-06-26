@@ -6230,7 +6230,7 @@ before_switch:
      * the cleaner thread will decrease the epoch counter by a large amount
      * to prevent this function using an epoch currently being recycled
      */
-    EpochNode *JoinEpoch() {
+    inline EpochNode *JoinEpoch() {
 try_join_again:
       // We must make sure the epoch we join and the epoch we
       // return are the same one because the current point
@@ -6258,7 +6258,7 @@ try_join_again:
      * After an epoch has been cleared all memories allocated on
      * and before that epoch could safely be deallocated
      */
-    void LeaveEpoch(EpochNode *epoch_p) {
+    inline void LeaveEpoch(EpochNode *epoch_p) {
       // This might return a negative value if the current epoch
       // is being cleaned
       epoch_p->active_thread_count.fetch_sub(1);
