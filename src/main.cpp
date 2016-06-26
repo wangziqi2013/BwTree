@@ -871,7 +871,7 @@ void TestBTreeInsertReadPerformance() {
   return;
 }
 
-void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
+void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
@@ -996,6 +996,47 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
   return;
 }
 
+void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  for(int i = 0;i < key_num;i++) {
+    t->Insert(i, i * 1.11);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  // Then test read performance
+  
+  int iter = 10;
+  std::vector<double> v{};
+
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  for(int j = 0;j < iter;j++) {
+    for(int i = 0;i < key_num;i++) {
+      t->GetValue(i, v);
+
+      v.clear();
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
   int iter = 10;
@@ -1111,7 +1152,7 @@ void TestEpochManager(TreeType *t) {
     return;
   };
 
-  LaunchParallelTestID(4, func, 10000);
+  LaunchParallelTestID(2, func, 10000);
   
   putchar('\n');
 
@@ -1205,9 +1246,11 @@ int main(int argc, char **argv) {
                
     print_flag = false;
     
-    TestBwTreeInsertReadPerformance(t1, key_num);
     if(run_benchmark_bwtree_full == true) {
+      TestBwTreeInsertReadPerformance(t1, key_num);
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
+    } else {
+      TestBwTreeInsertReadDeletePerformance(t1, key_num);
     }
     
     print_flag = true;
