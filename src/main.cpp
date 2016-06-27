@@ -1247,9 +1247,14 @@ int main(int argc, char **argv) {
     print_flag = false;
     
     if(run_benchmark_bwtree_full == true) {
+      // First we rely on this test to fill bwtree with 30 million keys
       TestBwTreeInsertReadPerformance(t1, key_num);
+      
+      // And then do a multithreaded read
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
     } else {
+      // This function will delete all keys at the end, so the tree
+      // is empty after it returns
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
     }
     
