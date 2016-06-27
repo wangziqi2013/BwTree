@@ -333,18 +333,18 @@ class BwTree {
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
 
   // If the length of delta chain exceeds this then we consolidate the node
-  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 10;
+  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
   // So maximum delta chain length on leaf is 12
-  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = -4;
+  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
 
   constexpr static int STATIC_CONSOLIDATION_THREAHOLD = 10;
 
   // If node size goes above this then we split it
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
-  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 32;
+  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 128;
 
   constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 32;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
 
@@ -5221,6 +5221,8 @@ before_switch:
     // are on the correct node for the current key
     if(KeyCmpGreaterEqual(*split_key_p,
                           snapshot_p->node_p->metadata.ubound) == true) {
+      assert(false);
+      
       return false;
     }
 
@@ -6200,11 +6202,13 @@ before_switch:
       // These two could be predetermined
       GarbageNode *garbage_node_p = new GarbageNode;
       garbage_node_p->node_p = node_p;
+      
+      garbage_node_p->next_p = epoch_p->garbage_list_p.load();
 
       while(1) {
-        garbage_node_p->next_p = epoch_p->garbage_list_p.load();
-
         // Then CAS previous node with new garbage node
+        // If this fails, then garbage_node_p->next_p is the actual value
+        // of garbage_list_p, in which case we do not need to load it again
         bool ret = \
           epoch_p->garbage_list_p.compare_exchange_strong(garbage_node_p->next_p,
                                                           garbage_node_p);
@@ -6294,6 +6298,7 @@ try_join_again:
             next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
 
             delete (LeafInsertNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6302,23 +6307,28 @@ try_join_again:
             next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
             delete (LeafDeleteNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
+            
             break;
           case NodeType::LeafSplitType:
             next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
             delete (LeafSplitNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
+            
             break;
           case NodeType::LeafMergeType:
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
             delete (LeafMergeNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6327,6 +6337,7 @@ try_join_again:
             return;
           case NodeType::LeafRemoveType:
             delete (LeafRemoveNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6341,6 +6352,7 @@ try_join_again:
             return;
           case NodeType::LeafType:
             delete (LeafNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6351,9 +6363,11 @@ try_join_again:
             next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
 
             delete (InnerInsertNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
+            
             break;
           case NodeType::InnerDeleteType:
             next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
@@ -6362,20 +6376,24 @@ try_join_again:
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
+            
             break;
           case NodeType::InnerSplitType:
             next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
 
             delete (InnerSplitNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
+            
             break;
           case NodeType::InnerMergeType:
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
             delete (InnerMergeNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6384,6 +6402,7 @@ try_join_again:
             return;
           case NodeType::InnerRemoveType:
             delete (InnerRemoveNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
@@ -6392,6 +6411,7 @@ try_join_again:
             return;
           case NodeType::InnerType:
             delete (InnerNode *)node_p;
+            
             #ifdef BWTREE_DEBUG
             freed_count.fetch_add(1);
             #endif
