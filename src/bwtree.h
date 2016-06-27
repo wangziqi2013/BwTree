@@ -921,19 +921,21 @@ class BwTree {
    */
   class Context {
    public:
-    // This is cannot be changed once initialized
+    // We choose to keep the search key as a member rather than pointer
+    // inside the context object
     const KeyType search_key;
 
-    // Saves NodeSnapshot object inside an array for snapshot maintenance
-    NodeSnapshot *path_list_p;
+    // We only need to keep current snapshot and parent snapshot
+    NodeSnapshot current_snapshot;
+    NodeSnapshot parent_snapshot;
 
     // Counts abort in one traversal
     int abort_counter;
-
-    // Current level (root = 0)
+    
+    // Represents current level we are on the tree
+    // root is level 0
+    // On initialization this is set to -1
     int current_level;
-
-    int buffer_size;
 
     // It is used in the finite state machine that drives the traversal
     // process down to a leaf node
@@ -953,10 +955,8 @@ class BwTree {
     Context(const KeyType p_search_key,
             size_t p_tree_height) :
       search_key{p_search_key},
-      path_list_p{nullptr},
       abort_counter{0},
       current_level{-1},
-      buffer_size{-1},
       current_state{OpState::Init},
       abort_flag{false}
     {}
@@ -1781,6 +1781,11 @@ class BwTree {
       node_id{p_node_id},
       node_p{p_node_p}
     {}
+    
+    /*
+     * Default Constructor - Fast path
+     */
+    NodeSnapshot() {}
 
     /*
      * GetHighKey() - Return the high key of a snapshot
@@ -2288,24 +2293,6 @@ class BwTree {
           // This is the serialization point for reading/writing root node
           NodeID start_node_id = root_id.load();
 
-          // After fixing the node ID of root node, we could also fix the
-          // height of the tree, since the starting point of the traversal
-          // has been known, so the height of the tree is also known
-          // also tree_height is guaranteed to be >= actual tree height at
-          // any moment
-          int snapshot_tree_height = tree_height.load();
-
-          // NOTE: Since LoadNodeID will advance the pointer by 1
-          // so after this allocation path_list_p points to the
-          // element before the first valid element (take care when
-          // debugging using gdb)
-          context_p->path_list_p = \
-            static_cast<NodeSnapshot *>\
-              (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
-
-          // We use this to validate the pointer
-          context_p->buffer_size = snapshot_tree_height;
-
           // We need to call this even for root node since there could
           // be split delta posted on to root node
           LoadNodeID(start_node_id,
@@ -2433,9 +2420,6 @@ class BwTree {
           
           context_p->current_state = OpState::Init;
           context_p->current_level = -1;
-          
-          // Free stack space allocated earlier
-          //alloca(-(context_p->buffer_size + 1));
           
           context_p->abort_flag = false;
           context_p->abort_counter++;
@@ -3634,7 +3618,7 @@ class BwTree {
   inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) const {
     assert(context_p->current_level >= 0);
 
-    return context_p->path_list_p;
+    return &context_p->current_snapshot;
   }
 
   /*
@@ -3652,7 +3636,7 @@ class BwTree {
     assert(context_p->current_level >= 1);
 
     // This is the address of the parent node
-    return context_p->path_list_p - 1;
+    return &context_p->parent_snapshot;
   }
 
   /*
@@ -3863,14 +3847,12 @@ class BwTree {
 
     // We must take care not to overflow the stack
     context_p->current_level++;
-    assert(context_p->current_level < context_p->buffer_size);
-
-    // For Init state, since path_list_p points to the element before the
-    // first NodeSnapshot, it is OK for us to advance it here
-    context_p->path_list_p++;
-
-    // Call placement new to call constructor on existing memory buffer
-    new (context_p->path_list_p) NodeSnapshot{node_id, node_p};
+    
+    // Copy assignment
+    context_p->parent_snapshot = context_p->current_snapshot;
+    
+    context_p->current_snapshot.node_p = node_p;
+    context_p->current_snapshot.node_id = node_id;
 
     return;
   }
@@ -4112,27 +4094,6 @@ before_switch:
           // This is the serialization point for reading/writing root node
           NodeID start_node_id = root_id.load();
 
-          // After fixing the node ID of root node, we could also fix the
-          // height of the tree, since the starting point of the traversal
-          // has been known, so the height of the tree is also known
-          // also tree_height is guaranteed to be >= actual tree height at
-          // any moment
-          int snapshot_tree_height = tree_height.load();
-
-          // NOTE: Since LoadNodeID will advance the pointer by 1
-          // so after this allocation path_list_p points to the
-          // element before the first valid element (take care when
-          // debugging using gdb)
-          // NOTE: For read optimied traverse, this does not have to be on
-          // caller's stack since the caller does not try to call
-          // GetNodeSnapshot() and will not access the stack
-          context_p->path_list_p = \
-            static_cast<NodeSnapshot *>\
-              (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
-
-          // We use this to validate the pointer
-          context_p->buffer_size = snapshot_tree_height;
-
           // We need to call this even for root node since there could
           // be split delta posted on to root node
           LoadNodeIDReadOptimized(start_node_id, context_p);
@@ -4236,9 +4197,6 @@ before_switch:
 
           context_p->current_state = OpState::Init;
           context_p->current_level = -1;
-
-          // Free stack space allocated earlier
-          //alloca(-(context_p->buffer_size + 1));
 
           context_p->abort_flag = false;
           context_p->abort_counter++;
@@ -6599,8 +6557,8 @@ try_join_again:
       // hit the correct value on next try
       while(exited_flag == false) {
         //printf("Start new epoch cycle\n");
-        CreateNewEpoch();
         ClearEpoch();
+        CreateNewEpoch();
 
         // Sleep for 50 ms
         std::chrono::milliseconds duration(GC_INTERVAL);
