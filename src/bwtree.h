@@ -334,7 +334,7 @@ class BwTree {
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
-  // So maximum delta chain length on leaf is 12
+  // So maximum delta chain length on leaf is 8
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
 
   constexpr static int STATIC_CONSOLIDATION_THREAHOLD = 10;
@@ -5219,10 +5219,15 @@ before_switch:
     // than the current one, since we always guarantee that after
     // NavigateInnerNode() returns if it does not abort, then we
     // are on the correct node for the current key
+    
+    // This happens when the parent splits on the newly inserted index term
+    // and the split delta has not been consolidated yet, so that a thread
+    // sees the split delta and traverses to its right sibling which is on
+    // another parent node (the right sibling of the current parent node)
+    // In this case we do not have to insert since we know the index term has
+    // already been inserted
     if(KeyCmpGreaterEqual(*split_key_p,
                           snapshot_p->node_p->metadata.ubound) == true) {
-      assert(false);
-      
       return false;
     }
 
