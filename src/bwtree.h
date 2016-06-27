@@ -4591,10 +4591,19 @@ before_switch:
           // If this is false then we know the index term has already
           // been inserted
           bool split_key_absent = \
-            FindSplitNextKey(parent_snapshot_p,
+            FindSplitNextKey(context_p,
+                             parent_snapshot_p,
                              split_key_p,
                              &next_key_p,
                              split_node_id);
+                             
+          if(context_p->abort_flag == true) {
+            bwt_printf("Index term found but NodeID does not match - "
+                       "child node merged and splited\n");
+                       
+            // Since it aborts, the return value does not matter
+            return false;
+          }
 
           if(split_key_absent == false) {
             bwt_printf("Index term is present. No need to insert\n");
@@ -5207,7 +5216,8 @@ before_switch:
    * using both the sep key and NodeID. These two must match, otherwise we
    * observed an inconsistent state
    */
-  inline bool FindSplitNextKey(NodeSnapshot *snapshot_p,
+  inline bool FindSplitNextKey(Context *context_p,
+                               NodeSnapshot *snapshot_p,
                                const KeyType *split_key_p,
                                const KeyType **next_key_p_p,
                                const NodeID insert_pid) {
@@ -5286,7 +5296,33 @@ before_switch:
 
     // If the split key already exists then just return false
     if(KeyCmpEqual(split_key_it->first, *split_key_p) == true) {
-      assert(split_key_it->second == insert_pid);
+      // NOTE: The following assertion might not be true
+      // Consider this scenario:
+      // 1. Thread A loads parent node, which has key entries 10->100, 20->200
+      // 2. It selects 10, and prepares to load NodeID = 100
+      // 3. Thread B removes and merges NodeID = 200 into its left sibling
+      //    which is node id = 100
+      // 4. Thread B removes 20->200 in the parent node
+      // 5. Thread C splits node id = 100 on split key = 20
+      // 6. Thread C posted a split delta on node id = 100
+      // 7. Thread C posted a index term insert 20->201 on the parent node
+      //    where 201 is the new NodeID for split sibling
+      // 8. Then thread A traverses down using NodeID = 100, and sees
+      //    the split delta
+      // 9. Thread A tries to find in tha parent key = 20, NodeID = 201 since
+      //    it sees the new split delta
+      // 10. Thread A finds key = 20 but NodeID = 200 since it only has the
+      //     old parent version
+      //
+      // So in this case we should abort and refresh the parent node
+      //assert(split_key_it->second == insert_pid);
+      
+      if(split_key_it->second != insert_pid) {
+        context_p->abort_flag = true;
+        
+        return false;
+      }
+
       return false;
     }
 
