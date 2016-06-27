@@ -5342,9 +5342,9 @@ before_switch:
    * deleted in the parent node, in which case this function does not
    * fill in the given pointer but returns false instead.
    *
-   * NOTE 2: This function assumes the snapshot already has data and metadata
-   *
-   * Return true if the merge key is found. false if merge key not found
+   * NOTE 2: This function does not require a context object being
+   * passed, unlile its counterpart when spliting a node, since this function
+   * is guaranteed not to abort
    */
   inline bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
                                    const KeyType *merge_key_p,
@@ -5401,6 +5401,14 @@ before_switch:
 
     // If we have found the deleted entry then it must be associated
     // with the node id that has been deleted
+    // NOTE: Unlike the case in split delta, here if we find the index term
+    // on the parent node, then the NodeID must equal the ID of the node
+    // being deleted
+    // The reason is that, the only way that these two not being equal
+    // is the child node was merged and splited again. However, if this
+    // happens then on the top of child node's delta chain would be
+    // a split delta rather than merge delta. This is possible with
+    // a split delta, but impossible when we see a merge delta
     assert(merge_key_it->second == deleted_node_id);
 
     // In the parent node merge key COULD NOT be the left most key
