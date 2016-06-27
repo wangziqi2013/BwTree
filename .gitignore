@@ -29,6 +29,8 @@
 
 *.asm
 *~
+*.S
+*.s
 
 # Misc
 main
@@ -36,3 +38,5 @@ main
 *.txt
 *.doc
 *.swp
+
+bin

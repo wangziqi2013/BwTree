@@ -19,6 +19,10 @@ gprof:
 	make clean
 	make all GMON_FLAG=-pg
 
+full-speed:
+	make clean
+	make OPT_FLAG=" -O3 -DNDEBUG -DBWTREE_NODEBUG"
+
 benchmark-all: main
 	$(PRELOAD_LIB) ./main --benchmark-all
 
@@ -33,6 +37,9 @@ test: main
 
 stress-test: main
 	$(PRELOAD_LIB) ./main --stress-test
+
+epoch-test: main
+	$(PRELOAD_LIB) ./main --epoch-test
 
 prepare:
 	mkdir -p build
