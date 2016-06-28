@@ -1627,6 +1627,7 @@ class BwTree {
     InnerDeleteNode(const KeyType &p_delete_key,
                     const KeyType &p_next_key,
                     const KeyType &p_prev_key,
+                    NodeID p_deleted_node_id,      // NodeID being deleted
                     NodeID p_prev_node_id,
                     const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerDeleteType,
@@ -1636,7 +1637,7 @@ class BwTree {
                 p_child_node_p->metadata.next_node_id,
                 p_child_node_p->metadata.depth + 1,
                 p_child_node_p->metadata.item_count - 1},
-      delete_item{p_delete_key, INVALID_NODE_ID},
+      delete_item{p_delete_key, p_deleted_node_id},
       next_key{p_next_key},
       prev_key{p_prev_key},
       prev_node_id{p_prev_node_id}
@@ -1928,6 +1929,17 @@ class BwTree {
     return FreeNodeByPointer(node_p);
   }
   
+  /*
+   * InvalidateNodeID() - Recycle NodeID
+   *
+   * This function is called when a NodeID has been invalidated due to a
+   * node removal and it is guaranteed that the NodeID will not be used
+   * anymore by any thread. This usually happens in the epoch manager
+   *
+   * Even if NodeIDs are not recycled (e.g. the counter monotonically increase)
+   * this is necessary for destroying the tree since we want to avoid deleting
+   * a removed node in InnerNode
+   */
   void InvalidateNodeID(NodeID node_id) {
     mapping_table[node_id] = nullptr;
   }
@@ -2016,6 +2028,12 @@ class BwTree {
           break;
         case NodeType::InnerDeleteType:
           next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
+          
+          // For those already deleted, the delta chain has been merged
+          // and the remove node should be freed (either before this point
+          // or will be freed) epoch manager
+          mapping_table[((InnerDeleteNode *)node_p)->delete_item.second] = \
+            nullptr;
 
           delete (InnerDeleteNode *)node_p;
           freed_count++;
@@ -4423,7 +4441,8 @@ before_switch:
           new InnerDeleteNode{*merge_key_p,
                               *next_key_p,
                               *prev_key_p,
-                              prev_node_id,
+                              deleted_node_id,     // Deleted node ID
+                              prev_node_id,        // previous node ID
                               parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
@@ -4562,7 +4581,10 @@ before_switch:
             tree_height.fetch_sub(1);
 
             delete inner_node_p;
-            // TODO: REMOVE THE NEWLY ALLOCATED ID
+            
+            // This recycles NodeID allocated as the new root
+            InvalidateNodeID(new_root_id);
+
             context_p->abort_flag = true;
 
             return false;
@@ -4849,7 +4871,8 @@ before_switch:
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
-          // TODO: Recycle node ID here
+          // Recycle node ID
+          InvalidateNodeID(new_node_id);
 
           // We have two nodes to delete here
           delete split_node_p;
@@ -5001,7 +5024,8 @@ before_switch:
           delete split_node_p;
           delete new_inner_node_p;
 
-          // TODO: Also need to remove the allocated NodeID
+          // Recycle NodeID
+          InvalidateNodeID(new_node_id);
 
           return;
         } // if CAS fails
@@ -6323,6 +6347,12 @@ try_join_again:
      * in the sense that for tree destruction there are certain node
      * types not being accepted. But in EpochManager we must support a wider
      * range of node types.
+     *
+     * NOTE: For leaf remove node and inner remove, the removed node id should
+     * also be freed inside this function. This is because the Node ID might
+     * be accessed by some threads after the time the remove node was sent
+     * here. So we need to make sure all accessing threads have exited before
+     * recycling NodeID
      */
     void FreeEpochDeltaChain(const BaseNode *node_p) {
       const BaseNode *next_node_p = node_p;
