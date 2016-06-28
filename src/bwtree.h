@@ -2274,7 +2274,7 @@ class BwTree {
    */
   bool Traverse(Context *context_p,
                 const ValueType *value_p,
-                std::vector<ValueType> *value_list_p) __attribute__((always_inline)) {
+                std::vector<ValueType> *value_list_p) {
     // At most one could be non-nullptr
     assert((value_p == nullptr) || (value_list_p == nullptr));
 
@@ -4067,7 +4067,7 @@ before_switch:
   }
   
   inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
-    bwt_printf("Loading NodeID = %lu\n", node_id);
+    bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p);
@@ -4077,8 +4077,8 @@ before_switch:
     return;
   }
   
-  void TraverseReadOptimized(Context *context_p,
-                             std::vector<ValueType> *value_list_p) {
+  inline void TraverseReadOptimized(Context *context_p,
+                                    std::vector<ValueType> *value_list_p) {
     // This will use lock
     #ifdef INTERACTIVE_DEBUG
     idb.AddKey(context_p->search_key);
@@ -4108,7 +4108,7 @@ before_switch:
             break;
           }
 
-          bwt_printf("Successfully loading root node ID\n");
+          bwt_printf("Successfully loading root node ID (RO)\n");
 
           // root node must be an inner node
           // NOTE: We do not traverse down in this state, just hand it
@@ -4123,7 +4123,7 @@ before_switch:
           // Navigate could abort since it might go to another NodeID
           // if there is a split delta and the key is >= split key
           if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort. ABORT\n");
+            bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
 
             // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
             // as a double check
@@ -4152,7 +4152,7 @@ before_switch:
           LoadNodeIDReadOptimized(child_node_id, context_p);
 
           if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted. ABORT\n");
+            bwt_printf("LoadNodeID aborted (RO). ABORT\n");
 
             context_p->current_state = OpState::Abort;
 
@@ -4163,27 +4163,27 @@ before_switch:
           snapshot_p = GetLatestNodeSnapshot(context_p);
 
           if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf\n");
+            bwt_printf("The next node is a leaf (RO)\n");
 
             // If there is an abort later on then we just go to
             // abort state
             context_p->current_state = OpState::Leaf;
           }
-
+          
           break;
         } // case Inner
         case OpState::Leaf: {
           NavigateLeafNode(context_p, *value_list_p);
 
           if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts. ABORT\n");
+            bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
 
             context_p->current_state = OpState::Abort;
 
             break;
           }
 
-          bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
+          bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
                      context_p->abort_counter,
                      context_p->current_level);
 
@@ -4204,7 +4204,7 @@ before_switch:
           break;
         } // case Abort
         default: {
-          bwt_printf("ERROR: Unknown State: %d\n",
+          bwt_printf("ERROR: Unknown State (RO): %d\n",
                      static_cast<int>(context_p->current_state));
           assert(false);
           break;
