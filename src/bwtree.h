@@ -3893,6 +3893,7 @@ class BwTree {
 
     // Make sure we are not switching to itself
     assert(snapshot_p->node_id != node_id);
+    
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
 
@@ -3972,6 +3973,12 @@ class BwTree {
   // Read-Optimized functions
   ///////////////////////////////////////////////////////////////////
   
+  /*
+   * FinishPartialSMPReadOptimized() - Read optimized version of
+   *                                   FinishPartialSMO()
+   *
+   * This function only delas with remove delta and abort node
+   */
   void FinishPartialSMOReadOptimized(Context *context_p) {
     // Note: If the top of the path list changes then this pointer
     // must also be updated
@@ -4066,6 +4073,14 @@ before_switch:
     return;
   }
   
+  /*
+   * LoadNodeIDReadOptimized() - Read optimized version of LoadNodeID()
+   *
+   * This only SMO that a read only thread cares about is remove delta,
+   * since it has to jump to the left sibling in order to keep traversing
+   * down. However, jumping to left sibling has the possibility to fail
+   * so we still need to check abort flag after this function returns
+   */
   inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
@@ -4077,6 +4092,19 @@ before_switch:
     return;
   }
   
+  /*
+   * TraverseReadOptimized() - Read optimized tree traversal
+   *
+   * This function differs from the standard version in a sense that it
+   * does not try to adjust node size and consolidate node - what it does
+   * is just navigating inner node and leaf node and return values for the
+   * given search key.
+   *
+   * However, there is one thing we must do, that is to jump to the left
+   * sibling of the current node when we see a remove delta. This is inevitable
+   * even if the thread is read only, since otherwise traversing down
+   * would become impossible.
+   */
   inline void TraverseReadOptimized(Context *context_p,
                                     std::vector<ValueType> *value_list_p) {
     // This will use lock
