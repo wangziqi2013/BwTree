@@ -330,7 +330,7 @@ class BwTree {
   using EpochNode = typename EpochManager::EpochNode;
 
   // The maximum number of nodes we could map in this index
-  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
+  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
@@ -1942,6 +1942,11 @@ class BwTree {
    */
   void InvalidateNodeID(NodeID node_id) {
     mapping_table[node_id] = nullptr;
+    
+    // Next time if we need a node ID we just push back from this
+    free_node_id_list.push_back(node_id);
+    
+    return;
   }
 
   /*
@@ -2179,9 +2184,17 @@ class BwTree {
    * which is guaranteed to execute atomically
    */
   inline NodeID GetNextNodeID() {
-    // fetch_add() returns the old value and increase the atomic
-    // automatically
-    return next_unused_node_id.fetch_add(1);
+    // If there is no free node id
+    if(free_node_id_list.size() == 0) {
+      // fetch_add() returns the old value and increase the atomic
+      // automatically
+      return next_unused_node_id.fetch_add(1);
+    } else {
+      NodeID ret = free_node_id_list.back();
+      free_node_id_list.pop_back();
+      
+      return ret;
+    }
   }
 
   /*
@@ -6017,6 +6030,10 @@ before_switch:
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
+  // This list holds free NodeID which was removed by remove delta
+  // We recycle NodeID in epoch manager
+  std::vector<NodeID> free_node_id_list;
+
   std::atomic<uint64_t> insert_op_count;
   std::atomic<uint64_t> insert_abort_count;
 
@@ -6102,7 +6119,11 @@ before_switch:
     // some nodes are embedded with complicated data structure that
     // maintains its own memory
     #ifdef BWTREE_DEBUG
-    std::atomic<size_t> freed_count;
+    // Number of nodes we have freed
+    size_t freed_count;
+    
+    // Number of NodeID we have freed
+    size_t freed_id_count;
     
     // These two are used for debugging
     size_t epoch_created;
@@ -6141,6 +6162,7 @@ before_switch:
       // freed has been called inside epoch manager
       #ifdef BWTREE_DEBUG
       freed_count = 0UL;
+      freed_id_count = 0UL;
       
       // It is not 0UL since we create an initial epoch on initialization
       epoch_created = 1UL;
@@ -6202,8 +6224,9 @@ before_switch:
       bwt_printf("Clean up for garbage collector\n");
 
       #ifdef BWTREE_DEBUG
-      bwt_printf("Stat: Freed %lu nodes by epoch manager\n",
-                 freed_count.load());
+      bwt_printf("Stat: Freed %lu nodes and %lu NodeID by epoch manager\n",
+                 freed_count,
+                 freed_id_count);
                  
       bwt_printf("      Epoch created = %lu; epoch freed = %lu\n",
                  epoch_created,
@@ -6370,7 +6393,7 @@ try_join_again:
             delete (LeafInsertNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             break;
           case NodeType::LeafDeleteType:
@@ -6379,7 +6402,7 @@ try_join_again:
             delete (LeafDeleteNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6389,7 +6412,7 @@ try_join_again:
             delete (LeafSplitNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6400,7 +6423,7 @@ try_join_again:
             delete (LeafMergeNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Leaf merge node is an ending node
@@ -6412,7 +6435,8 @@ try_join_again:
             delete (LeafRemoveNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
+            freed_id_count++;
             #endif
 
             // We never try to free those under remove node
@@ -6427,7 +6451,7 @@ try_join_again:
             delete (LeafNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // We have reached the end of delta chain
@@ -6438,7 +6462,7 @@ try_join_again:
             delete (InnerInsertNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6447,7 +6471,7 @@ try_join_again:
 
             delete (InnerDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6457,7 +6481,7 @@ try_join_again:
             delete (InnerSplitNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6468,7 +6492,7 @@ try_join_again:
             delete (InnerMergeNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Merge node is also an ending node
@@ -6482,7 +6506,8 @@ try_join_again:
             delete (InnerRemoveNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
+            freed_id_count++;
             #endif
 
             // We never free nodes under remove node
@@ -6491,7 +6516,7 @@ try_join_again:
             delete (InnerNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             return;
@@ -6504,7 +6529,7 @@ try_join_again:
             delete (InnerAbortNode *)node_p;
 
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Inner abort node is also a terminating node
