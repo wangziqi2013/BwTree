@@ -22,21 +22,22 @@
 
 #pragma once
 
-#include <vector>
-#include <atomic>
-#include <algorithm>
-#include <cassert>
-#include <mutex>
-#include <string>
-#include <iostream>
-#include <unordered_set>
-#include <thread>
-#include <chrono>
-
 // We use this to avoid allocating temporary STL variable
 // on the heap if everything happens locally and could
 // be contained on the stack
 #include <alloca.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
 
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
@@ -1918,6 +1919,15 @@ class BwTree {
     return;
   }
   
+  /*
+   * FreeNodeByNodeID() - Given a NodeID, free all nodes and its children
+   *
+   * This function returns if the mapping table entry is nullptr which implies
+   * that the NodeID has already been recycled and we should not recycle it
+   * twice.
+   *
+   * The return value represents the number of nodes recycled
+   */
   size_t FreeNodeByNodeID(NodeID node_id) {
     const BaseNode *node_p = GetNode(node_id);
     if(node_p == nullptr) {
@@ -1966,6 +1976,12 @@ class BwTree {
    * environment since it assumes sole ownership of the entire tree
    * This is trivial during normal destruction, but care must be taken
    * when this is not true.
+   *
+   * NOTE 3: This function does not consider InnerAbortNode, InnerRemoveNode
+   * and LeafRemoveNode as valid, since these three are just temporary nodes,
+   * and should not exist if a thread finishes its job (for remove nodes they
+   * must be removed after posting InnerDeleteNode, which should be done by
+   * the thread posting remove delta or other threads helping-along)
    *
    * This node calls destructor according to the type of the node, considering
    * that there is not virtual destructor defined for sake of running speed.
@@ -2037,6 +2053,8 @@ class BwTree {
           // For those already deleted, the delta chain has been merged
           // and the remove node should be freed (either before this point
           // or will be freed) epoch manager
+          // NOTE: No need to call InvalidateNodeID since this function is
+          // only called on destruction of the tree
           mapping_table[((InnerDeleteNode *)node_p)->delete_item.second] = \
             nullptr;
 
