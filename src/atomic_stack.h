@@ -1,6 +1,126 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstddef>
+
+template <typename T>
+class VersionedPointer {
+ private:
+  T *ptr;
+  uint64_t version;
+ public:
+
+  /*
+   * Default Constructor
+   */
+  VersionedPointer(T *p_ptr) :
+    ptr{p_ptr},
+    version{0UL}
+  {}
+
+  /*
+   * Default Constructor - This is required by std::atomic
+   */
+  VersionedPointer() :
+    ptr{nullptr},
+    version{0UL}
+  {}
+
+  /*
+   * Const Pointer Dereference
+   */
+  const T &operator*() const {
+    return *ptr;
+  }
+
+  /*
+   * Pointer Dereference
+   */
+  T &operator*() {
+    return *ptr;
+  }
+
+  /*
+   * Member Access Operator
+   */
+  T *operator->() {
+    return ptr;
+  }
+
+  /*
+   * Prefix operator--
+   */
+  VersionedPointer &operator--() {
+    ptr--;
+
+    return *this;
+  }
+
+  /*
+   * Postfix operator--
+   */
+  VersionedPointer operator--(int) {
+    VersionedPointer vp{*this};
+
+    ptr--;
+
+    return vp;
+  }
+
+  /*
+   * Prefix operator++
+   */
+  VersionedPointer &operator++() {
+    ptr++;
+
+    return *this;
+  }
+
+  /*
+   * Postfix operator++
+   */
+  VersionedPointer operator++(int) {
+    VersionedPointer vp{*this};
+
+    ptr++;
+
+    return vp;
+  }
+
+  /*
+   * Subtract Operator
+   */
+  std::ptrdiff_t operator-(const T *target) {
+    return ptr - target;
+  }
+
+  /*
+   * Comparison Operator
+   */
+  bool operator==(const T *target) {
+    return target == ptr;
+  }
+
+  /*
+   * Smaller Than Operator
+   */
+  bool operator<(const T *target) {
+    return ptr < target;
+  }
+
+  /*
+   * ToNextVersion() - Go to the next version
+   *
+   * This should be called before CAS to announce to other threads
+   * that the pointer version has changed no matter whether the physical
+   * pointer value is equal or not
+   */
+  void ToNextVersion() {
+    version++;
+
+    return;
+  }
+};
 
 /*
  * class AtomicStack - Thread-safe lock-free stack implementation
@@ -29,51 +149,54 @@ class AtomicStack {
  private:
   // This holds actual data
   T data[STACK_SIZE];
-  
+
   // The pointer for accessing the top of the stack
   // The invariant is that before and after any atomic push()
   // and pop() calls the top pointer always points to the
   // latest valid element in the stack
-  std::atomic<T *> top_p;
-  
+  //
+  // NOTE: We use versioned pointer to avoid ABA problem related with
+  // CAS instruction
+  std::atomic<VersionedPointer<T>> top_p;
+
   // This is used to buffer Push() requests in a single threaded
   // environment
   std::vector<T> buffer;
-  
+
   /*
-     * PreparePush() - Switch the stack top pointer to nullptr
-     *
-     * This eliminates contention between Push() and Pop(). But it does not
-     * eliminate possible contention between multithreaded Push()
-     *
-     * This function could be called in multi-threaded environment
-     *
-     * The return value is the stack top before switching it to nullptr
-     */
-    inline T *PreparePush() {
-      bool cas_ret;
+   * PreparePush() - Switch the stack top pointer to nullptr
+   *
+   * This eliminates contention between Push() and Pop(). But it does not
+   * eliminate possible contention between multithreaded Push()
+   *
+   * This function could be called in multi-threaded environment
+   *
+   * The return value is the stack top before switching it to nullptr
+   */
+  inline VersionedPointer<T> PreparePush() {
+    bool cas_ret;
 
-      // If CAS fails this value would be automatically reloaded
-      T *snapshot_top_p = top_p.load();
+    // If CAS fails this value would be automatically reloaded
+    VersionedPointer<T> snapshot_top_p = top_p.load();
 
-      // Switch the current stack to empty mode by CAS top pointer
-      // to nullptr
-      // This eliminates contention between Push() and Pop()
-      do {
-        #ifdef BWTREE_DEBUG
-        assert((snapshot_top_p - data + 1) < STACK_SIZE);
-        #endif
+    // Switch the current stack to empty mode by CAS top pointer
+    // to nullptr
+    // This eliminates contention between Push() and Pop()
+    do {
+      #ifdef BWTREE_DEBUG
+      assert((snapshot_top_p - data + 1) < STACK_SIZE);
+      #endif
 
-        // This contends with Pop()
-        cas_ret = top_p.compare_exchange_strong(snapshot_top_p,
-                                                nullptr);
-      } while(cas_ret == false);
+      // This contends with Pop()
+      cas_ret = top_p.compare_exchange_strong(snapshot_top_p,
+                                              nullptr);
+    } while(cas_ret == false);
 
-      return snapshot_top_p;
-    }
-    
+    return snapshot_top_p;
+  }
+
  public:
-   
+
     /*
      * Default Constructor
      *
@@ -84,7 +207,7 @@ class AtomicStack {
     AtomicStack() :
      top_p{((T *)data) - 1}
     {}
-    
+
     /*
      * SingleThreadBufferPush() - Do not directly push the item but keep it
      *                            inside the internal buffer
@@ -97,7 +220,7 @@ class AtomicStack {
      */
     inline void SingleThreadBufferPush(const T &item) {
       buffer.push_back(item);
-      
+
       return;
     }
 
@@ -112,18 +235,21 @@ class AtomicStack {
      * This function must be called in single-threaded environment
      */
     inline void SingleThreadPush(const T &item) {
-      T *snapshot_top_p = PreparePush();
-      
+      VersionedPointer<T> snapshot_top_p = PreparePush();
+
       // Writing in the pushed value without worrying about concurrent Pop()
       // since all Pop() would fail and return as if the stack were empty
       *(++snapshot_top_p) = item;
-      
+
+      // Before storing into the pointer let it go to the next version first
+      snapshot_top_p.ToNextVersion();
+
       // After this point Pop() would work
       top_p.store(snapshot_top_p);
-      
+
       return;
     }
-    
+
     /*
      * SingleThreadCommitPush() - Commit all buffered items
      *
@@ -132,18 +258,20 @@ class AtomicStack {
      * This function must be called under multi-threaded environment
      */
     inline void SingleThreadCommitPush() {
-      T *snapshot_top_p = PreparePush();
-      
+      VersionedPointer<T> snapshot_top_p = PreparePush();
+
       for(auto &item : buffer) {
         *(++snapshot_top_p) = item;
       }
-      
-      top_p = snapshot_top_p;
+
+      snapshot_top_p.ToNextVersion();
+
+      top_p.store(snapshot_top_p);
       buffer.clear();
-      
+
       return;
     }
-   
+
    /*
     * Pop() - Pops one item from the stack
     *
@@ -162,12 +290,12 @@ class AtomicStack {
       #ifdef BWTREE_DEBUG
       assert((snapshot_top_p - data) < STACK_SIZE);
       #endif
-     
+      
+      // Load current top pointer and check whether it points to a valid slot
+      // If not then just return false. But the item might be modified
+      VersionedPointer<T> snapshot_top_p = top_p.load();
+
       while(1) {
-        // Load current top pointer and check whether it points to a valid slot
-        // If not then just return false. But the item might be modified
-        T *snapshot_top_p = top_p.load();
-        
         // This should be true if
         // 1. snapshot_top_p is data - 1 (stack is empty)
         // 2. snapshot_top_p is nullpre (there is Pop() going on)
@@ -176,7 +304,7 @@ class AtomicStack {
           // Avoid spinning here, and just return as an empty stack
           return {false, T{}};
         }
-        
+
         if(snapshot_top_p < data) {
           // We need to trivially construct a type T element as a place holder
           return {false, T{}};
@@ -185,9 +313,19 @@ class AtomicStack {
         // First construct a return value
         auto ret = std::make_pair(true, *snapshot_top_p);
 
+        // Copy construct a new pointer
+        VersionedPointer<T> new_snapshot_top_p = snapshot_top_p;
+        
+        // Move the previous pointer back by 1 element
+        new_snapshot_top_p--;
+        
+        // Update version number to avoid ABA problem
+        new_snapshot_top_p.ToNextVersion();
+
         // Then update the top pointer
+        // Avoid ABA problem here by using double word compare and swap
         bool cas_ret = top_p.compare_exchange_strong(snapshot_top_p,
-                                                     snapshot_top_p - 1);
+                                                     new_snapshot_top_p);
 
         // If CAS succeeds which indicates the pointer has not changed
         // since we took its snapshot, then just return
@@ -196,7 +334,7 @@ class AtomicStack {
           return ret;
         }
       }
-     
+
      assert(false);
      return {false, T{}};
    }
