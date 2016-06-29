@@ -3,6 +3,24 @@
 #include <cassert>
 #include <cstddef>
 
+/*
+ * class VersionedPointer - Pointer with a version number
+ *
+ * This class is designed to solve the notorious ABA problem with CAS, in
+ * a sense that CAS might wrongly return success even if the memory region
+ * being compared has been modified several times with the final value
+ * unchanged. In this case we attach a monotomically increasing version
+ * number with the pointer, and updat them using double word compare and swap
+ * which will be compiled into LOCK CMPXCHG16B on x86-64
+ *
+ * Since CMPXCHG16B requires 16 byte memory alignment, if this object is used
+ * as a member or stack variable it should be specially treated and allocated
+ * on a 16 byte aligned address.
+ *
+ * Double word load will be translated into LOCK CMPXCHG16B with 18 bit value 0
+ * If comparison is successful then we know the destination is 0. If CAS fails
+ * then not the destination is loaded into RDX:RAX
+ */
 template <typename T>
 class VersionedPointer {
  private:
@@ -157,7 +175,13 @@ class AtomicStack {
   //
   // NOTE: We use versioned pointer to avoid ABA problem related with
   // CAS instruction
-  std::atomic<VersionedPointer<T>> top_p  __attribute__((aligned (16)));
+  //
+  // NOTE 2: This atomic variable is used with double word CAS
+  // so it should be aligned peoperly (DWORD alignment)
+  // otherwise the processor would raise segment fault
+  //
+  // (F g++ for not doing this)
+  std::atomic<VersionedPointer<T>> top_p __attribute__((aligned (16)));
 
   // This is used to buffer Push() requests in a single threaded
   // environment
