@@ -13,7 +13,7 @@ class VersionedPointer {
   /*
    * Default Constructor
    */
-  VersionedPointer(T *p_ptr) :
+  VersionedPointer(T *p_ptr) noexcept :
     ptr{p_ptr},
     version{0UL}
   {}
@@ -21,7 +21,7 @@ class VersionedPointer {
   /*
    * Default Constructor - This is required by std::atomic
    */
-  VersionedPointer() :
+  VersionedPointer() noexcept :
     ptr{nullptr},
     version{0UL}
   {}
