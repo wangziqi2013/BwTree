@@ -57,6 +57,7 @@
 #endif
 
 #include "bloom_filter.h"
+#include "atomic_stack.h"
 
 // We use this to control from the compiler
 #ifndef BWTREE_NODEBUG
@@ -1949,12 +1950,17 @@ class BwTree {
    * Even if NodeIDs are not recycled (e.g. the counter monotonically increase)
    * this is necessary for destroying the tree since we want to avoid deleting
    * a removed node in InnerNode
+   *
+   * NOTE: This function only works in a single-threaded environment such
+   * as epoch manager and destructor
+   *
+   * DO NOT call this in worker thread!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    */
-  void InvalidateNodeID(NodeID node_id) {
+  inline void InvalidateNodeID(NodeID node_id) {
     mapping_table[node_id] = nullptr;
     
     // Next time if we need a node ID we just push back from this
-    free_node_id_list.push_back(node_id);
+    free_node_id_list.SingleThreadPush(node_id);
     
     return;
   }
@@ -2202,16 +2208,19 @@ class BwTree {
    * which is guaranteed to execute atomically
    */
   inline NodeID GetNextNodeID() {
+    // This is a std::pair<bool, NodeID>
+    // If the first element is true then the NodeID is a valid one
+    // If the first element is false then NodeID is invalid and the
+    // stack is either empty or being used (we cannot lock and wait)
+    auto ret_pair = free_node_id_list.Pop();
+    
     // If there is no free node id
-    if(free_node_id_list.size() == 0) {
+    if(ret_pair.first == false) {
       // fetch_add() returns the old value and increase the atomic
       // automatically
       return next_unused_node_id.fetch_add(1);
     } else {
-      NodeID ret = free_node_id_list.back();
-      free_node_id_list.pop_back();
-      
-      return ret;
+      return ret_pair.second;
     }
   }
 
@@ -4610,11 +4619,17 @@ before_switch:
 
             // If install fails we just sub 1 from the tree height
             tree_height.fetch_sub(1);
+            
+            // We need to make a new remove node and send it into EpochManager
+            // for recycling the NodeID
+            const InnerRemoveNode *fake_remove_node_p = \
+              new InnerRemoveNode{new_root_id, inner_node_p};
+
+            // Put the remove node into garbage chain, because
+            // we cannot call InvalidateNodeID() here
+            epoch_manager.AddGarbageNode(fake_remove_node_p);
 
             delete inner_node_p;
-            
-            // This recycles NodeID allocated as the new root
-            InvalidateNodeID(new_root_id);
 
             context_p->abort_flag = true;
 
@@ -4902,8 +4917,11 @@ before_switch:
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
-          // Recycle node ID
-          InvalidateNodeID(new_node_id);
+          // Need to use the epoch manager to recycle NodeID
+          const LeafRemoveNode *fake_remove_node_p = \
+            new LeafRemoveNode{new_node_id, new_leaf_node_p};
+
+          epoch_manager.AddGarbageNode(fake_remove_node_p);
 
           // We have two nodes to delete here
           delete split_node_p;
@@ -5051,12 +5069,16 @@ before_switch:
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
+          // Use the epoch manager to recycle NodeID in single threaded
+          // environment
+          const InnerRemoveNode *fake_remove_node_p = \
+            new InnerRemoveNode{new_node_id, new_inner_node_p};
+
+          epoch_manager.AddGarbageNode(fake_remove_node_p);
+
           // We have two nodes to delete here
           delete split_node_p;
           delete new_inner_node_p;
-
-          // Recycle NodeID
-          InvalidateNodeID(new_node_id);
 
           return;
         } // if CAS fails
@@ -6047,10 +6069,10 @@ before_switch:
   NodeID first_node_id;
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
-
+  
   // This list holds free NodeID which was removed by remove delta
   // We recycle NodeID in epoch manager
-  std::vector<NodeID> free_node_id_list;
+  AtomicStack<NodeID, MAPPING_TABLE_SIZE> free_node_id_list;
 
   std::atomic<uint64_t> insert_op_count;
   std::atomic<uint64_t> insert_abort_count;
