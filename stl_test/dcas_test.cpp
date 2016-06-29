@@ -23,5 +23,10 @@ int main() {
   cout << "ret = " << ret << endl;
   cout << "dw2.a, dw2.b = " << dw2.a << ", " << dw2.b << endl;
   
+  __asm ("nop; nop");
+  DoubleWord dw4 = dw1.load();
+  __asm ("nop; nop; nop");
+  cout << "dw4.a, dw4.b = " << dw4.a << ", " << dw4.b << endl;
+  
   return 0;
 }
