@@ -1870,8 +1870,13 @@ class BwTree {
 
       tree_height{2UL},
 
-      // Statistical information
+      // NodeID counter
       next_unused_node_id{0},
+      
+      // Initialize free NodeID stack
+      free_node_id_list{},
+      
+      // Statistical information
       insert_op_count{0},
       insert_abort_count{0},
       delete_op_count{0},
