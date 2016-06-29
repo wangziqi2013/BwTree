@@ -157,7 +157,7 @@ class AtomicStack {
   //
   // NOTE: We use versioned pointer to avoid ABA problem related with
   // CAS instruction
-  std::atomic<VersionedPointer<T>> top_p;
+  std::atomic<VersionedPointer<T>> top_p  __attribute__((aligned (16)));
 
   // This is used to buffer Push() requests in a single threaded
   // environment
