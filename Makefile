@@ -3,17 +3,19 @@ CXX = g++
 GMON_FLAG = 
 OPT_FLAG = -O3
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+SRC = ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h
+OBJ = ./build/main.o ./build/bwtree.o
 
 all: main
 
-main: ./build/main.o ./build/bwtree.o
-	$(CXX) ./build/main.o ./build/bwtree.o -o ./main -pthread -std=c++11 -g -Wall $(OPT_FLAG) $(GMON_FLAG)
+main: $(OBJ)
+	$(CXX) ./build/main.o ./build/bwtree.o -o ./main -pthread -std=c++11 -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/main.o: ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h
-	$(CXX) ./src/main.cpp -c -pthread -std=c++11 -o ./build/main.o -g -Wall $(OPT_FLAG) $(GMON_FLAG)
+./build/main.o: $(SRC)
+	$(CXX) ./src/main.cpp -c -pthread -std=c++11 -o ./build/main.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/bwtree.o: ./src/bwtree.h ./src/bwtree.cpp ./src/bloom_filter.h
-	$(CXX) ./src/bwtree.cpp -c -std=c++11 -o ./build/bwtree.o -g -Wall $(OPT_FLAG) $(GMON_FLAG)
+./build/bwtree.o: $(SRC)
+	$(CXX) ./src/bwtree.cpp -c -std=c++11 -o ./build/bwtree.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
 gprof:
 	make clean

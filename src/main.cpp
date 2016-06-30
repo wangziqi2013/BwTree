@@ -1088,6 +1088,8 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   static std::atomic<size_t> delete_success;
   static std::atomic<size_t> total_op;
   
+  const size_t thread_num = 8;
+  
   int max_key = 1024 * 1024;
   
   std::random_device r;
@@ -1121,6 +1123,34 @@ void StressTest(uint64_t thread_id, TreeType *t) {
       printf("    insert success = %lu; delete success = %lu\n",
              insert_success.load(),
              delete_success.load());
+    }
+    
+    size_t remainder = (op % (1024UL * 1024UL * 10UL));
+    
+    if(remainder < thread_num) {
+      std::vector<double> v{};
+      int iter = 10;
+
+      v.reserve(100);
+
+      std::chrono::time_point<std::chrono::system_clock> start, end;
+
+      start = std::chrono::system_clock::now();
+
+      for(int j = 0;j < iter;j++) {
+        for(int i = 0;i < max_key;i++) {
+          t->GetValue(i, v);
+
+          v.clear();
+        }
+      }
+
+      end = std::chrono::system_clock::now();
+      std::chrono::duration<double> elapsed_seconds = end - start;
+      
+      std::cout << " Stress Test BwTree: "
+                << (iter * max_key / (1024.0 * 1024.0)) / elapsed_seconds.count()
+                << " million read/sec" << "\n";
     }
   }
 
@@ -1247,9 +1277,14 @@ int main(int argc, char **argv) {
     print_flag = false;
     
     if(run_benchmark_bwtree_full == true) {
+      // First we rely on this test to fill bwtree with 30 million keys
       TestBwTreeInsertReadPerformance(t1, key_num);
+      
+      // And then do a multithreaded read
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
     } else {
+      // This function will delete all keys at the end, so the tree
+      // is empty after it returns
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
     }
     

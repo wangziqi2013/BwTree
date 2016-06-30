@@ -22,21 +22,22 @@
 
 #pragma once
 
-#include <vector>
-#include <atomic>
-#include <algorithm>
-#include <cassert>
-#include <mutex>
-#include <string>
-#include <iostream>
-#include <unordered_set>
-#include <thread>
-#include <chrono>
-
 // We use this to avoid allocating temporary STL variable
 // on the heap if everything happens locally and could
 // be contained on the stack
 #include <alloca.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
 
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
@@ -56,6 +57,7 @@
 #endif
 
 #include "bloom_filter.h"
+#include "atomic_stack.h"
 
 // We use this to control from the compiler
 #ifndef BWTREE_NODEBUG
@@ -330,7 +332,7 @@ class BwTree {
   using EpochNode = typename EpochManager::EpochNode;
 
   // The maximum number of nodes we could map in this index
-  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 24;
+  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
 
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
@@ -921,19 +923,21 @@ class BwTree {
    */
   class Context {
    public:
-    // This is cannot be changed once initialized
+    // We choose to keep the search key as a member rather than pointer
+    // inside the context object
     const KeyType search_key;
 
-    // Saves NodeSnapshot object inside an array for snapshot maintenance
-    NodeSnapshot *path_list_p;
+    // We only need to keep current snapshot and parent snapshot
+    NodeSnapshot current_snapshot;
+    NodeSnapshot parent_snapshot;
 
     // Counts abort in one traversal
     int abort_counter;
-
-    // Current level (root = 0)
+    
+    // Represents current level we are on the tree
+    // root is level 0
+    // On initialization this is set to -1
     int current_level;
-
-    int buffer_size;
 
     // It is used in the finite state machine that drives the traversal
     // process down to a leaf node
@@ -953,10 +957,8 @@ class BwTree {
     Context(const KeyType p_search_key,
             size_t p_tree_height) :
       search_key{p_search_key},
-      path_list_p{nullptr},
       abort_counter{0},
       current_level{-1},
-      buffer_size{-1},
       current_state{OpState::Init},
       abort_flag{false}
     {}
@@ -1439,11 +1441,13 @@ class BwTree {
    */
   class LeafRemoveNode : public DeltaNode {
    public:
-
+    NodeID removed_id;
+    
     /*
      * Constructor
      */
-    LeafRemoveNode(const BaseNode *p_child_node_p) :
+    LeafRemoveNode(NodeID p_removed_id,
+                   const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafRemoveType,
                 p_child_node_p,
                 p_child_node_p->metadata.lbound,
@@ -1451,7 +1455,8 @@ class BwTree {
                 p_child_node_p->metadata.next_node_id,
                 // REMOVE node is an SMO and does not introduce data
                 p_child_node_p->metadata.depth,
-                p_child_node_p->metadata.item_count}
+                p_child_node_p->metadata.item_count},
+      removed_id{p_removed_id}
     {}
   };
 
@@ -1624,6 +1629,7 @@ class BwTree {
     InnerDeleteNode(const KeyType &p_delete_key,
                     const KeyType &p_next_key,
                     const KeyType &p_prev_key,
+                    NodeID p_deleted_node_id,      // NodeID being deleted
                     NodeID p_prev_node_id,
                     const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerDeleteType,
@@ -1633,7 +1639,7 @@ class BwTree {
                 p_child_node_p->metadata.next_node_id,
                 p_child_node_p->metadata.depth + 1,
                 p_child_node_p->metadata.item_count - 1},
-      delete_item{p_delete_key, INVALID_NODE_ID},
+      delete_item{p_delete_key, p_deleted_node_id},
       next_key{p_next_key},
       prev_key{p_prev_key},
       prev_node_id{p_prev_node_id}
@@ -1681,18 +1687,22 @@ class BwTree {
    */
   class InnerRemoveNode : public DeltaNode {
    public:
-
+    // We also need this to recycle NodeID
+    NodeID removed_id;
+    
     /*
      * Constructor
      */
-    InnerRemoveNode(const BaseNode *p_child_node_p) :
+    InnerRemoveNode(NodeID p_removed_id,
+                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::InnerRemoveType,
                 p_child_node_p,
                 p_child_node_p->metadata.lbound,
                 p_child_node_p->metadata.ubound,
                 p_child_node_p->metadata.next_node_id,
                 p_child_node_p->metadata.depth,
-                p_child_node_p->metadata.item_count}
+                p_child_node_p->metadata.item_count},
+      removed_id{p_removed_id}
     {}
   };
 
@@ -1781,6 +1791,11 @@ class BwTree {
       node_id{p_node_id},
       node_p{p_node_p}
     {}
+    
+    /*
+     * Default Constructor - Fast path
+     */
+    NodeSnapshot() {}
 
     /*
      * GetHighKey() - Return the high key of a snapshot
@@ -1855,8 +1870,13 @@ class BwTree {
 
       tree_height{2UL},
 
-      // Statistical information
+      // NodeID counter
       next_unused_node_id{0},
+      
+      // Initialize free NodeID stack
+      free_node_id_list{},
+      
+      // Statistical information
       insert_op_count{0},
       insert_abort_count{0},
       delete_op_count{0},
@@ -1868,7 +1888,7 @@ class BwTree {
       //idb{this},
 
       // Epoch Manager that does garbage collection
-      epoch_manager{} {
+      epoch_manager{this} {
     bwt_printf("Bw-Tree Constructor called. "
                "Setting up execution environment...\n");
 
@@ -1898,13 +1918,60 @@ class BwTree {
     bwt_printf("Destructor: Free tree nodes\n");
 
     // Free all nodes recursively
-    //FreeAllNodes(GetNode(root_id.load()));
+    size_t node_count = FreeNodeByNodeID(root_id.load());
+    
+    bwt_printf("Freed %lu tree nodes\n", node_count);
 
+    return;
+  }
+  
+  /*
+   * FreeNodeByNodeID() - Given a NodeID, free all nodes and its children
+   *
+   * This function returns if the mapping table entry is nullptr which implies
+   * that the NodeID has already been recycled and we should not recycle it
+   * twice.
+   *
+   * The return value represents the number of nodes recycled
+   */
+  size_t FreeNodeByNodeID(NodeID node_id) {
+    const BaseNode *node_p = GetNode(node_id);
+    if(node_p == nullptr) {
+      return 0UL;
+    }
+    
+    mapping_table[node_id] = nullptr;
+    
+    return FreeNodeByPointer(node_p);
+  }
+  
+  /*
+   * InvalidateNodeID() - Recycle NodeID
+   *
+   * This function is called when a NodeID has been invalidated due to a
+   * node removal and it is guaranteed that the NodeID will not be used
+   * anymore by any thread. This usually happens in the epoch manager
+   *
+   * Even if NodeIDs are not recycled (e.g. the counter monotonically increase)
+   * this is necessary for destroying the tree since we want to avoid deleting
+   * a removed node in InnerNode
+   *
+   * NOTE: This function only works in a single-threaded environment such
+   * as epoch manager and destructor
+   *
+   * DO NOT call this in worker thread!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   */
+  inline void InvalidateNodeID(NodeID node_id) {
+    mapping_table[node_id] = nullptr;
+    
+    // Next time if we need a node ID we just push back from this
+    free_node_id_list.SingleThreadPush(node_id);
+    
     return;
   }
 
   /*
-   * FreeAllNodes() - Free all nodes currently in the tree
+   * FreeNodeByPointer() - Free all nodes currently in the tree
    *
    * For normal destruction, we do not accept InnerAbortNode,
    * InnerRemoveNode, and LeafRemoveNode, since these three types
@@ -1921,27 +1988,24 @@ class BwTree {
    * This is trivial during normal destruction, but care must be taken
    * when this is not true.
    *
+   * NOTE 3: This function does not consider InnerAbortNode, InnerRemoveNode
+   * and LeafRemoveNode as valid, since these three are just temporary nodes,
+   * and should not exist if a thread finishes its job (for remove nodes they
+   * must be removed after posting InnerDeleteNode, which should be done by
+   * the thread posting remove delta or other threads helping-along)
+   *
    * This node calls destructor according to the type of the node, considering
    * that there is not virtual destructor defined for sake of running speed.
    */
-   /*
-  void FreeAllNodes(const BaseNode *node_p) {
+  size_t FreeNodeByPointer(const BaseNode *node_p) {
     const BaseNode *next_node_p = node_p;
-    int freed_count = 0;
-
-    // These two tells whether we have seen InnerSplitNode
-    // NOTE: ubound does not need to be passed between function calls
-    // since ubound is only used to prevent InnerNode containing
-    // SepItem that has been invalidated by a split
-    bool has_ubound = false;
-    KeyType ubound{RawKeyType{}};
+    size_t freed_count = 0;
 
     while(1) {
       node_p = next_node_p;
       assert(node_p != nullptr);
 
       NodeType type = node_p->GetType();
-      bwt_printf("type = %d\n", (int)type);
 
       switch(type) {
         case NodeType::LeafInsertType:
@@ -1960,27 +2024,35 @@ class BwTree {
         case NodeType::LeafSplitType:
           next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
+          freed_count += \
+            FreeNodeByNodeID(((LeafSplitNode *)node_p)->split_sibling);
+            
           delete (LeafSplitNode *)node_p;
           freed_count++;
 
           break;
         case NodeType::LeafMergeType:
-          FreeAllNodes(((LeafMergeNode *)node_p)->child_node_p);
-          FreeAllNodes(((LeafMergeNode *)node_p)->right_merge_p);
+          freed_count += \
+            FreeNodeByPointer(((LeafMergeNode *)node_p)->child_node_p);
+          freed_count += \
+            FreeNodeByPointer(((LeafMergeNode *)node_p)->right_merge_p);
 
           delete (LeafMergeNode *)node_p;
           freed_count++;
 
           // Leaf merge node is an ending node
-          return;
+          return freed_count;
         case NodeType::LeafType:
           delete (LeafNode *)node_p;
           freed_count++;
 
           // We have reached the end of delta chain
-          return;
+          return freed_count;
         case NodeType::InnerInsertType:
           next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
+          
+          freed_count += \
+            FreeNodeByNodeID(((InnerInsertNode *)node_p)->insert_item.second);
 
           delete (InnerInsertNode *)node_p;
           freed_count++;
@@ -1988,67 +2060,45 @@ class BwTree {
           break;
         case NodeType::InnerDeleteType:
           next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
+          
+          // For those already deleted, the delta chain has been merged
+          // and the remove node should be freed (either before this point
+          // or will be freed) epoch manager
+          // NOTE: No need to call InvalidateNodeID since this function is
+          // only called on destruction of the tree
+          mapping_table[((InnerDeleteNode *)node_p)->delete_item.second] = \
+            nullptr;
 
           delete (InnerDeleteNode *)node_p;
           freed_count++;
 
           break;
-        case NodeType::InnerSplitType: {
-          const InnerSplitNode *split_node_p = \
-            static_cast<const InnerSplitNode *>(node_p);
+        case NodeType::InnerSplitType:
+          next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
 
-          next_node_p = split_node_p->child_node_p;
-
-          // We only save ubound for the first split delta from top
-          // to bottom
-          // Since the first is always the most up-to-date one
-          if(has_ubound == false) {
-            // Save the upper bound of the node such that we do not
-            // free child nodes that no longer belong to this inner
-            // node when we see the InnerNode
-            // NOTE: Cannot just save pointer since the pointer
-            // will be invalidated after deleting node
-            ubound = split_node_p->split_key;
-            has_ubound = true;
-          }
+          freed_count += \
+            FreeNodeByNodeID(((LeafSplitNode *)node_p)->split_sibling);
 
           delete (InnerSplitNode *)node_p;
           freed_count++;
 
           break;
-        }
         case NodeType::InnerMergeType:
-          FreeAllNodes(((InnerMergeNode *)node_p)->child_node_p);
-          FreeAllNodes(((InnerMergeNode *)node_p)->right_merge_p);
+          freed_count += \
+            FreeNodeByPointer(((InnerMergeNode *)node_p)->child_node_p);
+          freed_count += \
+            FreeNodeByPointer(((InnerMergeNode *)node_p)->right_merge_p);
 
           delete (InnerMergeNode *)node_p;
           freed_count++;
 
-          // Merge node is also an ending node
-          return;
-        case NodeType::InnerType: { // Need {} since we initialized a variable
+          return freed_count;
+        case NodeType::InnerType: {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
-          // Grammar issue: Since the inner node is const, all its members
-          // are const, and so we could only declare const iterator on
-          // the vector member, and therefore ":" only returns const reference
-          for(const SepItem &sep_item : inner_node_p->sep_list) {
-            NodeID node_id = sep_item.node;
-
-            // Load the node pointer using child node ID of the inner node
-            const BaseNode *child_node_p = GetNode(node_id);
-
-            // If there is a split node and the item key >= split key
-            // then we know the item has been invalidated by the split
-            if((has_ubound == true) && \
-               (KeyCmpGreaterEqual(sep_item.key, ubound))) {
-              break;
-            }
-
-            // Then free all nodes in the child node (which is
-            // recursively defined as a tree)
-            FreeAllNodes(child_node_p);
+          for(auto &sep_item : inner_node_p->sep_list) {
+            freed_count += FreeNodeByNodeID(sep_item.second);
           }
 
           // Access its content first and then delete the node itself
@@ -2057,24 +2107,20 @@ class BwTree {
 
           // Since we free nodes recursively, after processing an inner
           // node and recursively with its child nodes we could return here
-          return;
+          return freed_count;
         }
         default:
           // This does not include INNER ABORT node
           bwt_printf("Unknown node type: %d\n", (int)type);
 
           assert(false);
-          return;
+          return 0;
       } // switch
-
-      bwt_printf("Freed node of type %d\n", (int)type);
     } // while 1
 
-    bwt_printf("Freed %d nodes during destruction\n", freed_count);
-
-    return;
+    assert(false);
+    return 0;
   }
-  */
 
   /*
    * InitNodeLayout() - Initialize the nodes required to start BwTree
@@ -2167,9 +2213,20 @@ class BwTree {
    * which is guaranteed to execute atomically
    */
   inline NodeID GetNextNodeID() {
-    // fetch_add() returns the old value and increase the atomic
-    // automatically
-    return next_unused_node_id.fetch_add(1);
+    // This is a std::pair<bool, NodeID>
+    // If the first element is true then the NodeID is a valid one
+    // If the first element is false then NodeID is invalid and the
+    // stack is either empty or being used (we cannot lock and wait)
+    auto ret_pair = free_node_id_list.Pop();
+    
+    // If there is no free node id
+    if(ret_pair.first == false) {
+      // fetch_add() returns the old value and increase the atomic
+      // automatically
+      return next_unused_node_id.fetch_add(1);
+    } else {
+      return ret_pair.second;
+    }
   }
 
   /*
@@ -2269,7 +2326,7 @@ class BwTree {
    */
   bool Traverse(Context *context_p,
                 const ValueType *value_p,
-                std::vector<ValueType> *value_list_p) __attribute__((always_inline)) {
+                std::vector<ValueType> *value_list_p) {
     // At most one could be non-nullptr
     assert((value_p == nullptr) || (value_list_p == nullptr));
 
@@ -2287,24 +2344,6 @@ class BwTree {
 
           // This is the serialization point for reading/writing root node
           NodeID start_node_id = root_id.load();
-
-          // After fixing the node ID of root node, we could also fix the
-          // height of the tree, since the starting point of the traversal
-          // has been known, so the height of the tree is also known
-          // also tree_height is guaranteed to be >= actual tree height at
-          // any moment
-          int snapshot_tree_height = tree_height.load();
-
-          // NOTE: Since LoadNodeID will advance the pointer by 1
-          // so after this allocation path_list_p points to the
-          // element before the first valid element (take care when
-          // debugging using gdb)
-          context_p->path_list_p = \
-            static_cast<NodeSnapshot *>\
-              (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
-
-          // We use this to validate the pointer
-          context_p->buffer_size = snapshot_tree_height;
 
           // We need to call this even for root node since there could
           // be split delta posted on to root node
@@ -2433,9 +2472,6 @@ class BwTree {
           
           context_p->current_state = OpState::Init;
           context_p->current_level = -1;
-          
-          // Free stack space allocated earlier
-          //alloca(-(context_p->buffer_size + 1));
           
           context_p->abort_flag = false;
           context_p->abort_counter++;
@@ -3634,7 +3670,7 @@ class BwTree {
   inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) const {
     assert(context_p->current_level >= 0);
 
-    return context_p->path_list_p;
+    return &context_p->current_snapshot;
   }
 
   /*
@@ -3652,7 +3688,7 @@ class BwTree {
     assert(context_p->current_level >= 1);
 
     // This is the address of the parent node
-    return context_p->path_list_p - 1;
+    return &context_p->parent_snapshot;
   }
 
   /*
@@ -3863,14 +3899,12 @@ class BwTree {
 
     // We must take care not to overflow the stack
     context_p->current_level++;
-    assert(context_p->current_level < context_p->buffer_size);
-
-    // For Init state, since path_list_p points to the element before the
-    // first NodeSnapshot, it is OK for us to advance it here
-    context_p->path_list_p++;
-
-    // Call placement new to call constructor on existing memory buffer
-    new (context_p->path_list_p) NodeSnapshot{node_id, node_p};
+    
+    // Copy assignment
+    context_p->parent_snapshot = context_p->current_snapshot;
+    
+    context_p->current_snapshot.node_p = node_p;
+    context_p->current_snapshot.node_id = node_id;
 
     return;
   }
@@ -3911,6 +3945,7 @@ class BwTree {
 
     // Make sure we are not switching to itself
     assert(snapshot_p->node_id != node_id);
+    
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
 
@@ -3990,6 +4025,12 @@ class BwTree {
   // Read-Optimized functions
   ///////////////////////////////////////////////////////////////////
   
+  /*
+   * FinishPartialSMPReadOptimized() - Read optimized version of
+   *                                   FinishPartialSMO()
+   *
+   * This function only delas with remove delta and abort node
+   */
   void FinishPartialSMOReadOptimized(Context *context_p) {
     // Note: If the top of the path list changes then this pointer
     // must also be updated
@@ -4063,12 +4104,15 @@ before_switch:
         // If CAS fails just abort and return
         if(ret == true) {
           bwt_printf("Merge delta CAS succeeds. ABORT\n");
+          
+          context_p->abort_flag = true;
 
           return;
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
           assert(merge_node_p == nullptr);
+          context_p->abort_flag = true;
 
           return;
         } // if ret == true
@@ -4084,8 +4128,16 @@ before_switch:
     return;
   }
   
+  /*
+   * LoadNodeIDReadOptimized() - Read optimized version of LoadNodeID()
+   *
+   * This only SMO that a read only thread cares about is remove delta,
+   * since it has to jump to the left sibling in order to keep traversing
+   * down. However, jumping to left sibling has the possibility to fail
+   * so we still need to check abort flag after this function returns
+   */
   inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
-    bwt_printf("Loading NodeID = %lu\n", node_id);
+    bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p);
@@ -4095,8 +4147,21 @@ before_switch:
     return;
   }
   
-  void TraverseReadOptimized(Context *context_p,
-                             std::vector<ValueType> *value_list_p) {
+  /*
+   * TraverseReadOptimized() - Read optimized tree traversal
+   *
+   * This function differs from the standard version in a sense that it
+   * does not try to adjust node size and consolidate node - what it does
+   * is just navigating inner node and leaf node and return values for the
+   * given search key.
+   *
+   * However, there is one thing we must do, that is to jump to the left
+   * sibling of the current node when we see a remove delta. This is inevitable
+   * even if the thread is read only, since otherwise traversing down
+   * would become impossible.
+   */
+  inline void TraverseReadOptimized(Context *context_p,
+                                    std::vector<ValueType> *value_list_p) {
     // This will use lock
     #ifdef INTERACTIVE_DEBUG
     idb.AddKey(context_p->search_key);
@@ -4112,27 +4177,6 @@ before_switch:
           // This is the serialization point for reading/writing root node
           NodeID start_node_id = root_id.load();
 
-          // After fixing the node ID of root node, we could also fix the
-          // height of the tree, since the starting point of the traversal
-          // has been known, so the height of the tree is also known
-          // also tree_height is guaranteed to be >= actual tree height at
-          // any moment
-          int snapshot_tree_height = tree_height.load();
-
-          // NOTE: Since LoadNodeID will advance the pointer by 1
-          // so after this allocation path_list_p points to the
-          // element before the first valid element (take care when
-          // debugging using gdb)
-          // NOTE: For read optimied traverse, this does not have to be on
-          // caller's stack since the caller does not try to call
-          // GetNodeSnapshot() and will not access the stack
-          context_p->path_list_p = \
-            static_cast<NodeSnapshot *>\
-              (alloca(sizeof(NodeSnapshot) * (snapshot_tree_height + 1)));
-
-          // We use this to validate the pointer
-          context_p->buffer_size = snapshot_tree_height;
-
           // We need to call this even for root node since there could
           // be split delta posted on to root node
           LoadNodeIDReadOptimized(start_node_id, context_p);
@@ -4147,7 +4191,7 @@ before_switch:
             break;
           }
 
-          bwt_printf("Successfully loading root node ID\n");
+          bwt_printf("Successfully loading root node ID (RO)\n");
 
           // root node must be an inner node
           // NOTE: We do not traverse down in this state, just hand it
@@ -4162,7 +4206,7 @@ before_switch:
           // Navigate could abort since it might go to another NodeID
           // if there is a split delta and the key is >= split key
           if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort. ABORT\n");
+            bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
 
             // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
             // as a double check
@@ -4191,7 +4235,7 @@ before_switch:
           LoadNodeIDReadOptimized(child_node_id, context_p);
 
           if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted. ABORT\n");
+            bwt_printf("LoadNodeID aborted (RO). ABORT\n");
 
             context_p->current_state = OpState::Abort;
 
@@ -4202,27 +4246,27 @@ before_switch:
           snapshot_p = GetLatestNodeSnapshot(context_p);
 
           if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf\n");
+            bwt_printf("The next node is a leaf (RO)\n");
 
             // If there is an abort later on then we just go to
             // abort state
             context_p->current_state = OpState::Leaf;
           }
-
+          
           break;
         } // case Inner
         case OpState::Leaf: {
           NavigateLeafNode(context_p, *value_list_p);
 
           if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts. ABORT\n");
+            bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
 
             context_p->current_state = OpState::Abort;
 
             break;
           }
 
-          bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
+          bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
                      context_p->abort_counter,
                      context_p->current_level);
 
@@ -4237,16 +4281,13 @@ before_switch:
           context_p->current_state = OpState::Init;
           context_p->current_level = -1;
 
-          // Free stack space allocated earlier
-          //alloca(-(context_p->buffer_size + 1));
-
           context_p->abort_flag = false;
           context_p->abort_counter++;
 
           break;
         } // case Abort
         default: {
-          bwt_printf("ERROR: Unknown State: %d\n",
+          bwt_printf("ERROR: Unknown State (RO): %d\n",
                      static_cast<int>(context_p->current_state));
           assert(false);
           break;
@@ -4445,7 +4486,8 @@ before_switch:
           new InnerDeleteNode{*merge_key_p,
                               *next_key_p,
                               *prev_key_p,
-                              prev_node_id,
+                              deleted_node_id,     // Deleted node ID
+                              prev_node_id,        // previous node ID
                               parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
@@ -4476,6 +4518,16 @@ before_switch:
           ///////////////////////////////////////////
           // TODO: Also recycle NodeID here
           ///////////////////////////////////////////
+          
+          // To avoid this entry being recycled during tree destruction
+          // Since the entry still remains in the old inner base node
+          // but we should have already deleted it
+          // NOTE: We could not do it here since some thread will fetch
+          // nullptr from the mapping table
+          // We should recycle the NodeID using EpochManager
+          // and requires that epoch manager finishes all epoches before
+          // the tree is destroyed
+          //mapping_table[deleted_node_id] = nullptr;
 
           parent_snapshot_p->node_p = delete_node_p;
 
@@ -4572,9 +4624,18 @@ before_switch:
 
             // If install fails we just sub 1 from the tree height
             tree_height.fetch_sub(1);
+            
+            // We need to make a new remove node and send it into EpochManager
+            // for recycling the NodeID
+            const InnerRemoveNode *fake_remove_node_p = \
+              new InnerRemoveNode{new_root_id, inner_node_p};
+
+            // Put the remove node into garbage chain, because
+            // we cannot call InvalidateNodeID() here
+            epoch_manager.AddGarbageNode(fake_remove_node_p);
 
             delete inner_node_p;
-            // TODO: REMOVE THE NEWLY ALLOCATED ID
+
             context_p->abort_flag = true;
 
             return false;
@@ -4861,7 +4922,11 @@ before_switch:
         } else {
           bwt_printf("Leaf split delta CAS fails\n");
 
-          // TODO: Recycle node ID here
+          // Need to use the epoch manager to recycle NodeID
+          const LeafRemoveNode *fake_remove_node_p = \
+            new LeafRemoveNode{new_node_id, new_leaf_node_p};
+
+          epoch_manager.AddGarbageNode(fake_remove_node_p);
 
           // We have two nodes to delete here
           delete split_node_p;
@@ -4915,7 +4980,8 @@ before_switch:
           return;
         }
 
-        const LeafRemoveNode *remove_node_p = new LeafRemoveNode{node_p};
+        const LeafRemoveNode *remove_node_p = \
+          new LeafRemoveNode{node_id, node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -5008,11 +5074,16 @@ before_switch:
         } else {
           bwt_printf("Inner split delta CAS fails\n");
 
+          // Use the epoch manager to recycle NodeID in single threaded
+          // environment
+          const InnerRemoveNode *fake_remove_node_p = \
+            new InnerRemoveNode{new_node_id, new_inner_node_p};
+
+          epoch_manager.AddGarbageNode(fake_remove_node_p);
+
           // We have two nodes to delete here
           delete split_node_p;
           delete new_inner_node_p;
-
-          // TODO: Also need to remove the allocated NodeID
 
           return;
         } // if CAS fails
@@ -5075,7 +5146,8 @@ before_switch:
           return;
         }
 
-        const InnerRemoveNode *remove_node_p = new InnerRemoveNode{node_p};
+        const InnerRemoveNode *remove_node_p = \
+          new InnerRemoveNode{node_id, node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -5342,9 +5414,9 @@ before_switch:
    * deleted in the parent node, in which case this function does not
    * fill in the given pointer but returns false instead.
    *
-   * NOTE 2: This function assumes the snapshot already has data and metadata
-   *
-   * Return true if the merge key is found. false if merge key not found
+   * NOTE 2: This function does not require a context object being
+   * passed, unlile its counterpart when spliting a node, since this function
+   * is guaranteed not to abort
    */
   inline bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
                                    const KeyType *merge_key_p,
@@ -5401,6 +5473,14 @@ before_switch:
 
     // If we have found the deleted entry then it must be associated
     // with the node id that has been deleted
+    // NOTE: Unlike the case in split delta, here if we find the index term
+    // on the parent node, then the NodeID must equal the ID of the node
+    // being deleted
+    // The reason is that, the only way that these two not being equal
+    // is the child node was merged and splited again. However, if this
+    // happens then on the top of child node's delta chain would be
+    // a split delta rather than merge delta. This is possible with
+    // a split delta, but impossible when we see a merge delta
     assert(merge_key_it->second == deleted_node_id);
 
     // In the parent node merge key COULD NOT be the left most key
@@ -5994,6 +6074,10 @@ before_switch:
   NodeID first_node_id;
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
+  
+  // This list holds free NodeID which was removed by remove delta
+  // We recycle NodeID in epoch manager
+  AtomicStack<NodeID, MAPPING_TABLE_SIZE> free_node_id_list;
 
   std::atomic<uint64_t> insert_op_count;
   std::atomic<uint64_t> insert_abort_count;
@@ -6018,6 +6102,8 @@ before_switch:
    */
   class EpochManager {
    public:
+    BwTree *tree_p;
+    
     // Garbage collection interval (milliseconds)
     constexpr static int GC_INTERVAL = 50;
 
@@ -6078,7 +6164,11 @@ before_switch:
     // some nodes are embedded with complicated data structure that
     // maintains its own memory
     #ifdef BWTREE_DEBUG
-    std::atomic<size_t> freed_count;
+    // Number of nodes we have freed
+    size_t freed_count;
+    
+    // Number of NodeID we have freed
+    size_t freed_id_count;
     
     // These two are used for debugging
     size_t epoch_created;
@@ -6094,7 +6184,8 @@ before_switch:
      * NOTE: We do not start thread here since the init of bw-tree itself
      * might take a long time
      */
-    EpochManager() {
+    EpochManager(BwTree *p_tree_p) :
+      tree_p{p_tree_p} {
       current_epoch_p = new EpochNode{};
       
       // These two are atomic variables but we could
@@ -6116,6 +6207,7 @@ before_switch:
       // freed has been called inside epoch manager
       #ifdef BWTREE_DEBUG
       freed_count = 0UL;
+      freed_id_count = 0UL;
       
       // It is not 0UL since we create an initial epoch on initialization
       epoch_created = 1UL;
@@ -6177,8 +6269,9 @@ before_switch:
       bwt_printf("Clean up for garbage collector\n");
 
       #ifdef BWTREE_DEBUG
-      bwt_printf("Stat: Freed %lu nodes by epoch manager\n",
-                 freed_count.load());
+      bwt_printf("Stat: Freed %lu nodes and %lu NodeID by epoch manager\n",
+                 freed_count,
+                 freed_id_count);
                  
       bwt_printf("      Epoch created = %lu; epoch freed = %lu\n",
                  epoch_created,
@@ -6323,7 +6416,11 @@ try_join_again:
      * types not being accepted. But in EpochManager we must support a wider
      * range of node types.
      *
-     * For more details please refer to FreeDeltaChain in BwTree class definition
+     * NOTE: For leaf remove node and inner remove, the removed node id should
+     * also be freed inside this function. This is because the Node ID might
+     * be accessed by some threads after the time the remove node was sent
+     * here. So we need to make sure all accessing threads have exited before
+     * recycling NodeID
      */
     void FreeEpochDeltaChain(const BaseNode *node_p) {
       const BaseNode *next_node_p = node_p;
@@ -6341,7 +6438,7 @@ try_join_again:
             delete (LeafInsertNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             break;
           case NodeType::LeafDeleteType:
@@ -6350,7 +6447,7 @@ try_join_again:
             delete (LeafDeleteNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6360,7 +6457,7 @@ try_join_again:
             delete (LeafSplitNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6371,16 +6468,20 @@ try_join_again:
             delete (LeafMergeNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Leaf merge node is an ending node
             return;
           case NodeType::LeafRemoveType:
+            // This recycles node ID
+            tree_p->InvalidateNodeID(((LeafRemoveNode *)node_p)->removed_id);
+            
             delete (LeafRemoveNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
+            freed_id_count++;
             #endif
 
             // We never try to free those under remove node
@@ -6395,7 +6496,7 @@ try_join_again:
             delete (LeafNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // We have reached the end of delta chain
@@ -6406,7 +6507,7 @@ try_join_again:
             delete (InnerInsertNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6415,7 +6516,7 @@ try_join_again:
 
             delete (InnerDeleteNode *)node_p;
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6425,7 +6526,7 @@ try_join_again:
             delete (InnerSplitNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
             
             break;
@@ -6436,16 +6537,22 @@ try_join_again:
             delete (InnerMergeNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Merge node is also an ending node
             return;
           case NodeType::InnerRemoveType:
+            // Recycle NodeID here together with RemoveNode
+            // Since we need to guatantee all threads that could potentially
+            // see the remove node exit before cleaning the NodeID
+            tree_p->InvalidateNodeID(((InnerRemoveNode *)node_p)->removed_id);
+            
             delete (InnerRemoveNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
+            freed_id_count++;
             #endif
 
             // We never free nodes under remove node
@@ -6454,7 +6561,7 @@ try_join_again:
             delete (InnerNode *)node_p;
             
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             return;
@@ -6467,7 +6574,7 @@ try_join_again:
             delete (InnerAbortNode *)node_p;
 
             #ifdef BWTREE_DEBUG
-            freed_count.fetch_add(1);
+            freed_count++;
             #endif
 
             // Inner abort node is also a terminating node
@@ -6591,8 +6698,8 @@ try_join_again:
       // hit the correct value on next try
       while(exited_flag == false) {
         //printf("Start new epoch cycle\n");
-        CreateNewEpoch();
         ClearEpoch();
+        CreateNewEpoch();
 
         // Sleep for 50 ms
         std::chrono::milliseconds duration(GC_INTERVAL);

@@ -1,5 +1,5 @@
 
-SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp
+SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp dcas_test.cpp
 CXXFLAG = -O3 --std=gnu++11 -g -Wall
 
 all: $(SOURCE)
@@ -7,6 +7,7 @@ all: $(SOURCE)
 	g++ unordered_set_malloc.cpp -o ./bin/unordered_set_malloc $(CXXFLAG)
 	g++ bloom_filter.cpp -o ./bin/bloom_filter $(CXXFLAG)
 	g++ std_hash_speed.cpp -o ./bin/std_hash_speed $(CXXFLAG)
+	g++ dcas_test.cpp -o ./bin/dcas_test $(CXXFLAG) -mcx16
 
 clean:
 	rm -f ./bin/*

@@ -1,8 +1,6 @@
 # BwTree [![Build Status](https://travis-ci.org/wangziqi2013/BwTree.svg?branch=peloton)](https://travis-ci.org/wangziqi2013/BwTree)
 This is a street strength implementation of Bw-Tree, the Microsoft's implementation of which is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
 
-![Cover Image](https://raw.githubusercontent.com/wangziqi2013/BwTree/master/cover.png)
-
 Benchmark
 =========
 
@@ -21,6 +19,10 @@ Same as above, but with Bloom Filter
 After removing std::vector from the traversal stack
 
 ![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-22.jpg)
+
+Stress test with key space = 60M (expected tree size = 30M); random insert/delete; 8 worker threads
+
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/stress-test-result-20160629.jpg)
 
 References
 ===================
@@ -56,4 +58,9 @@ make stress-test      -> Runs stress test on BwTree until NodeID runs out and as
 
 make test             -> Runs insert-read-delete test for multiple times with different patterns
 
+make epoch-test       -> Runs epoch manager test
 
+Misc
+====
+
+Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code.
