@@ -25,13 +25,15 @@ template <typename T>
 class VersionedPointer {
  private:
   T *ptr;
+  
+  // Before each CAS we need to increase this version counter
   uint64_t version;
  public:
 
   /*
    * Default Constructor
    */
-  VersionedPointer(T *p_ptr) noexcept :
+  inline VersionedPointer(T *p_ptr) noexcept :
     ptr{p_ptr},
     version{0UL}
   {}
@@ -39,7 +41,7 @@ class VersionedPointer {
   /*
    * Default Constructor - This is required by std::atomic
    */
-  VersionedPointer() noexcept :
+  inline VersionedPointer() noexcept :
     ptr{nullptr},
     version{0UL}
   {}
@@ -47,28 +49,28 @@ class VersionedPointer {
   /*
    * Const Pointer Dereference
    */
-  const T &operator*() const {
+  inline const T &operator*() const {
     return *ptr;
   }
 
   /*
    * Pointer Dereference
    */
-  T &operator*() {
+  inline T &operator*() {
     return *ptr;
   }
 
   /*
    * Member Access Operator
    */
-  T *operator->() {
+  inline T *operator->() {
     return ptr;
   }
 
   /*
    * Prefix operator--
    */
-  VersionedPointer &operator--() {
+  inline VersionedPointer &operator--() {
     ptr--;
 
     return *this;
@@ -77,7 +79,7 @@ class VersionedPointer {
   /*
    * Postfix operator--
    */
-  VersionedPointer operator--(int) {
+  inline VersionedPointer operator--(int) {
     VersionedPointer vp{*this};
 
     ptr--;
@@ -88,7 +90,7 @@ class VersionedPointer {
   /*
    * Prefix operator++
    */
-  VersionedPointer &operator++() {
+  inline VersionedPointer &operator++() {
     ptr++;
 
     return *this;
@@ -97,7 +99,7 @@ class VersionedPointer {
   /*
    * Postfix operator++
    */
-  VersionedPointer operator++(int) {
+  inline VersionedPointer operator++(int) {
     VersionedPointer vp{*this};
 
     ptr++;
@@ -108,21 +110,21 @@ class VersionedPointer {
   /*
    * Subtract Operator
    */
-  std::ptrdiff_t operator-(const T *target) {
+  inline std::ptrdiff_t operator-(const T *target) {
     return ptr - target;
   }
 
   /*
    * Comparison Operator
    */
-  bool operator==(const T *target) {
+  inline bool operator==(const T *target) {
     return target == ptr;
   }
 
   /*
    * Smaller Than Operator
    */
-  bool operator<(const T *target) {
+  inline bool operator<(const T *target) {
     return ptr < target;
   }
 
@@ -133,7 +135,7 @@ class VersionedPointer {
    * that the pointer version has changed no matter whether the physical
    * pointer value is equal or not
    */
-  void ToNextVersion() {
+  inline void ToNextVersion() {
     version++;
 
     return;
