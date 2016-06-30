@@ -200,6 +200,7 @@ class AtomicStack {
    * The return value is the stack top before switching it to nullptr
    */
   inline VersionedPointer<T> PreparePush() {
+    /*
     bool cas_ret;
 
     // If CAS fails this value would be automatically reloaded
@@ -218,6 +219,14 @@ class AtomicStack {
                                               nullptr);
     } while(cas_ret == false);
 
+    return snapshot_top_p;
+    */
+    VersionedPointer<T> snapshot_top_p = top_p.exchange(nullptr);
+    
+    #ifdef BWTREE_DEBUG
+    assert((snapshot_top_p - data + 1) < STACK_SIZE);
+    #endif
+    
     return snapshot_top_p;
   }
 
