@@ -206,6 +206,8 @@ class AtomicStack {
     assert((snapshot_top_p - data + 1) < STACK_SIZE);
     #endif
     
+    // If this return value contains nullptr internally
+    // then we know there is another Push() operation going on
     return snapshot_top_p;
   }
 
