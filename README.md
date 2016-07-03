@@ -63,4 +63,4 @@ make epoch-test       -> Runs epoch manager test
 Misc
 ====
 
-Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code.
+Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code. Using make command to compile and link these STL test cases.
