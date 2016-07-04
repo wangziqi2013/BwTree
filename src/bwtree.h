@@ -1864,7 +1864,6 @@ class BwTree {
       key_node_id_pair_hash_obj{this},
 
       // key-value pair comparator, equality checker and hasher
-      key_value_pair_cmp_obj{this},
       key_value_pair_eq_obj{this},
       key_value_pair_hash_obj{this},
 
@@ -3623,12 +3622,18 @@ class BwTree {
     assert(static_cast<int>(leaf_node_p->data_list.size()) == \
            node_p->metadata.item_count);
 
+    // This is the key value pair comparator object
+    auto raw_key_value_pair_cmp_obj = \
+      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+        return this->key_cmp_obj(kvp1.first, kvp2.first);
+      };
+
     // Sort using only key value
     // All items with the same key are grouped together, and their
     // orderes are not defined (we do not use unstable sort)
     std::sort(data_list_p->begin(),
               data_list_p->end(),
-              key_value_pair_cmp_obj);
+              raw_key_value_pair_cmp_obj);
 
     // We reserve that many space for storing the prefix sum
     // Note that if the node is going to be consolidated then this will
@@ -3652,7 +3657,7 @@ class BwTree {
       auto range_end_it = std::upper_bound(range_begin_it,
                                            end_it,
                                            *range_begin_it,
-                                           key_value_pair_cmp_obj);
+                                           raw_key_value_pair_cmp_obj);
 
       // The first element is always 0 since the index starts with 0
       leaf_node_p->item_prefix_sum.push_back(prefix_sum);
@@ -6062,10 +6067,7 @@ before_switch:
   const KeyNodeIDPairEqualityChecker key_node_id_pair_eq_obj;
   const KeyNodeIDPairHashFunc key_node_id_pair_hash_obj;
 
-  // The following three are used for
-  // std::unordered_set<std::pair<KeyTYpe, ValueType>>
-  // and for searching
-  const KeyValuePairComparator key_value_pair_cmp_obj;
+  // The following two are used for hashing KeyValuePair
   const KeyValuePairEqualityChecker key_value_pair_eq_obj;
   const KeyValuePairHashFunc key_value_pair_hash_obj;
 
