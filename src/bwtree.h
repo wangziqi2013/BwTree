@@ -1896,6 +1896,8 @@ class BwTree {
 
     bwt_printf("sizeof(NodeMetaData) = %lu is the overhead for each node\n",
                sizeof(NodeMetaData));
+    bwt_printf("sizeof(KeyType) = %lu is the size of wrapped key\n",
+               sizeof(KeyType));
 
     bwt_printf("Starting epoch manager thread...\n");
     epoch_manager.StartThread();
@@ -3007,7 +3009,7 @@ class BwTree {
           // to the new path
           if(KeyCmpGreaterEqual(search_key, metadata_p->ubound) == true) {
             context_p->abort_flag = true;
-
+            
             return;
           }
 
@@ -3236,7 +3238,7 @@ class BwTree {
           // to the new path
           if(KeyCmpGreaterEqual(search_key, metadata_p->ubound) == true) {
             context_p->abort_flag = true;
-
+            
             return false;
           }
 
