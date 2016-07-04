@@ -319,7 +319,7 @@ class BwTree {
                                                KeyNodeIDPairHashFunc>;
 
   // KeyType-ValueType pair
-  using KeyValuePair = std::pair<KeyType, ValueType>;
+  using KeyValuePair = std::pair<RawKeyType, ValueType>;
   using KeyValuePairBloomFilter = BloomFilter<KeyValuePair,
                                               KeyValuePairEqualityChecker,
                                               KeyValuePairHashFunc>;
@@ -718,7 +718,7 @@ class BwTree {
    */
   class KeyValuePairComparator {
    public:
-    const WrappedKeyComparator *wrapped_key_cmp_obj_p;
+    const KeyComparator *key_cmp_obj_p;
 
     /*
      * Default constructor - deleted
@@ -730,7 +730,7 @@ class BwTree {
      *               wrapped key comparator and value comparator
      */
     KeyValuePairComparator(BwTree *p_tree_p) :
-      wrapped_key_cmp_obj_p{&p_tree_p->wrapped_key_cmp_obj}
+      key_cmp_obj_p{&p_tree_p->key_cmp_obj}
     {}
 
     /*
@@ -743,7 +743,7 @@ class BwTree {
      */
     inline bool operator()(const KeyValuePair &kvp1,
                            const KeyValuePair &kvp2) const {
-      return (*wrapped_key_cmp_obj_p)(kvp1.first, kvp2.first);
+      return (*key_cmp_obj_p)(kvp1.first, kvp2.first);
     }
   };
 
@@ -753,7 +753,7 @@ class BwTree {
    */
   class KeyValuePairEqualityChecker {
    public:
-    const WrappedKeyEqualityChecker *wrapped_key_eq_obj_p;
+    const KeyEqualityChecker *key_eq_obj_p;
     const ValueEqualityChecker *value_eq_obj_p;
 
     /*
@@ -766,7 +766,7 @@ class BwTree {
      *               WrappedKeyEqualityChecker and ValueEqualityChecker
      */
     KeyValuePairEqualityChecker(BwTree *p_tree_p) :
-      wrapped_key_eq_obj_p{&p_tree_p->wrapped_key_eq_obj},
+      key_eq_obj_p{&p_tree_p->key_eq_obj},
       value_eq_obj_p{&p_tree_p->value_eq_obj}
     {}
 
@@ -779,7 +779,7 @@ class BwTree {
      */
     inline bool operator()(const KeyValuePair &kvp1,
                            const KeyValuePair &kvp2) const {
-      return ((*wrapped_key_eq_obj_p)(kvp1.first, kvp2.first)) && \
+      return ((*key_eq_obj_p)(kvp1.first, kvp2.first)) && \
              ((*value_eq_obj_p)(kvp1.second, kvp2.second));
     }
   };
@@ -791,7 +791,7 @@ class BwTree {
    */
   class KeyValuePairHashFunc {
    public:
-    const WrappedKeyHashFunc *wrapped_key_hash_obj_p;
+    const KeyHashFunc *key_hash_obj_p;
     const ValueHashFunc *value_hash_obj_p;
 
     /*
@@ -803,7 +803,7 @@ class BwTree {
      * Constructor - Initialize a key value pair hash function
      */
     KeyValuePairHashFunc(BwTree *p_tree_p) :
-      wrapped_key_hash_obj_p{&p_tree_p->wrapped_key_hash_obj},
+      key_hash_obj_p{&p_tree_p->key_hash_obj},
       value_hash_obj_p{&p_tree_p->value_hash_obj}
     {}
 
@@ -815,7 +815,7 @@ class BwTree {
      * single hash value
      */
     inline size_t operator()(const KeyValuePair &kvp) const {
-      return ((*wrapped_key_hash_obj_p)(kvp.first)) ^ \
+      return ((*key_hash_obj_p)(kvp.first)) ^ \
              ((*value_hash_obj_p)(kvp.second));
     }
   };
@@ -1304,7 +1304,7 @@ class BwTree {
     /*
      * Constructor
      */
-    LeafInsertNode(const KeyType &p_insert_key,
+    LeafInsertNode(const RawKeyType &p_insert_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafInsertType,
@@ -1336,7 +1336,7 @@ class BwTree {
     /*
      * Constructor
      */
-    LeafDeleteNode(const KeyType &p_delete_key,
+    LeafDeleteNode(const RawKeyType &p_delete_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafDeleteType,
@@ -1360,14 +1360,14 @@ class BwTree {
    */
   class LeafUpdateNode : public DeltaNode {
    public:
-    KeyType update_key;
+    RawKeyType update_key;
     ValueType old_value;
     ValueType new_value;
 
     /*
      * Constructor
      */
-    LeafUpdateNode(const KeyType &p_update_key,
+    LeafUpdateNode(const RawKeyType &p_update_key,
                    const ValueType &p_old_value,
                    const ValueType &p_new_value,
                    const BaseNode *p_child_node_p) :
@@ -3021,18 +3021,18 @@ class BwTree {
           auto copy_start_it = \
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
-                             std::make_pair(search_key, ValueType{}),
+                             std::make_pair(search_key.key, ValueType{}),
                              // We know keys will not be +/-Inf so simply use
                              // raw key comparator
                              [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                                return this->key_cmp_obj(kvp1.first.key, kvp2.first.key);
+                                return this->key_cmp_obj(kvp1.first, kvp2.first);
                              });
 
           // If there is something to copy
           // NOTE: Since we know on leaf level data items will not have
           // +/-Inf keys, we could safely use raw key equality checker
           while((copy_start_it != leaf_node_p->data_list.end()) && \
-                (key_eq_obj(search_key.key, copy_start_it->first.key))) {
+                (key_eq_obj(search_key.key, copy_start_it->first))) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
             // the key value pair
@@ -3057,7 +3057,7 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
+          if(key_eq_obj(search_key.key, insert_node_p->inserted_item.first)) {
             if(deleted_set.Exists(insert_node_p->inserted_item.second) == false) {
               // We must do this, since inserted set does not detect for
               // duplication, and if the value has already been in present set
@@ -3078,7 +3078,7 @@ class BwTree {
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, delete_node_p->deleted_item.first)) {
+          if(key_eq_obj(search_key.key, delete_node_p->deleted_item.first)) {
             if(present_set.Exists(delete_node_p->deleted_item.second) == false) {
               deleted_set.Insert(delete_node_p->deleted_item.second);
             }
@@ -3094,7 +3094,7 @@ class BwTree {
           // Internally we treat update node as two operations
           // but they must be packed together to make an atomic step
 
-          if(KeyCmpEqual(search_key, update_node_p->update_key)) {
+          if(key_eq_obj(search_key.key, update_node_p->update_key)) {
             if(deleted_set.Exists(update_node_p->new_value) == false) {
               present_set.Insert(update_node_p->new_value);
 
@@ -3250,12 +3250,14 @@ class BwTree {
           auto scan_start_it = \
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
-                             std::make_pair(search_key, ValueType{}),
-                             key_value_pair_cmp_obj);
+                             std::make_pair(search_key.key, ValueType{}),
+                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+                               return this->key_cmp_obj(kvp1.first, kvp2.first);
+                             });
 
           // Search all values with the search key
           while((scan_start_it != leaf_node_p->data_list.end()) && \
-                (KeyCmpEqual(scan_start_it->first, search_key))) {
+                (key_eq_obj(scan_start_it->first, search_key.key))) {
             // If there is a value matching the search value then return true
             // We do not need to check any delete set here, since if the
             // value has been deleted earlier then this function would
@@ -3273,7 +3275,7 @@ class BwTree {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->inserted_item.first)) {
+          if(key_eq_obj(search_key.key, insert_node_p->inserted_item.first)) {
             if(ValueCmpEqual(insert_node_p->inserted_item.second,
                              search_value) == true) {
               return true;
@@ -3289,7 +3291,7 @@ class BwTree {
             static_cast<const LeafDeleteNode *>(node_p);
 
           // If the value was deleted then return false
-          if(KeyCmpEqual(search_key, delete_node_p->deleted_item.first)) {
+          if(key_eq_obj(search_key.key, delete_node_p->deleted_item.first)) {
             if(ValueCmpEqual(delete_node_p->deleted_item.second,
                              search_value) == true) {
               return false;
@@ -3306,7 +3308,7 @@ class BwTree {
 
           // Internally we treat update node as two operations
           // but they must be packed together to make an atomic step
-          if(KeyCmpEqual(search_key, update_node_p->update_key)) {
+          if(key_eq_obj(search_key.key, update_node_p->update_key)) {
             if(ValueCmpEqual(update_node_p->new_value, search_value) == true) {
               return true;
             }
@@ -3430,16 +3432,32 @@ class BwTree {
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
-          // This points copy_end_it to the first element >= current high key
-          // If no such element exists then copy_end_it is end() iterator
-          // which is also consistent behavior
-          auto copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
-                                              leaf_node_p->data_list.end(),
-                                              // It only compares key so we
-                                              // just use a default value
-                                              std::make_pair(metadata.ubound,
-                                                             ValueType{}),
-                                              key_value_pair_cmp_obj);
+          typename decltype(leaf_node_p->data_list)::const_iterator copy_end_it;
+          
+          // If the high key is +Inf then we do not need to (and could not)
+          // compare it with the RawKeyType stored inside LeafNode
+          // instead we know the copy end iterator is just the end iterator
+          // of the data list
+          if(metadata.ubound.IsPosInf() == true) {
+            copy_end_it = leaf_node_p->data_list.end();
+          } else {
+            // This must be true otherwise we could not compare keys directly
+            assert(metadata.ubound.type == ExtendedKeyValue::RawKey);
+            
+            // This points copy_end_it to the first element >= current high key
+            // If no such element exists then copy_end_it is end() iterator
+            // which is also consistent behavior
+            copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
+                                           leaf_node_p->data_list.end(),
+                                           // It only compares key so we
+                                           // just use a default value
+                                           std::make_pair(metadata.ubound.key,
+                                                          ValueType{}),
+                                           [this](const KeyValuePair &kvp1,
+                                                  const KeyValuePair &kvp2) {
+                                             return this->key_cmp_obj(kvp1.first, kvp2.first);
+                                           });
+          }
 
           // If data list is empty then copy_end_it == begin() iterator
           // And this happens if the leaf page was initially empty
@@ -5583,7 +5601,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p};
+        new LeafInsertNode{key.key, value, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -5697,29 +5715,14 @@ before_switch:
       const BaseNode *node_p = snapshot_p->node_p;
       NodeID node_id = snapshot_p->node_id;
 
-      // If node_p is a delta node then we have to use its
-      // delta value
-      int depth = 1;
-
-      if(node_p->IsDeltaNode() == true) {
-        const DeltaNode *delta_node_p = \
-          static_cast<const DeltaNode *>(node_p);
-
-        depth = delta_node_p->depth + 1;
-      }
-
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, depth, node_p};
+        new LeafInsertNode{key.key, value, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
                                       node_p);
       if(ret == true) {
         bwt_printf("Leaf Insert delta (cond) CAS succeed\n");
-
-        // This will actually not be used anymore, so maybe
-        // could save this assignment
-        snapshot_p->SwitchPhysicalPointer(insert_node_p);
 
         // If install is a success then just break from the loop
         // and return
@@ -5787,7 +5790,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p};
+        new LeafDeleteNode{key.key, value, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
