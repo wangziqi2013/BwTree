@@ -711,44 +711,6 @@ class BwTree {
   ///////////////////////////////////////////////////////////////////
 
   /*
-   * class KeyValuePairComparator - Compares key-value pair for < relation
-   *
-   * Only keys are compared since we only use this in std::lower_bound()
-   * to find the lower bound given a key and an empty value
-   */
-  class KeyValuePairComparator {
-   public:
-    const KeyComparator *key_cmp_obj_p;
-
-    /*
-     * Default constructor - deleted
-     */
-    KeyValuePairComparator() = delete;
-
-    /*
-     * Constructor - Initialize a key-value pair comparator using
-     *               wrapped key comparator and value comparator
-     */
-    KeyValuePairComparator(BwTree *p_tree_p) :
-      key_cmp_obj_p{&p_tree_p->key_cmp_obj}
-    {}
-
-    /*
-     * operator() - Compares whether a key value pair is less than another
-     *
-     * NOTE: We only compare keys, since all pairs with the same key are
-     * considered as equal when searching in an array of key-value
-     * pairs. We usually could not determine an order of the values
-     * if value is not a primitive type
-     */
-    inline bool operator()(const KeyValuePair &kvp1,
-                           const KeyValuePair &kvp2) const {
-      return (*key_cmp_obj_p)(kvp1.first, kvp2.first);
-    }
-  };
-
-
-  /*
    * class KeyValuePairEqualityChecker - Checks KeyValuePair equality
    */
   class KeyValuePairEqualityChecker {
