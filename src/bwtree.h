@@ -310,7 +310,7 @@ class BwTree {
  public:
 #endif
   // KeyType-NodeID pair
-  using KeyNodeIDPair = std::pair<KeyType, NodeID>;
+  using KeyNodeIDPair = std::pair<RawKeyType, NodeID>;
   using KeyNodeIDPairSet = std::unordered_set<KeyNodeIDPair,
                                               KeyNodeIDPairHashFunc,
                                               KeyNodeIDPairEqualityChecker>;
@@ -615,7 +615,7 @@ class BwTree {
    */
   class KeyNodeIDPairComparator {
    public:
-    const WrappedKeyComparator *wrapped_key_cmp_obj_p;
+    const KeyComparator *key_cmp_obj_p;
 
     /*
      * Default constructor - deleted
@@ -627,7 +627,7 @@ class BwTree {
      *               wrapped key comparator
      */
     KeyNodeIDPairComparator(BwTree *p_tree_p) :
-      wrapped_key_cmp_obj_p{&p_tree_p->wrapped_key_cmp_obj}
+      key_cmp_obj_p{&p_tree_p->key_cmp_obj}
     {}
 
     /*
@@ -639,7 +639,7 @@ class BwTree {
     inline bool operator()(const KeyNodeIDPair &knp1,
                            const KeyNodeIDPair &knp2) const {
       // First compare keys for relation
-      return (*wrapped_key_cmp_obj_p)(knp1.first, knp2.first);
+      return (*key_cmp_obj_p)(knp1.first, knp2.first);
     }
   };
 
@@ -652,7 +652,7 @@ class BwTree {
    */
   class KeyNodeIDPairEqualityChecker {
    public:
-    const WrappedKeyEqualityChecker *wrapped_key_eq_obj_p;
+    const KeyEqualityChecker *wrapped_key_eq_obj_p;
 
     /*
      * Default constructor - deleted
@@ -663,7 +663,7 @@ class BwTree {
      * Constructor - Initialize a key node pair eq checker
      */
     KeyNodeIDPairEqualityChecker(BwTree *p_tree_p) :
-      wrapped_key_eq_obj_p{&p_tree_p->wrapped_key_eq_obj}
+      key_eq_obj_p{&p_tree_p->key_eq_obj}
     {}
 
     /*
@@ -671,7 +671,7 @@ class BwTree {
      */
     inline bool operator()(const KeyNodeIDPair &knp1,
                            const KeyNodeIDPair &knp2) const {
-      return (*wrapped_key_eq_obj_p)(knp1.first, knp2.first);
+      return (*key_eq_obj_p)(knp1.first, knp2.first);
     }
   };
 
@@ -680,7 +680,7 @@ class BwTree {
    */
   class KeyNodeIDPairHashFunc {
    public:
-    const WrappedKeyHashFunc *wrapped_key_hash_obj_p;
+    const KeyHashFunc *wrapped_key_hash_obj_p;
 
     /*
      * Default constructor - deleted
@@ -691,7 +691,7 @@ class BwTree {
      * Constructor - Initialize a key value pair hash function
      */
     KeyNodeIDPairHashFunc(BwTree *p_tree_p) :
-      wrapped_key_hash_obj_p{&p_tree_p->wrapped_key_hash_obj}
+      key_hash_obj_p{&p_tree_p->wrapped_key_hash_obj}
     {}
 
     /*
@@ -702,12 +702,12 @@ class BwTree {
      * single hash value
      */
     inline size_t operator()(const KeyNodeIDPair &knp) const {
-      return (*wrapped_key_hash_obj_p)(knp.first);
+      return (*key_hash_obj_p)(knp.first);
     }
   };
 
   ///////////////////////////////////////////////////////////////////
-  // Comparator, equality checker and hasher for key-value pair
+  // Equality checker and hasher for key-value pair
   ///////////////////////////////////////////////////////////////////
 
   /*
@@ -2521,11 +2521,22 @@ class BwTree {
     // which is assumed to be a constant associated with a NodeID
     assert(KeyCmpGreaterEqual(search_key, inner_node_p->metadata.lbound));
 
+    // If the separator only has 1 item, as long as the range checking
+    // does not fail (see assertions above) then we know the obly
+    // sep item must be the one we are looking for
+    if(sep_list_p->size() == 1UL) {
+      return (*sep_list_p)[0].second;
+    }
+
+    // After this we know the size of sep_list >= 2
+
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(sep_list_p->begin(),
+    auto it = std::upper_bound(sep_list_p->begin() + 1,
                                sep_list_p->end(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj);
+                               [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
+                                 return this->key_cmp_obj(knp1.first.key, knp2.first.key);
+                               });
 
     // This is impossible since if the first element greater than key
     // then key < low key which is a violation of the invariant that search key
