@@ -917,7 +917,7 @@ class BwTree {
     /*
      * GetHighKeyPair() - Returns the pointer to high key node id pair
      */
-    inline KeyNodeIDPair *GetHighKeyPair() const {
+    inline KeyNodeIDPair &GetHighKeyPair() const {
       return metadata.high_key_p;
     }
 
@@ -926,7 +926,7 @@ class BwTree {
      *
      * The return value is nullptr for LeafNode and its delta chain
      */
-    inline KeyNodeIDPair *GetLowKeyPair() const {
+    inline KeyNodeIDPair &GetLowKeyPair() const {
       return metadata.low_key_p;
     }
 
@@ -1341,16 +1341,14 @@ class BwTree {
     /*
      * Constructor
      */
-    InnerNode(const KeyType &p_ubound,
-              NodeID p_next_node_id,
-              int p_item_count) :
+    InnerNode(const KeyNodeIDPair &p_high_key_p, int p_item_count) :
       BaseNode{NodeType::InnerType,
                nullptr,        // Low key should be initialized after reserve()
-               &high_key,
+               &high_key,      // High key is stored inside InnerNode
                0,              // Depth of InnerNode defaults to 0
                p_item_count},  // We use this to reserve storage
       sep_list{},              // This will be initialized later
-      high_key{p_ubound, p_next_node_id} {
+      high_key{p_high_key_p} {
       // First reserve that much space (it should not be changed once set)
       // The first element is the low key, and we maintain a pointer to it
       // So it is important that the vector does not reallocate its internal
@@ -1395,8 +1393,7 @@ class BwTree {
       // This sets metddata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        new InnerNode{this->GetHighKey(),      // The split sibling inherits
-                      this->GetNextNodeID(),   // high key and next node ID
+        new InnerNode{this->GetHighKeyPair(), // It will be copied into new node
                       static_cast<int>(std::distance(copy_start_it,
                                                      copy_end_it))};
 
@@ -2542,16 +2539,16 @@ class BwTree {
     const KeyNodeIDPair *deleted_set_data_p[delta_record_num];
 
     // The effect of this function is a consolidation into inner node
-    InnerNode *inner_node_p = new InnerNode{node_p->metadata.lbound,
-                                            node_p->metadata.ubound,
-                                            node_p->metadata.next_node_id,
+    InnerNode *inner_node_p = new InnerNode{node_p->GetHighKeyPair(),
                                             node_p->metadata.item_count};
 
     // Save some typing
     auto sep_list_p = &inner_node_p->sep_list;
-
-    // Use item count recorded inside node metadata to reserve memory block
-    sep_list_p->reserve(node_p->metadata.item_count);
+    
+    // The first element is always the low key
+    // In the recursive call below we should take care not to insert the low
+    // key again (it is always the first element in data list)
+    sep_list_p->push_back(node_p->GetLowKeyPair());
 
     KeyNodeIDPairBloomFilter present_set{present_set_data_p,
                                          key_node_id_pair_eq_obj,
@@ -2564,19 +2561,23 @@ class BwTree {
     // This will fill in two sets with values present in the inner node
     // and values deleted
     CollectAllSepsOnInnerRecursive(node_p,
-                                   node_p->metadata,
+                                   node_p,
                                    present_set,
                                    deleted_set,
                                    inner_node_p);
 
     // Since consolidation would not change item count they must be equal
-    assert(static_cast<int>(sep_list_p->size()) == node_p->metadata.item_count);
+    assert(static_cast<int>(sep_list_p->size()) == node_p->GetItemCount());
 
     // Sort the key-NodeId array using std::sort and the comparison object
     // we defined
-    std::sort(sep_list_p->begin(),
+    // NOTE: Since the low key might be -Inf, we do not have to
+    // sort the first element - just leave it there
+    std::sort(sep_list_p->begin() + 1,
               sep_list_p->end(),
-              key_node_id_pair_cmp_obj);
+              [this](const KeyNodeIDPair &kvp1, const KeyNodeIDPair &kvp2) {
+                return this->key_cmp_obj(kvp1.first, kvp2.first);
+              });
 
     return inner_node_p;
   }
@@ -2589,10 +2590,14 @@ class BwTree {
    */
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
-                                 const NodeMetaData &metadata,
+                                 const BaseNode * const top_node_p,
                                  KeyNodeIDPairBloomFilter &present_set,
                                  KeyNodeIDPairBloomFilter &deleted_set,
                                  InnerNode *new_inner_node_p) const {
+    // These two are used to compute the low key and high key
+    const KeyNodeIDPair &high_key_pair = top_node_p->GetHighKeyPair();
+    const KeyNodeIDPair &low_key_pair = top_node_p->GetLowKeyPair();
+
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -2601,24 +2606,44 @@ class BwTree {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
-          // This search for the first key >= high key of the current node
-          // being consolidated
-          // This is exactly where we should stop copying
-          // The return value might be end() iterator, but it is also
-          // consistent
-          auto copy_end_it = std::lower_bound(inner_node_p->sep_list.begin(),
-                                              inner_node_p->sep_list.end(),
-                                              std::make_pair(metadata.ubound,
-                                                             INVALID_NODE_ID),
-                                              key_node_id_pair_cmp_obj);
-          // This could not be true since if this happens then all elements
-          // in the sep list of inner node >= high key
-          // which also implies low key >= high key
-          assert(copy_end_it != inner_node_p->sep_list.begin());
+          // These two will be set according to the high key and
+          // low key
+          typename std::vector<KeyNodeIDPair>::const_iterator copy_end_it{};
+          typename std::vector<KeyNodeIDPair>::const_iterator copy_start_it{};
 
-          for(auto it = inner_node_p->sep_list.begin();
-              it != copy_end_it;
-              it++) {
+          if(high_key_pair.second == INVALID_NODE_ID) {
+            copy_end_it = inner_node_p->sep_list.end();
+          } else {
+            // This search for the first key >= high key of the current node
+            // being consolidated
+            // This is exactly where we should stop copying
+            // The return value might be end() iterator, but it is also
+            // consistent
+            auto copy_end_it = \
+              std::lower_bound(inner_node_p->sep_list.begin() + 1,
+                               inner_node_p->sep_list.end(),
+                               high_key_pair,     // This contains the high key
+                               [this](const KeyNodeIDPair &kvp1,
+                                      const KeyNodeIDPair &kvp2) {
+                                 return this->key_cmp_obj(kvp1.first, kvp2.first);
+                               });
+          }
+          
+          // Since we want to access its first element
+          assert(static_cast<int>(inner_node_p->sep_list.size()) > 0);
+          
+          // If the first element in the sep list equals the low key pair's
+          // NodeID then we are at the leftmost node of the merge tree
+          // and we ignore the leftmost sep (since it could be -Inf)
+          // For other nodes, the leftmost item inside sep list has a valid
+          // key and could thus be pushed directly
+          if(inner_node_p->sep_list[0].second == low_key_pair.second) {
+            copy_start_it = inner_node_p->sep_list.begin() + 1;
+          } else {
+            copy_start_it = inner_node_p->sep_list.begin();
+          }
+
+          for(auto it = copy_start_it;it != copy_end_it;it++) {
             if(deleted_set.Exists(*it) == false) {
               if(present_set.Exists(*it) == false) {
                 new_inner_node_p->sep_list.push_back(*it);
@@ -2640,8 +2665,10 @@ class BwTree {
 
           // Only consider insertion if it is inside the range of
           // current node
-          if(KeyCmpLess(insert_node_p->insert_item.first,
-                        metadata.ubound) == true) {
+          // Also if the high key is INVALID NODE ID then we know it must be
+          // applicable
+          if((high_key_pair.second == INVALID_NODE_ID) ||
+             (KeyCmpLess(insert_node_p->insert_item.first, high_key_pair.first))) {
             if(deleted_set.Exists(insert_node_p->insert_item) == false) {
               if(present_set.Exists(insert_node_p->insert_item) == false) {
                 present_set.Insert(insert_node_p->insert_item);
@@ -2660,8 +2687,8 @@ class BwTree {
           const InnerDeleteNode *delete_node_p = \
             static_cast<const InnerDeleteNode *>(node_p);
 
-          if(KeyCmpLess(delete_node_p->delete_item.first,
-                        metadata.ubound) == true) {
+          if((high_key_pair.second == INVALID_NODE_ID) ||
+             (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first))) {
             if(present_set.Exists(delete_node_p->delete_item) == false) {
               deleted_set.Insert(delete_node_p->delete_item);
             }
@@ -2686,13 +2713,13 @@ class BwTree {
           // constant
 
           CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
-                                         metadata,
+                                         top_node_p,
                                          present_set,
                                          deleted_set,
                                          new_inner_node_p);
 
           CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
-                                         metadata,
+                                         top_node_p,
                                          present_set,
                                          deleted_set,
                                          new_inner_node_p);
