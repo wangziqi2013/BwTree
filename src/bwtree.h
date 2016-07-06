@@ -1335,11 +1335,13 @@ class BwTree {
     /*
      * Constructor
      */
-    InnerNode(const KeyNodeIDPair &p_high_key_p, int p_item_count) :
+    InnerNode(const KeyNodeIDPair &p_high_key_p,
+              int p_item_count,
+              int p_depth = 0) :
       BaseNode{NodeType::InnerType,
                nullptr,        // Low key should be initialized after reserve()
                &high_key,      // High key is stored inside InnerNode
-               0,              // Depth of InnerNode defaults to 0
+               p_depth,        // Depth of InnerNode defaults to 0
                p_item_count},  // We use this to reserve storage
       sep_list{},              // This will be initialized later
       high_key{p_high_key_p} {
@@ -2269,6 +2271,10 @@ class BwTree {
     assert(false);
     return false;
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Data Storage Core
+  ///////////////////////////////////////////////////////////////////
 
   /*
    * LocateSeparatorByKey() - Locate the child node for a key
@@ -2276,12 +2282,8 @@ class BwTree {
    * This functions works with any non-empty inner nodes. However
    * it fails assertion with empty inner node
    *
-   * NOTE: This function takes a pointer that points to a new high key
-   * if we have met a split delta node before reaching the base node.
-   * The new high key is used to test against the search key
-   *
-   * NOTE 2: This function will hit assertion failure if the key
-   * range is not correct OR the node ID is invalid
+   * NOTE: This function ignores the first element in the sep list
+   * since even if we know the low key of the first element
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
                                      const InnerNode *inner_node_p) {
@@ -2520,8 +2522,14 @@ class BwTree {
    *
    * This function returns an inner node with all Key-NodeID pairs
    * sorted by the key order
+   *
+   * NOTE: This function could take an optional depth argument indicating the
+   * depth of the newly constructed InnerNode. This is majorly used by other
+   * proceures where parent node is consolidated and scanned in order to find
+   * a certain key.
    */
-  inline InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p) {
+  inline InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
+                                          int p_depth = 0) {
 
     // Note that in the recursive call node_p might change
     // but we should not change the metadata
@@ -2536,7 +2544,8 @@ class BwTree {
 
     // The effect of this function is a consolidation into inner node
     InnerNode *inner_node_p = new InnerNode{node_p->GetHighKeyPair(),
-                                            node_p->metadata.item_count};
+                                            node_p->metadata.item_count,
+                                            p_depth};
 
     // Save some typing
     auto sep_list_p = &inner_node_p->sep_list;
@@ -3428,6 +3437,10 @@ class BwTree {
 
     return;
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Control Core
+  ///////////////////////////////////////////////////////////////////
 
   /*
    * GetLatestNodeSnapshot() - Return a pointer to the most recent snapshot
@@ -3461,6 +3474,23 @@ class BwTree {
     // This is the address of the parent node
     return &context_p->parent_snapshot;
   }
+  
+  /*
+   * IsOnLeftMostChild() - Returns true if latest node snapshot represents
+   *                       the leftmost child in its parent
+   *
+   * This is done by checking whether the NodeID of the current node is
+   * the same as the NodeID associated with the low key of its parent node
+   *
+   * NOTE: This function could only be called on a non-root node
+   * since root node does not have any parent node
+   */
+  inline bool IsOnLeftMostChild(Context *context_p) {
+    assert(context_p->current_level >= 1);
+    
+    return GetLatestParentNodeSnapshot(context_p)->GetLowKeyNodeID() == \
+           GetLatestNodeSnapshot(context_p)->node_id;
+  }
 
   /*
    * JumpToLeftSibling() - Jump to the left sibling given a node
@@ -3493,10 +3523,21 @@ class BwTree {
 
     // Check currently we are on a remove node
     assert(snapshot_p->node_p->IsRemoveNode());
+    
+    // This is not necessarily true. e.g. if the parent node was merged into
+    // its left sibling before we take the snapshot of its previou left child
+    // then this no longer holds
+    if(IsOnLeftMostChild(context_p)) {
+      bwt_printf("Observed a remove node on left most child.\n"
+                 "  Parent node must have been merged. ABORT\n");
 
-    // This is the low key of current removed node. Also
-    // the low key of the separator-ID pair
-    const KeyType *removed_lbound_p = &snapshot_p->node_p->metadata.lbound;
+      context_p->abort_flag = true;
+      
+      return;
+    }
+    
+    // After here we know we are not on a left most child of the parent
+    // InnerNode, and thus the low key is a valid key
 
     // We use this to test whether we have found the real
     // left sibling whose next node id equals this one
@@ -3516,11 +3557,9 @@ class BwTree {
     // If the parent node is not inner node (i.e. has delta chain)
     // then consolidate it to get an inner node
     if(parent_snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = CollectAllSepsOnInner(parent_snapshot_p);
-
-      // Must adjust depth
-      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
-        parent_snapshot_p->node_p->metadata.depth + 1;
+      inner_node_p = \
+        CollectAllSepsOnInner(parent_snapshot_p,
+                              parent_snapshot_p->node_p->GetDepth() + 1);
 
       const BaseNode *old_node_p = parent_snapshot_p->node_p;
 
@@ -3544,26 +3583,21 @@ class BwTree {
     }
 
     // This returns the first iterator >= current low key
-    // And we decrease
-    auto it = std::lower_bound(inner_node_p->sep_list.begin(),
+    // Note that we start searching on the second element
+    auto it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
                                inner_node_p->sep_list.end(),
-                               // We use INVALID_NODE_ID since the comp obj does
-                               // not compare node id field
-                               std::make_pair(*removed_lbound_p,
-                                              INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj);
+                               // Search using the low key pair of the current
+                               // removed node. Since we know it is not
+                               // the leftmost node, the high key should be
+                               // a valid key
+                               snapshot_p->node_p->GetLowKeyPair(),
+                               [this](const KeyNodeIDPair &knp1,
+                                      const KeyNodeIDPair &knp2) {
+                                 return this->key_cmp_obj(knp1.first, knp2.first);
+                               });
 
-    if(it == inner_node_p->sep_list.begin()) {
-      bwt_printf("Current parent snapshot indicates we"
-                 " are on leftmost child\n");
-      bwt_printf("    But actually seen RemoveDelta."
-                 " Parent must have merged. ABORT\n");
-
-      context_p->abort_flag = true;
-
-      return;
-    }
-
+    // it points to the current node (must be an exact match),
+    // so it-- points to its possible left sibling
     it--;
 
     // Note that after this point the inner node is still being used since
@@ -3573,83 +3607,35 @@ class BwTree {
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
 
-    while(1) {
-      // It is impossible that the current node is merged
-      // and its next node ID is INVALID_NODE_ID
-      // In this case we would catch that by the range check
-      if(left_sibling_id == INVALID_NODE_ID) {
-        bwt_printf("Have reached the end of current level. "
-                   "But it should be caught by range check\n");
 
-        assert(false);
-      }
+    // This might incur recursive update
+    // We need to pass in the low key of left sibling node
+    JumpToNodeID(left_sibling_id, context_p);
 
-      // This might incur recursive update
-      // We need to pass in the low key of left sibling node
-      JumpToNodeID(left_sibling_id, context_p);
+    if(context_p->abort_flag == true) {
+      bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n")
 
-      if(context_p->abort_flag == true) {
-        bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n")
+      return;
+    }
 
-        return;
-      }
+    // Read the potentially redirected snapshot
+    // (but do not pop it - so we directly return)
+    snapshot_p = GetLatestNodeSnapshot(context_p);
 
-      // Read the potentially redirected snapshot
-      // (but do not pop it - so we directly return)
-      snapshot_p = GetLatestNodeSnapshot(context_p);
-
-      // Get high key and left sibling NodeID
-      const KeyType *left_ubound_p = &snapshot_p->node_p->metadata.ubound;
-
-      // This will be used in next iteration
-      // NOTE: The variable name is a little bit confusing, because
-      // this variable was created outside of the loop
-      left_sibling_id = snapshot_p->node_p->metadata.next_node_id;
-
-      // If the high key of the left sibling equals the low key
-      // then we know it is the real left sibling
-      // Or the node has already been consolidated, then the range
-      // of the node would cover current low key
-      if(KeyCmpEqual(*left_ubound_p, *removed_lbound_p)) {
-        bwt_printf("Find a exact match of low/high key\n");
-
-        // We need to take care that high key is not sufficient for identifying
-        // the correct left sibling
-        if(left_sibling_id == removed_node_id) {
-          bwt_printf("Find real left sibling, next id == removed id\n");
-
-          // Quit the loop. Do not return
-          break;
-        } else {
-          bwt_printf("key match but next node ID does not match. ABORT\n");
-          bwt_printf("    (Maybe it has been merged and then splited?)\n");
-
-          // If key match but next node ID does not match then just abort
-          // since it is the case that left sibling has already been merged
-          // with the removed node, and then it splits
-          // We could not handle such case, so just abort
-          context_p->abort_flag = true;
-
-          // Return and propagate abort information
-          return;
-        }
-      } else if(KeyCmpGreater(*left_ubound_p, *removed_lbound_p)) {
-        bwt_printf("The range of left sibling covers current node\n");
-        bwt_printf("    Don't know for sure what happened\n");
-
-        // We also do not know what happened since it could be possible
-        // that the removed node is merged, consolidated, and then splited
-        // on a split key greater than the previous merge key
-        context_p->abort_flag = true;
-
-        return;
-      } else {
-        // We know it will never be invalid node id since ubound_p < lbound_p
-        // which implies the high key is not +Inf, so there are other nodes to
-        // its right side
-        assert(left_sibling_id != INVALID_NODE_ID);
-      }
-    } // while(1)
+    // If the next node ID stored inside the "left sibling" does
+    // not equal the removed node, then we know we have got to the
+    // wrong left sibling, maybe because the parent node has changed
+    // or because its left sibling has splited
+    // In the latter case simply aborting seems to be a bad idea
+    // but if it is the second case then aborting is beneficial
+    if(removed_node_id != snapshot_p->node_p->GetNextNodeID()) {
+      bwt_printf("Left sibling's next node ID does not match removed NodeID."
+                 " ABORT\n");
+                 
+      context_p->abort_flag = true;
+      
+      return;
+    }
 
     return;
   }
