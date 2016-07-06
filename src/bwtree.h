@@ -1352,7 +1352,8 @@ class BwTree {
       // Then direct high key and low key pointer to the first and last element
       // NOTE: Once the vector reallocates its memory, this pointer is
       // invalidated. So we should avoid that
-      SetLowKeyPair(&sep_list[0]);
+      // NOTE 2: Should use "this" pointer to call the low key pair
+      this->SetLowKeyPair(&sep_list[0]);
       
       return;
     }
@@ -3160,6 +3161,123 @@ class BwTree {
     assert(false);
     return false;
   }
+  
+  /*
+   * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
+   *                            leaf node
+   *
+   * This function is the non-recursive wrapper of the resursive core function.
+   * It calls the recursive version to collect all base leaf nodes, and then
+   * it replays delta records on top of them.
+   */
+  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+    assert(snapshot_p->IsLeaf() == true);
+
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    // This is the number of delta records inside the logical node
+    // including merged delta chains
+    int delta_change_num = node_p->GetDepth();
+
+    // We only need to keep those on the delta chian into a set
+    // and those in the data list of leaf page do not need to be
+    // put in the set
+    const KeyValuePair *present_set_data_p[delta_change_num];
+    const KeyValuePair *deleted_set_data_p[delta_change_num];
+
+    LeafNode *leaf_node_p = new LeafNode{node_p->GetHighKeyPair(),
+                                         // The item count of the consolidated
+                                         // leaf node is the set of items still
+                                         // present in the node
+                                         node_p->GetItemCount()};
+
+    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
+
+    // Reserve that much space for items to avoid allocation in the future
+    // Since the iterator from unordered_set is not a RamdomAccessIterator
+    // std::vector could not decide the size from these two iterators
+    data_list_p->reserve(node_p->GetItemCount());
+
+    // These two are used to replay the log
+    // NOTE: We use the threshold for splitting leaf node
+    // as the number of bucket
+    KeyValuePairBloomFilter present_set{present_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+    KeyValuePairBloomFilter deleted_set{deleted_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+
+    // We collect all valid values in present_set
+    // and deleted_set is just for bookkeeping
+    CollectAllValuesOnLeafRecursive(node_p,
+                                    node_p,
+                                    present_set,
+                                    deleted_set,
+                                    leaf_node_p);
+
+    // Item count would not change during consolidation
+    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
+           node_p->GetItemCount());
+
+    // This is the key value pair comparator object
+    auto key_value_pair_cmp_obj = \
+      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+        return this->key_cmp_obj(kvp1.first, kvp2.first);
+      };
+
+    // Sort using only key value
+    // All items with the same key are grouped together, and their
+    // orderes are not defined (we do not use unstable sort)
+    std::sort(data_list_p->begin(),
+              data_list_p->end(),
+              key_value_pair_cmp_obj);
+
+    // We reserve that many space for storing the prefix sum
+    // Note that if the node is going to be consolidated then this will
+    // definitely cause reallocation
+    leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
+
+    // Next we compute prefix sum of key numbers
+    // We compute that by finding the upper bound of the current key
+    // and compute the distance, and switch the current key to the
+    // current upper bound, until we have reached end() iterator
+
+    auto range_begin_it = data_list_p->begin();
+    auto end_it = data_list_p->end();
+
+    // This is used to compute prefix sum of distinct elements
+    int prefix_sum = 0;
+
+    while(range_begin_it != end_it) {
+      // Search for the first item whose key > current key
+      // and their difference is the number of elements
+      auto range_end_it = std::upper_bound(range_begin_it,
+                                           end_it,
+                                           *range_begin_it,
+                                           key_value_pair_cmp_obj);
+
+      // The first element is always 0 since the index starts with 0
+      leaf_node_p->item_prefix_sum.push_back(prefix_sum);
+
+      // The distance should be > 0 otherwise the key is not found
+      // which is impossible because we know the key exists in
+      // the data list
+      int distance = std::distance(range_begin_it, range_end_it);
+      assert(distance > 0);
+
+      // Then increase prefix sum with the length of the range
+      // which is also the distance between the two variables
+      prefix_sum += distance;
+
+      // Start from the end of current range which is the next key
+      // If there is no more elements then std::upper_bound() returns
+      // end() iterator, which would fail while loop testing
+      range_begin_it = range_end_it;
+    }
+
+    return leaf_node_p;
+  }
 
   /*
    * CollectAllValuesOnLeafRecursive() - Collect all values given a
@@ -3200,7 +3318,8 @@ class BwTree {
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
-          typename decltype(leaf_node_p->data_list)::const_iterator copy_end_it{};
+          // We compute end iterator based on the high key
+          typename std::vector<KeyValuePair>::const_iterator copy_end_it{};
 
           // If the high key is +Inf then all items could be copied
           if((high_key_pair.second == INVALID_NODE_ID)) {
@@ -3308,125 +3427,6 @@ class BwTree {
     } // while(1)
 
     return;
-  }
-
-  /*
-   * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
-   *                            leaf node
-   *
-   * This function is the non-recursive wrapper of the resursive core function.
-   * It calls the recursive version to collect all base leaf nodes, and then
-   * it replays delta records on top of them.
-   */
-  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
-    assert(snapshot_p->IsLeaf() == true);
-
-    const BaseNode *node_p = snapshot_p->node_p;
-
-    // This is the number of delta records inside the logical node
-    // including merged delta chains
-    int delta_change_num = node_p->metadata.depth;
-
-    // We only need to keep those on the delta chian into a set
-    // and those in the data list of leaf page do not need to be
-    // put in the set
-    const KeyValuePair *present_set_data_p[delta_change_num];
-    const KeyValuePair *deleted_set_data_p[delta_change_num];
-
-    LeafNode *leaf_node_p = new LeafNode{node_p->metadata.lbound,
-                                         node_p->metadata.ubound,
-                                         node_p->metadata.next_node_id,
-                                         // The item count of the consolidated
-                                         // leaf node is the set of items still
-                                         // present in the node
-                                         node_p->metadata.item_count};
-
-    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
-
-    // Reserve that much space for items to avoid allocation in the future
-    // Since the iterator from unordered_set is not a RamdomAccessIterator
-    // std::vector could not decide the size from these two iterators
-    data_list_p->reserve(node_p->metadata.item_count);
-
-    // These two are used to replay the log
-    // NOTE: We use the threshold for splitting leaf node
-    // as the number of bucket
-    KeyValuePairBloomFilter present_set{present_set_data_p,
-                                        key_value_pair_eq_obj,
-                                        key_value_pair_hash_obj};
-    KeyValuePairBloomFilter deleted_set{deleted_set_data_p,
-                                        key_value_pair_eq_obj,
-                                        key_value_pair_hash_obj};
-
-    // We collect all valid values in present_set
-    // and deleted_set is just for bookkeeping
-    CollectAllValuesOnLeafRecursive(node_p,
-                                    node_p->metadata,
-                                    present_set,
-                                    deleted_set,
-                                    leaf_node_p);
-
-    // Item count would not change during consolidation
-    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
-           node_p->metadata.item_count);
-
-    // This is the key value pair comparator object
-    auto raw_key_value_pair_cmp_obj = \
-      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-        return this->key_cmp_obj(kvp1.first, kvp2.first);
-      };
-
-    // Sort using only key value
-    // All items with the same key are grouped together, and their
-    // orderes are not defined (we do not use unstable sort)
-    std::sort(data_list_p->begin(),
-              data_list_p->end(),
-              raw_key_value_pair_cmp_obj);
-
-    // We reserve that many space for storing the prefix sum
-    // Note that if the node is going to be consolidated then this will
-    // definitely cause reallocation
-    leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
-
-    // Next we compute prefix sum of key numbers
-    // We compute that by finding the upper bound of the current key
-    // and compute the distance, and switch the current key to the
-    // current upper bound, until we have reached end() iterator
-
-    auto range_begin_it = data_list_p->begin();
-    auto end_it = data_list_p->end();
-
-    // This is used to compute prefix sum of distinct elements
-    int prefix_sum = 0;
-
-    while(range_begin_it != end_it) {
-      // Search for the first item whose key > current key
-      // and their difference is the number of elements
-      auto range_end_it = std::upper_bound(range_begin_it,
-                                           end_it,
-                                           *range_begin_it,
-                                           raw_key_value_pair_cmp_obj);
-
-      // The first element is always 0 since the index starts with 0
-      leaf_node_p->item_prefix_sum.push_back(prefix_sum);
-
-      // The distance should be > 0 otherwise the key is not found
-      // which is impossible because we know the key exists in
-      // the data list
-      int distance = std::distance(range_begin_it, range_end_it);
-      assert(distance > 0);
-
-      // Then increase prefix sum with the length of the range
-      // which is also the distance between the two variables
-      prefix_sum += distance;
-
-      // Start from the end of current range which is the next key
-      // If there is no more elements then std::upper_bound() returns
-      // end() iterator, which would fail while loop testing
-      range_begin_it = range_end_it;
-    }
-
-    return leaf_node_p;
   }
 
   /*
