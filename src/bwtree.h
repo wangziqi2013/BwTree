@@ -3182,10 +3182,14 @@ class BwTree {
    */
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
-                                  const NodeMetaData &metadata,
+                                  const BaseNode * const top_node_p,
                                   KeyValuePairBloomFilter &present_set,
                                   KeyValuePairBloomFilter &deleted_set,
                                   LeafNode *new_leaf_node_p) const {
+    // The top node is used to derive high key
+    // NOTE: Low key for Leaf node and its delta chain is nullptr
+    const KeyNodeIDPair &high_key_pair = top_node_p->GetHighKeyPair();
+
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -3196,18 +3200,12 @@ class BwTree {
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
-          typename decltype(leaf_node_p->data_list)::const_iterator copy_end_it;
+          typename decltype(leaf_node_p->data_list)::const_iterator copy_end_it{};
 
-          // If the high key is +Inf then we do not need to (and could not)
-          // compare it with the RawKeyType stored inside LeafNode
-          // instead we know the copy end iterator is just the end iterator
-          // of the data list
-          if(metadata.ubound.IsPosInf() == true) {
+          // If the high key is +Inf then all items could be copied
+          if((high_key_pair.second == INVALID_NODE_ID)) {
             copy_end_it = leaf_node_p->data_list.end();
           } else {
-            // This must be true otherwise we could not compare keys directly
-            assert(metadata.ubound.type == ExtendedKeyValue::RawKey);
-
             // This points copy_end_it to the first element >= current high key
             // If no such element exists then copy_end_it is end() iterator
             // which is also consistent behavior
@@ -3215,8 +3213,8 @@ class BwTree {
                                            leaf_node_p->data_list.end(),
                                            // It only compares key so we
                                            // just use a default value
-                                           std::make_pair(metadata.ubound.key,
-                                                          ValueType{}),
+                                           std::make_pair(high_key_pair.first,
+                                                          ValueType{})
                                            [this](const KeyValuePair &kvp1,
                                                   const KeyValuePair &kvp2) {
                                              return this->key_cmp_obj(kvp1.first, kvp2.first);
@@ -3268,21 +3266,6 @@ class BwTree {
 
           break;
         } // case LeafDeleteType
-        case NodeType::LeafUpdateType: {
-          const LeafUpdateNode *update_node_p = \
-            static_cast<const LeafUpdateNode *>(node_p);
-
-          assert(false);
-
-          KeyValuePair old_item = std::make_pair(update_node_p->update_key,
-                                                 update_node_p->old_value);
-          KeyValuePair new_item = std::make_pair(update_node_p->update_key,
-                                                 update_node_p->new_value);
-
-          node_p = update_node_p->child_node_p;
-
-          break;
-        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: LeafRemoveNode not allowed\n");
 
@@ -3302,13 +3285,13 @@ class BwTree {
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
-                                          metadata,
+                                          top_node_p,
                                           present_set,
                                           deleted_set,
                                           new_leaf_node_p);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
-                                          metadata,
+                                          top_node_p,
                                           present_set,
                                           deleted_set,
                                           new_leaf_node_p);
