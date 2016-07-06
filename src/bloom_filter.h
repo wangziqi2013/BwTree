@@ -96,6 +96,13 @@ class BloomFilter {
   }
   
   /*
+   * GetSize() - Returns the number of elements stored inside the BloomFilter
+   */
+  inline int GetSize() const {
+    return value_count;
+  }
+  
+  /*
    * __InsertScalar() - Insert into the bloom filter using scalar instructions
    *
    * We have unrolled the loop inside this function. This might not be a good
