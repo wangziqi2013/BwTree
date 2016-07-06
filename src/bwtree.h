@@ -1271,18 +1271,12 @@ class BwTree {
    */
   class LeafMergeNode : public DeltaNode {
    public:
-    KeyType merge_key;
+    KeyNodeIDPair delete_item;
 
     // For merge nodes we use actual physical pointer
     // to indicate that the right half is already part
     // of the logical node
     const BaseNode *right_merge_p;
-
-    // This is used to validatet the item we found in the parent node
-    // to check whether the item we found is the item we want to delete
-    // This is purely used for validation, and actually it could also
-    // be fetched from the next node ID field of the left branch
-    NodeID deleted_node_id;
 
     /*
      * Constructor
@@ -1305,9 +1299,8 @@ class BwTree {
                 // sum of items inside both branches
                 p_child_node_p->GetItemCount() + \
                   p_right_merge_p->GetItemCount()},
-      merge_key{p_merge_key},
+      delete_item{p_merge_key, p_deleted_node_id},
       right_merge_p{p_right_merge_p},
-      deleted_node_id{p_deleted_node_id}
     {}
   };
   
@@ -1550,13 +1543,10 @@ class BwTree {
    */
   class InnerMergeNode : public DeltaNode {
    public:
-    KeyType merge_key;
+    // This is exactly the item being deleted in the parent node
+    KeyNodeIDPair delete_item;
 
     const BaseNode *right_merge_p;
-
-    // This is beneficial for us to cross validate IndexTermDelete
-    // and also to recycle NodeID and remove delta
-    NodeID deleted_node_id;
 
     /*
      * Constructor
@@ -1580,9 +1570,8 @@ class BwTree {
                 // branches
                 p_child_node_p->GetItemCount() + \
                   p_right_merge_p->GetItemCount()},
-      merge_key{p_merge_key},
+      delete_item{p_merge_key, p_deleted_node_id},
       right_merge_p{p_right_merge_p},
-      deleted_node_id{p_deleted_node_id}
     {}
   };
 
@@ -4191,15 +4180,8 @@ before_switch:
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
-        // This is stored inside merge delta node.
-        // We need this to either validate the correctness of the
-        // algorithm, or reycle NodeID being deleted (after posting
-        // IndexTermDeleteDelta the NodeID is considered as deleted and
-        // could be sent into EpochManager together with the RemovedNode)
-        NodeID deleted_node_id;
-
-        // This is the key being deleted in parent node, if exists
-        const RawKeyType *merge_key_p;
+        // This is the item being deleted inside parent node
+        const KeyNodeIDPair *delete_item_p;
 
         // Type of the merge delta
         NodeType type = snapshot_p->node_p->GetType();
@@ -4207,15 +4189,12 @@ before_switch:
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(snapshot_p->node_p);
 
-          // Extract merge key and deleted node ID from the merge delta
-          merge_key_p = &merge_node_p->merge_key;
-          deleted_node_id = merge_node_p->deleted_node_id;
+          delete_item_p = &merge_node_p->delete_item;
         } else if(type == NodeType::LeafMergeType) {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(snapshot_p->node_p);
 
-          merge_key_p = &merge_node_p->merge_key;
-          deleted_node_id = merge_node_p->deleted_node_id;
+          delete_item_p = &merge_node_p->delete_item;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n",
                      static_cast<int>(type));
@@ -4227,16 +4206,15 @@ before_switch:
         // Note that for prev key id pair the key does not matter much since
         // we could use the node ID later in the InnerDeleteNode to determine
         // whether we have hit the left most sep or not
-        const KeyNodeIDPair *prev_key_id_pair_p;
-        const KeyNodeIDPair *next_key_id_pair_p;
+        const KeyNodeIDPair *prev_item_p;
+        const KeyNodeIDPair *next_item_p;
 
         // if this is false then we have already deleted the index term
         bool merge_key_found = \
           FindMergePrevNextKey(parent_snapshot_p,
-                               *merge_key_p,
-                               deleted_node_id,
-                               &prev_key_id_pair_p,
-                               &next_key_id_pair_p);
+                               delete_item_p,
+                               &prev_item_p,
+                               &next_item_p);
 
         // If merge key is not found then we know we have already deleted the
         // index term
@@ -4254,9 +4232,9 @@ before_switch:
         // Deleted item; Prev item; next item (NodeID not used for next item)
         // and delta chail child node
         const InnerDeleteNode *delete_node_p = \
-          new InnerDeleteNode{std::make_pair(*merge_key_p, deleted_node_id),
-                              prev_key_id_pair_p,
-                              next_key_id_pair_p,
+          new InnerDeleteNode{*delete_item_p,
+                              *prev_item_p,
+                              *next_item_p,
                               parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
@@ -4418,7 +4396,7 @@ before_switch:
           // If this is false then we know the index term has already
           // been inserted
           bool split_key_absent = \
-            FindSplitNextKey(context_p, split_item_p, &next_item_p);
+            FindSplitNextKey(parent_snapshot_p, split_item_p, &next_item_p);
 
           if(context_p->abort_flag == true) {
             bwt_printf("Index term found but NodeID does not match - "
@@ -4651,13 +4629,21 @@ before_switch:
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
         const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
-        const KeyType *split_key_p = &new_leaf_node_p->metadata.lbound;
+        
+        // Since we would like to access its first element to get the low key
+        assert(new_leaf_node_p->data_list.size() > 0UL);
+        
+        // The split key must be a valid key
+        // Note that the lowkey for leaf node is not defined, so in the
+        // case that it is required we must manually goto its data list
+        // and find the low key in its leftmost element
+        const KeyType &split_key = new_leaf_node_p->data_list[0].first;
 
+        // If leaf split fails this should be recyced using a fake remove node
         NodeID new_node_id = GetNextNodeID();
 
         const LeafSplitNode *split_node_p = \
-          new LeafSplitNode{*split_key_p,
-                            new_node_id,
+          new LeafSplitNode{std::make_pair(split_key, new_node_id),
                             node_p,
                             // We need this to compute the item count
                             // of the current node being splited
@@ -4686,7 +4672,7 @@ before_switch:
 
           // Need to use the epoch manager to recycle NodeID
           const LeafRemoveNode *fake_remove_node_p = \
-            new LeafRemoveNode{new_node_id, new_leaf_node_p};
+            new LeafRemoveNode{new_node_id, nullptr};
 
           epoch_manager.AddGarbageNode(fake_remove_node_p);
 
@@ -4702,12 +4688,9 @@ before_switch:
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
-        bool is_leftmost_child = \
-          KeyCmpEqual(snapshot_p->node_p->metadata.lbound,
-                      parent_snapshot_p->node_p->metadata.lbound);
-
-        // We could not remove leftmost node
-        if(is_leftmost_child == true) {
+        // This might yield a false positive of left child
+        // but correctness is not affected - sometimes the merge is delayed
+        if(IsOnLeftMostChild(context_p) == true) {
           bwt_printf("Left most leaf node cannot be removed\n");
 
           return;
@@ -4718,9 +4701,9 @@ before_switch:
         bwt_printf("Node size <= leaf lower threshold. Remove\n");
 
         // Install an abort node on parent
-        const BaseNode *abort_node_p = nullptr;
-        const BaseNode *abort_child_node_p = nullptr;
-        NodeID parent_node_id = INVALID_NODE_ID;
+        const BaseNode *abort_node_p;
+        const BaseNode *abort_child_node_p;
+        NodeID parent_node_id;
 
         bool abort_node_ret = \
           PostAbortOnParent(context_p,
@@ -4779,7 +4762,9 @@ before_switch:
         bwt_printf("Node size >= inner upper threshold. Split\n");
 
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
-        const KeyType *split_key_p = &new_inner_node_p->metadata.lbound;
+        
+        // Since this is a split sibling, the low key must be a valid key
+        const KeyType &split_key = new_inner_node_p->GetLowKey();
 
         // New node has at least one item (this is the basic requirement)
         assert(new_inner_node_p->sep_list.size() > 0);
@@ -4790,7 +4775,7 @@ before_switch:
         NodeID split_key_child_node_id = first_item.second;
 
         // This must be the split key
-        assert(KeyCmpEqual(first_item.first, *split_key_p));
+        assert(KeyCmpEqual(first_item.first, split_key));
 
         // NOTE: WE FETCH THE POINTER WITHOUT HELP ALONG SINCE WE ARE
         // NOW ON ITS PARENT
@@ -4812,8 +4797,7 @@ before_switch:
         NodeID new_node_id = GetNextNodeID();
 
         const InnerSplitNode *split_node_p = \
-          new InnerSplitNode{*split_key_p,
-                             new_node_id,
+          new InnerSplitNode{std::make_pair(split_key, new_node_id),
                              node_p,
                              // We need this to compute item count of the
                              // current node being splited
@@ -4860,19 +4844,13 @@ before_switch:
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
-        // Check whether current inner node is left most child by comparing
-        // the low key of its parent node when we traverse down and the current
-        // node's low key
         // NOTE: If the parent node has changed (e.g. split on the current
         // node's low key) we will not be able to catch it. But we will
         // find it later by posting an InnerAbortNode on parent which would
         // result in CAS failing and aborting
-        bool is_leftmost_child = \
-          KeyCmpEqual(snapshot_p->node_p->metadata.lbound,
-                      parent_snapshot_p->node_p->metadata.lbound);
 
         // We could not remove leftmost node
-        if(is_leftmost_child == true) {
+        if(IsOnLeftMostChild(context_p) == true) {
           bwt_printf("Left most inner node cannot be removed\n");
 
           return;
@@ -4884,9 +4862,9 @@ before_switch:
 
         // Then we abort its parent node
         // These two are used to hold abort node and its previous child
-        const BaseNode *abort_node_p = nullptr;
-        const BaseNode *abort_child_node_p = nullptr;
-        NodeID parent_node_id = INVALID_NODE_ID;
+        const BaseNode *abort_node_p;
+        const BaseNode *abort_child_node_p;
+        NodeID parent_node_id;
 
         bool abort_node_ret = \
           PostAbortOnParent(context_p,
@@ -5050,11 +5028,9 @@ before_switch:
    * using both the sep key and NodeID. These two must match, otherwise we
    * observed an inconsistent state
    */
-  inline bool FindSplitNextKey(Context *context_p,
-                               NodeSnapshot *snapshot_p,
-                               const KeyType *split_key_p,
-                               const KeyType **next_key_p_p,
-                               const NodeID insert_pid) {
+  inline bool FindSplitNextKey(NodeSnapshot *snapshot_p,
+                               const KeyNodeIDPair *split_item_p,
+                               const KeyNodeIDPair **next_item_p_p) {
     assert(snapshot_p->IsLeaf() == false);
 
     // If the split key is out of range then just ignore
@@ -5070,21 +5046,18 @@ before_switch:
     // another parent node (the right sibling of the current parent node)
     // In this case we do not have to insert since we know the index term has
     // already been inserted
-    if(KeyCmpGreaterEqual(*split_key_p,
-                          snapshot_p->node_p->metadata.ubound) == true) {
+    if((snapshot_p->node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+       (KeyCmpGreaterEqual(split_item_p->first,
+                           snapshot_p->node_p->GetHighKey()) == true)) {
       return false;
     }
-
 
     const InnerNode *inner_node_p = \
       static_cast<const InnerNode *>(snapshot_p->node_p);
 
     if(snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = CollectAllSepsOnInner(snapshot_p);
-
-      // Must adjust depth
-      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
-        snapshot_p->node_p->metadata.depth + 1;
+      inner_node_p = \
+        CollectAllSepsOnInner(snapshot_p, snapshot_p->node_p->GetDepth() + 1);
 
       // We are going to garbage collect this node
       const BaseNode *old_node_p = snapshot_p->node_p;
@@ -5110,26 +5083,32 @@ before_switch:
       }
     }
 
+    // Since we start searching from the 1st element
+    assert(inner_node_p->sep_list.size() > 0UL);
+
     // This returns an it pointing to the pair whose key >= split key
     // If it is not split key then the iterator exactly points
     // to the key we are looking for
     // If it is split key then we do not need to insert and return false
-    auto split_key_it = std::lower_bound(inner_node_p->sep_list.begin(),
-                                         inner_node_p->sep_list.end(),
-                                         std::make_pair(*split_key_p,
-                                                        INVALID_NODE_ID),
-                                         key_node_id_pair_cmp_obj);
+    auto split_key_it = \
+      std::lower_bound(inner_node_p->sep_list.begin() + 1,
+                       inner_node_p->sep_list.end(),
+                       *split_item_p,
+                       [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
+                         return this->key_cmp_obj(knp1.first, knp2.first);
+                       });
 
     // This is special case: the split key is higher than all keys
-    // inside the inner node
+    // inside the inner node. We use the high key pair inside
+    // inner node as its next item
     if(split_key_it == inner_node_p->sep_list.end()) {
-      *next_key_p_p = &inner_node_p->metadata.ubound;
+      *next_item_p_p = &inner_node_p->GetHighKeyPair();
 
       return true;
     }
 
     // If the split key already exists then just return false
-    if(KeyCmpEqual(split_key_it->first, *split_key_p) == true) {
+    if(KeyCmpEqual(split_key_it->first, split_item_p->first) == true) {
       // NOTE: The following assertion might not be true
       // Consider this scenario:
       // 1. Thread A loads parent node, which has key entries 10->100, 20->200
@@ -5151,16 +5130,15 @@ before_switch:
       // So in this case we should abort and refresh the parent node
       //assert(split_key_it->second == insert_pid);
 
-      if(split_key_it->second != insert_pid) {
+      if(split_key_it->second != split_item_p->second) {
         context_p->abort_flag = true;
-
-        return false;
       }
 
       return false;
     }
 
-    *next_key_p_p = &split_key_it->first;
+    // Next item is the address of the key NodeID pair inside parent node
+    *next_item_p_p = &(*split_key_it);
 
     return true;
   }
@@ -5186,11 +5164,14 @@ before_switch:
    * item if found in the InnerNode
    * We are guaranteed by the SMO serialization order of BwTree that if
    * an item is found, the NodeID will match. See comments for more details
+   *
+   * NOTE 4: delete_item_p is a pointer to the merge item, the first element
+   * being the merge key, and the second element being the removed node ID
    */
   inline bool FindMergePrevNextKey(NodeSnapshot *snapshot_p,
-                                   const KeyType *merge_key_p,
-                                   NodeID deleted_node_id,
-                                   std::vector<KeyNodeIDPair>::const_iterator *it_p) {
+                                   const KeyNodeIDPair *delete_item_p,
+                                   const KeyNodeIDPair **prev_item_p_p,
+                                   const KeyNodeIDPair **next_item_p_p) {
     // We could only post merge key on merge node
     assert(snapshot_p->IsLeaf() == false);
 
@@ -5198,12 +5179,8 @@ before_switch:
       static_cast<const InnerNode *>(snapshot_p->node_p);
 
     if(snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = CollectAllSepsOnInner(snapshot_p);
-
-      // Must adjust depth (the InnerNode is currently private so
-      // we could modify it freely)
-      (const_cast<InnerNode *>(inner_node_p))->metadata.depth = \
-        snapshot_p->node_p->metadata.depth + 1;
+      inner_node_p = CollectAllSepsOnInner(snapshot_p,
+                                           snapshot_p->node_p->GetDepth() + 1);
 
       // We are going to garbage collect this node
       const BaseNode *old_node_p = snapshot_p->node_p;
@@ -5227,19 +5204,20 @@ before_switch:
     // NOTE: Merge key will not be the left most key in the inner node
     // since otherwise we are merging the leftmost child into other nodes
     // which is not allowed
-    // So we directly compare raw key
-    auto merge_key_it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                                         inner_node_p->sep_list.end(),
-                                         std::make_pair(*merge_key_p,
-                                                        INVALID_NODE_ID),
-                                         key_node_id_pair_cmp_obj);
+    auto delete_item_it = \
+      std::lower_bound(inner_node_p->sep_list.begin() + 1,
+                       inner_node_p->sep_list.end(),
+                       *delete_item_p,
+                       [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
+                         return this->key_cmp_obj(knp1.first, knp2.first);
+                       });
 
     // If the lower bound of merge_key_p is not itself, then we
     // declare such key does not exist
     // Another corner case is that merge key is greater than the last item
     // then we know it does not exist
-    if(merge_key_it == inner_node_p->sep_list.end() || \
-       this->key_eq_obj(merge_key_it->first, *merge_key_p) == false) {
+    if(delete_item_it == inner_node_p->sep_list.end() || \
+       KeyCmpEqual(delete_item_it->first, delete_item_p->first) == false) {
       return false;
     }
 
@@ -5253,7 +5231,7 @@ before_switch:
     // happens then on the top of child node's delta chain would be
     // a split delta rather than merge delta. This is possible with
     // a split delta, but impossible when we see a merge delta
-    assert(merge_key_it->second == deleted_node_id);
+    assert(delete_item_it->second == delete_item_p->second);
 
     // In the parent node merge key COULD NOT be the left most key
     // since the merge node itself has a low key, which < merge key
@@ -5261,8 +5239,24 @@ before_switch:
     // NOTE: Since we search from begin() + 1, this must be true
     //assert(merge_key_it != inner_node_p->sep_list.begin());
 
-    *it_p = merge_key_it;
-
+    // We know delete_item_it could not be the first element
+    auto prev_item_it = delete_item_it--;
+    
+    // We know delete_item_it could not be end element so it is either end
+    // element or a valid element
+    auto next_item_it = delete_item_it++;
+    
+    // Previous item is always inside the sep list of the parent inner node
+    *prev_item_p_p = &(*prev_item_it);
+    
+    // next item iterator could either be the high key, or
+    // it could be the item inside sep list of the parent inner node
+    if(next_item_it == inner_node_p->sep_list.end()) {
+      *next_item_p_p = &inner_node_p->GetHighKeyPair();
+    } else {
+      *next_item_p_p = &(*next_item_it);
+    }
+    
     return true;
   }
 
