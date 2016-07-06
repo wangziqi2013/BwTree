@@ -230,10 +230,10 @@ extern bool print_flag;
  *
  * Template Arguments:
  *
- * template <typename RawKeyType,
+ * template <typename KeyType,
  *          typename ValueType,
- *          typename KeyComparator = std::less<RawKeyType>,
- *          typename KeyEqualityChecker = std::equal_to<RawKeyType>,
+ *          typename KeyComparator = std::less<KeyType>,
+ *          typename KeyEqualityChecker = std::equal_to<KeyType>,
  *          typename KeyHashFunc = std::hash<KeyType>,
  *          typename ValueEqualityChecker = std::equal_to<ValueType>,
  *          typename ValueHashFunc = std::hash<ValueType>>
@@ -245,7 +245,7 @@ extern bool print_flag;
  *  - ValueType: Value type of the map. Note that it is possible
  *               that a single key is mapped to multiple values
  *
- *  - KeyComparator: "less than" relation comparator for RawKeyType
+ *  - KeyComparator: "less than" relation comparator for KeyType
  *                   Returns true if "less than" relation holds
  *                   *** NOTE: THIS OBJECT DO NOT NEED TO HAVE A DEFAULT
  *                   CONSTRUCTOR. THIS MODIFICATION WAS MADE TO FIT
@@ -253,7 +253,7 @@ extern bool print_flag;
  *                   Please refer to main.cpp, class KeyComparator for more
  *                   information on how to define a proper key comparator
  *
- *  - KeyEqualityChecker: Equality checker for RawKeyType
+ *  - KeyEqualityChecker: Equality checker for KeyType
  *                        Returns true if two keys are equal
  *
  *  - KeyHashFunc: Hashes KeyType into size_t. This is used in unordered_set
@@ -270,9 +270,9 @@ extern bool print_flag;
  */
 template <typename KeyType,
           typename ValueType,
-          typename KeyComparator = std::less<RawKeyType>,
-          typename KeyEqualityChecker = std::equal_to<RawKeyType>,
-          typename KeyHashFunc = std::hash<RawKeyType>,
+          typename KeyComparator = std::less<KeyType>,
+          typename KeyEqualityChecker = std::equal_to<KeyType>,
+          typename KeyHashFunc = std::hash<KeyType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
 class BwTree {
@@ -514,7 +514,7 @@ class BwTree {
      * operator() - Compares key-value pair by comparing each component
      *              of them
      *
-     * NOTE: This function only compares keys with RawKey type. For +/-Inf
+     * NOTE: This function only compares keys with KeyType. For +/-Inf
      * the wrapped raw key comparator will fail
      */
     inline bool operator()(const KeyValuePair &kvp1,
@@ -723,8 +723,6 @@ class BwTree {
       return current_level >= 1;
     }
   };
-
-  class
 
   /*
    * class NodeMetaData - Holds node metadata in an object
@@ -1140,7 +1138,7 @@ class BwTree {
     /*
      * Constructor
      */
-    LeafInsertNode(const RawKeyType &p_insert_key,
+    LeafInsertNode(const KeyType &p_insert_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafInsertType,
@@ -1171,7 +1169,7 @@ class BwTree {
     /*
      * Constructor
      */
-    LeafDeleteNode(const RawKeyType &p_delete_key,
+    LeafDeleteNode(const KeyType &p_delete_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafDeleteType,
@@ -4102,7 +4100,7 @@ before_switch:
         // This serves as the merge key
         // Note that since the removed node could not be a left most node
         // so the low key is always a valid key
-        const RawKeyType *merge_key_p = snapshot_p->node_p->GetLowKey();
+        const KeyType *merge_key_p = snapshot_p->node_p->GetLowKey();
 
         // This will also be recorded in merge delta such that when
         // we finish merge delta we could recycle the node id as well
@@ -4336,7 +4334,7 @@ before_switch:
             new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
 
           // NOTE: Since we never directly access the first element in the
-          // InnerNode object, it is OK to just put an empty RawKeyType
+          // InnerNode object, it is OK to just put an empty KeyType
           // object into the list
           inner_node_p->sep_list.push_back(std::make_pair(KeyType{},
                                                           snapshot_p->node_id));
@@ -5284,7 +5282,6 @@ before_switch:
     NodeID node_id = snapshot_p->node_id;
 
     // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
-    // NOTE 2: The constructor takes a RawKeyType key
     const MergeNodeType *merge_node_p = \
       new MergeNodeType{*merge_key_p,
                         merge_branch_p,
