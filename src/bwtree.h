@@ -5731,27 +5731,6 @@ before_switch:
     return;
   }
 
-  ValueSet GetValue(const KeyType &search_key) {
-    bwt_printf("GetValue()\n");
-
-    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
-
-    Context context{search_key, tree_height};
-
-    std::vector<ValueType> value_list{};
-    Traverse(&context, nullptr, &value_list);
-
-    epoch_manager.LeaveEpoch(epoch_node_p);
-
-    ValueSet value_set{value_list.begin(),
-                       value_list.end(),
-                       10,
-                       value_hash_obj,
-                       value_eq_obj};
-
-    return value_set;
-  }
-
  /*
   * Private Method Implementation
   */
@@ -5772,20 +5751,11 @@ before_switch:
   // Key comparator
   const KeyComparator key_cmp_obj;
 
-  // Wrapped key comparator
-  const WrappedKeyComparator wrapped_key_cmp_obj;
-
   // Raw key eq checker
   const KeyEqualityChecker key_eq_obj;
 
-  // Wrapped key eq checker
-  const WrappedKeyEqualityChecker wrapped_key_eq_obj;
-
   // Raw key hasher
   const KeyHashFunc key_hash_obj;
-
-  // Wrapped key hasher
-  const WrappedKeyHashFunc wrapped_key_hash_obj;
 
   // Check whether values are equivalent
   const ValueEqualityChecker value_eq_obj;
