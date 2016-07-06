@@ -1208,8 +1208,7 @@ class BwTree {
      * split delta, but it will be used to compute the new item count for
      * the current node
      */
-    LeafSplitNode(const KeyType &p_split_key,
-                  NodeID p_split_sibling,
+    LeafSplitNode(const KeyNodeIDPair &p_split_item,
                   const BaseNode *p_child_node_p,
                   const BaseNode *p_split_node_p) :
       DeltaNode{NodeType::LeafSplitType,
@@ -1226,7 +1225,7 @@ class BwTree {
                 // items were removed by the split delta
                 p_child_node_p->GetItemCount() - \
                   p_split_node_p->GetItemCount()},
-      split_item{p_split_key, p_split_sibling}
+      split_item{p_split_item}
     {}
   };
 
@@ -1505,8 +1504,7 @@ class BwTree {
     /*
      * Constructor
      */
-    InnerSplitNode(const KeyType &p_split_key,
-                   NodeID p_split_sibling,
+    InnerSplitNode(const KeyNodeIDPair &p_split_item,
                    const BaseNode *p_child_node_p,
                    const BaseNode *p_split_node_p) :
       DeltaNode{NodeType::InnerSplitType,
@@ -1520,7 +1518,7 @@ class BwTree {
                 // split sibling to compute item count
                 p_child_node_p->GetItemCount() - \
                   p_split_node_p->GetItemCount()},
-      split_item{p_split_key, p_split_sibling}
+      split_item{p_split_item}
     {}
   };
 
@@ -4112,12 +4110,10 @@ before_switch:
         const BaseNode *merge_right_branch = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
 
-        // The merge key could be -Inf
-        assert(snapshot_p->node_p->metadata.lbound.IsNegInf() == false);
-
         // This serves as the merge key
-        const RawKeyType *merge_key_p = \
-          &snapshot_p->node_p->metadata.lbound.key;
+        // Note that since the removed node could not be a left most node
+        // so the low key is always a valid key
+        const RawKeyType *merge_key_p = snapshot_p->node_p->GetLowKey();
 
         // This will also be recorded in merge delta such that when
         // we finish merge delta we could recycle the node id as well
@@ -4130,19 +4126,22 @@ before_switch:
         if(context_p->abort_flag == true) {
           bwt_printf("Jump to left sibling in Remove help along ABORT\n");
 
+          // Here we are uncertain about the current status (it might have
+          // jumped and observed an inconsistent next node ID, or it has not
+          // jumped because of an inconsistent left child status)
           return false;
         }
 
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
+        
+        // Update snapshot pointer if we fall through to posting
+        // index term delete delta for merge node
+        snapshot_p = left_snapshot_p;
 
         // This holds the merge node if installation is successful
         // Not changed if CAS fails
         const BaseNode *merge_node_p;
-
-        // Update snapshot pointer if we fall through to posting
-        // index term delete delta for merge node
-        snapshot_p = left_snapshot_p;
 
         bool ret;
 
@@ -4224,17 +4223,20 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
-        // This iterator is used as a return value for pointing to
-        // the InnerNode item if the key being deleted exists in the parent
-        // inner node
-        std::vector<KeyNodeIDPair>::const_iterator it{};
+        // These two are set to be pointing to the prev and next KeyNodeIDPair
+        // Note that for prev key id pair the key does not matter much since
+        // we could use the node ID later in the InnerDeleteNode to determine
+        // whether we have hit the left most sep or not
+        const KeyNodeIDPair *prev_key_id_pair_p;
+        const KeyNodeIDPair *next_key_id_pair_p;
 
         // if this is false then we have already deleted the index term
         bool merge_key_found = \
           FindMergePrevNextKey(parent_snapshot_p,
-                               merge_key_p,
+                               *merge_key_p,
                                deleted_node_id,
-                               &it);
+                               &prev_key_id_pair_p,
+                               &next_key_id_pair_p);
 
         // If merge key is not found then we know we have already deleted the
         // index term
@@ -4248,22 +4250,13 @@ before_switch:
           return true;
         }
 
-        // These two points to the next and previous key surrounding
-        // the key being deleted on the parent node
-        auto next_key_it = it + 1;
-        auto prev_key_it = it - 1;
-
-        const KeyType *next_key_p;
-
-        if()
-
-
+        // Arguments are:
+        // Deleted item; Prev item; next item (NodeID not used for next item)
+        // and delta chail child node
         const InnerDeleteNode *delete_node_p = \
-          new InnerDeleteNode{*merge_key_p,               // Merge RawKeyType
-                              *next_key_p,                // Next KeyType
-                              prev_key_it->first,         // Prev KeyType
-                              deleted_node_id,            // Deleted node ID
-                              prev_key_it->second,        // previous node ID
+          new InnerDeleteNode{std::make_pair(*merge_key_p, deleted_node_id),
+                              prev_key_id_pair_p,
+                              next_key_id_pair_p,
                               parent_snapshot_p->node_p};
 
         // Assume parent has not changed, and CAS the index term delete delta
@@ -4289,11 +4282,9 @@ before_switch:
           // Put the remove node into garbage chain
           // This will not remove the child node of the remove node, which
           // should be removed together with the merge node above it
+          // Also, the remove node acts as a container for removed NodeID
+          // which will be recycled when the remove node is recycled
           epoch_manager.AddGarbageNode(garbage_node_p);
-
-          ///////////////////////////////////////////
-          // TODO: Also recycle NodeID here
-          ///////////////////////////////////////////
 
           // To avoid this entry being recycled during tree destruction
           // Since the entry still remains in the old inner base node
@@ -4306,8 +4297,6 @@ before_switch:
           //mapping_table[deleted_node_id] = nullptr;
 
           parent_snapshot_p->node_p = delete_node_p;
-
-          //context_p->abort_flag = true;
 
           return true;
         } else {
@@ -4326,10 +4315,11 @@ before_switch:
       case NodeType::LeafSplitType: {
         bwt_printf("Helping along split node\n");
 
-        // We need to read these three from split delta node
-        const KeyType *split_key_p = nullptr;
-        const KeyType *next_key_p = nullptr;
-        NodeID split_node_id = INVALID_NODE_ID;
+        // These two will be stored inside InnerInsertNode
+        // The insert item is just the split item inside InnerSplitNode
+        // but next item needs to be read from the parent node
+        const KeyNodeIDPair *insert_item_p;
+        const KeyNodeIDPair *next_item_p;
 
         NodeType type = snapshot_p->node_p->GetType();
 
@@ -4339,14 +4329,12 @@ before_switch:
           const InnerSplitNode *split_node_p = \
             static_cast<const InnerSplitNode *>(snapshot_p->node_p);
 
-          split_key_p = &split_node_p->split_key;
-          split_node_id = split_node_p->split_sibling;
+          insert_item_p = &split_node_p->insert_item;
         } else {
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(snapshot_p->node_p);
 
-          split_key_p = &split_node_p->split_key;
-          split_node_id = split_node_p->split_sibling;
+          insert_item_p = &split_node_p->insert_item;
         }
 
         assert(context_p->current_level >= 0);
@@ -4361,16 +4349,13 @@ before_switch:
           // If CAS fails we need to free the root ID
           NodeID new_root_id = GetNextNodeID();
 
-          // [-Inf, +Inf] -> INVALID_NODE_ID, for root node
-          // NOTE: DO NOT MAKE IT CONSTANT since we will push separator into it
-          // NOTE: The new root node will have 2 items inside, so set item
-          // count to 2
+          // InnerNode requires high key pair which is +Inf, INVALID NODE ID
+          // low key pair will be set inside the constructor to be pointing
+          // to the first element in the sep list
+          // NOTE: Storage will be automatically reserved inside the
+          // constructor
           InnerNode *inner_node_p = \
-            new InnerNode{GetNegInfKey(), GetPosInfKey(), INVALID_NODE_ID, 2};
-
-          // Add this line to reduce one memory allocation since std::vector
-          // allocates memory starting from size = 1
-          inner_node_p->sep_list.reserve(2);
+            new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
 
           // NOTE: Since we never directly access the first element in the
           // InnerNode object, it is OK to just put an empty RawKeyType
@@ -4395,7 +4380,9 @@ before_switch:
             bwt_printf("Install root CAS succeeds. Height = %lu\n",
                        tree_height.load());
 
-            //context_p->abort_flag = true;
+            // After installing new root we abort in order to load
+            // the new root
+            context_p->abort_flag = true;
 
             return false;
           } else {
@@ -4431,11 +4418,7 @@ before_switch:
           // If this is false then we know the index term has already
           // been inserted
           bool split_key_absent = \
-            FindSplitNextKey(context_p,
-                             parent_snapshot_p,
-                             split_key_p,
-                             &next_key_p,
-                             split_node_id);
+            FindSplitNextKey(context_p, split_item_p, &next_item_p);
 
           if(context_p->abort_flag == true) {
             bwt_printf("Index term found but NodeID does not match - "
@@ -4454,10 +4437,12 @@ before_switch:
             return true;
           }
 
+          // Three arguments are: inserted key-node id pair
+          //                      next key-node id pair
+          //                      child node in delta chain
           const InnerInsertNode *insert_node_p = \
-            new InnerInsertNode{*split_key_p,
-                                *next_key_p,
-                                split_node_id,
+            new InnerInsertNode{*insert_item_p,
+                                *next_item_p,
                                 parent_snapshot_p->node_p};
 
           // CAS Index Term Insert Delta onto the parent node
@@ -4468,20 +4453,18 @@ before_switch:
           if(ret == true) {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
                        snapshot_p->node_id,
-                       split_node_id);
+                       insert_item_p->second);
 
-            // Since the abort process checks pointer we always need to update
-            // parent node's node pointer
+            // Update parent node pointer to reflect the fact that it has been
+            // updated
             parent_snapshot_p->node_p = insert_node_p;
-
-            //context_p->abort_flag = true;
 
             return true;
           } else {
             bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
                        "ABORT\n",
                        snapshot_p->node_id,
-                       split_node_id);
+                       insert_item_p->second);
 
             // Set abort, and remove the newly created node
             context_p->abort_flag = true;
@@ -4547,7 +4530,7 @@ before_switch:
     }
 
     // If depth does not exceeds threshold then we check recommendation flag
-    int depth = node_p->metadata.depth;
+    int depth = node_p->GetDepth();
 
     if(snapshot_p->IsLeaf() == true) {
       // Adjust the length a little bit using this variable
@@ -5817,7 +5800,6 @@ before_switch:
   const ValueHashFunc value_hash_obj;
 
   // The following three are used for std::pair<KeyType, NodeID>
-  const KeyNodeIDPairComparator key_node_id_pair_cmp_obj;
   const KeyNodeIDPairEqualityChecker key_node_id_pair_eq_obj;
   const KeyNodeIDPairHashFunc key_node_id_pair_hash_obj;
 
