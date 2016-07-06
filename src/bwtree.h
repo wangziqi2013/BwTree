@@ -3654,7 +3654,7 @@ class BwTree {
 
     bwt_printf("Is leaf node? - %d\n", node_p->IsOnLeafDeltaChain());
 
-    // We must take care not to overflow the stack
+    // This is used to record how many levels we have traversed
     context_p->current_level++;
 
     // Copy assignment
@@ -3715,9 +3715,20 @@ class BwTree {
    * If we just want to modify existing snapshot object in the stack, we should
    * call JumpToNodeID() instead
    *
-   * NOTE: If this function is called when we are still in Init mode, then
-   * root flag is set, since we know now we are definitely
-   * loading the ID for root node
+   * Note that there is currently no flag indicating whether the current node
+   * being load is a leaf node or leftmost node or a root node. To check for
+   * attributes mentioned above:
+   *
+   * (1) Call IsOnLeafDeltaChain() to determine whether we are on leaf node
+   *     This call is lightweight and only requires an integer comparison
+   *
+   * (2) Check current node id with parent node's low key node id. If they
+   *     match then we are on a left most child of the parent node
+   *     (but that is only a strong hint; if the parent node is merged after
+   *     being taken a snapshot then we will get a false positive, though it
+   *     does not affect correctness)
+   *
+   * (3) Check current_level == 0 to determine whether we are on a root node
    */
   inline void LoadNodeID(NodeID node_id,
                          Context *context_p) {
@@ -3726,6 +3737,10 @@ class BwTree {
     // This pushes a new snapshot into stack
     TakeNodeSnapshot(node_id, context_p);
 
+    // If there are SMO (split; merge) that require much computation to
+    // deal with (e.g. go to its parent and comsolidate parent first) then
+    // we should aggressively comsolidate the SMO away to avoid further
+    // access
     bool recommend_consolidation = FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
@@ -3811,8 +3826,9 @@ before_switch:
         const BaseNode *merge_right_branch = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
 
-        // This serves as the merge key
-        const KeyType *merge_key_p = &snapshot_p->node_p->metadata.lbound;
+        // This serves as the merge key (for remove node there is always a
+        // valid low key)
+        const KeyType *merge_key_p = &snapshot_p->node_p->GetLowKey();
 
         // This will also be recorded in merge delta such that when
         // we finish merge delta we could recycle the node id as well
@@ -3830,16 +3846,16 @@ before_switch:
 
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
-
-        // This holds the merge node if installation is successful
-        // Not changed if CAS fails
-        const BaseNode *merge_node_p = nullptr;
-
+        
         // Update snapshot pointer if we fall through to posting
         // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
 
-        bool ret = false;
+        // This holds the merge node if installation is successful
+        // Not changed if CAS fails
+        const BaseNode *merge_node_p;
+
+        bool ret;
 
         // If we are currently on leaf, just post leaf merge delta
         if(left_snapshot_p->IsLeaf() == true) {
@@ -3900,6 +3916,8 @@ before_switch:
     TakeNodeSnapshot(node_id, context_p);
 
     FinishPartialSMOReadOptimized(context_p);
+    
+    // Do not need to check for abort flag here
 
     return;
   }
@@ -3919,11 +3937,6 @@ before_switch:
    */
   inline void TraverseReadOptimized(Context *context_p,
                                     std::vector<ValueType> *value_list_p) {
-    // This will use lock
-    #ifdef INTERACTIVE_DEBUG
-    idb.AddKey(context_p->search_key);
-    #endif
-
     while(1) {
       // NOTE: break only breaks out this switch
       switch(context_p->current_state) {
@@ -3976,19 +3989,12 @@ before_switch:
             break;
           }
 
-          // We use this to check whether NavigateInnerNode() brings us
-          // to the correct inner node
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-          assert(KeyCmpGreaterEqual(context_p->search_key,
-                                    snapshot_p->node_p->metadata.lbound));
-          assert(KeyCmpLess(context_p->search_key,
-                            snapshot_p->node_p->metadata.ubound));
-
           // This might load a leaf child
           // Also LoadNodeID() does not guarantee the node bound matches
-          // seatch key. Since we could readjust using the split side link
-          // during Navigate...Node()
+          // search key. Since we could readjust using the split side link
+          // during Navigate...Node(), or abort if we reach the bottom
+          // while still observing an inconsistent high key
+          // (low key is always consistent)
           LoadNodeIDReadOptimized(child_node_id, context_p);
 
           if(context_p->abort_flag == true) {
