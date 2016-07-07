@@ -2158,10 +2158,6 @@ class BwTree {
 
             break;
           }
-          
-          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
-          assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
 
           // This might load a leaf child
           // Also LoadNodeID() does not guarantee the node bound matches
@@ -2222,10 +2218,6 @@ class BwTree {
 
             break;
           }
-          
-          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
-          assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
 
           bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
                      context_p->abort_counter,
