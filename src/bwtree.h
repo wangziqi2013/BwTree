@@ -3968,12 +3968,9 @@ before_switch:
           }
 
           bwt_printf("Successfully loading root node ID (RO)\n");
-
-          // root node must be an inner node
-          // NOTE: We do not traverse down in this state, just hand it
-          // to Inner state and let it do all generic job
+          
           context_p->current_state = OpState::Inner;
-
+          
           break;
         } // case Init
         case OpState::Inner: {
@@ -4016,12 +4013,12 @@ before_switch:
 
           if(snapshot_p->IsLeaf() == true) {
             bwt_printf("The next node is a leaf (RO)\n");
-
-            // If there is an abort later on then we just go to
-            // abort state
+            
             context_p->current_state = OpState::Leaf;
+            
+            break;
           }
-
+          
           break;
         } // case Inner
         case OpState::Leaf: {
