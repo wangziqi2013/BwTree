@@ -626,23 +626,6 @@ class BwTree {
   }
 
   /*
-   * enum class OpState - Current state of the state machine
-   *
-   * Init - We need to load root ID and start the traverse
-   *        After loading root ID should switch to Inner state
-   *        since we know there must be an inner node
-   * Inner - We are currently on an inner node, and want to go one
-   *         level down
-   * Abort - We just saw abort flag, and will reset everything back to Init
-   */
-  enum class OpState {
-    Init,
-    Inner,
-    Leaf,
-    Abort
-  };
-
-  /*
    * class Context - Stores per thread context data that is used during
    *                 tree traversal
    *
@@ -667,10 +650,6 @@ class BwTree {
     // On initialization this is set to -1
     int current_level;
 
-    // It is used in the finite state machine that drives the traversal
-    // process down to a leaf node
-    OpState current_state;
-
     // Whether to abort current traversal, and start a new one
     // after seeing this flag, all function should return without
     // any further action, and let the main driver to perform abort
@@ -687,7 +666,6 @@ class BwTree {
       search_key{p_search_key},
       abort_counter{0},
       current_level{-1},
-      current_state{OpState::Init},
       abort_flag{false}
     {}
 
@@ -2105,149 +2083,113 @@ class BwTree {
                 std::vector<ValueType> *value_list_p) {
     // At most one could be non-nullptr
     assert((value_p == nullptr) || (value_list_p == nullptr));
+    
+    // For value collection it always returns true
+    bool ret = true;
+
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    // This is the serialization point for reading/writing root node
+    NodeID start_node_id = root_id.load();
+
+    // We need to call this even for root node since there could
+    // be split delta posted on to root node
+    LoadNodeID(start_node_id, context_p);
+
+    // There could be an abort here, and we could not directly jump
+    // to Init state since we would like to do some clean up or
+    // statistics after aborting
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID\n");
 
     while(1) {
-      // NOTE: break only breaks out this switch
-      switch(context_p->current_state) {
-        case OpState::Init: {
-          assert(context_p->abort_flag == false);
-          assert(context_p->current_level == -1);
+      NodeID child_node_id = NavigateInnerNode(context_p);
 
-          // This is the serialization point for reading/writing root node
-          NodeID start_node_id = root_id.load();
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort. ABORT\n");
 
-          // We need to call this even for root node since there could
-          // be split delta posted on to root node
-          LoadNodeID(start_node_id,
-                     context_p);
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
 
-          // There could be an abort here, and we could not directly jump
-          // to Init state since we would like to do some clean up or
-          // statistics after aborting
-          if(context_p->abort_flag == true) {
-            context_p->current_state = OpState::Abort;
+        goto abort_traverse;
+      }
 
-            // This goes to the beginning of loop
-            break;
-          }
+      // This might load a leaf child
+      // Also LoadNodeID() does not guarantee the node bound matches
+      // seatch key. Since we could readjust using the split side link
+      // during Navigate...Node()
+      LoadNodeID(child_node_id, context_p);
 
-          bwt_printf("Successfully loading root node ID\n");
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted. ABORT\n");
 
-          // root node must be an inner node
-          // NOTE: We do not traverse down in this state, just hand it
-          // to Inner state and let it do all generic job
-          context_p->current_state = OpState::Inner;
+        goto abort_traverse;
+      }
 
-          break;
-        } // case Init
-        case OpState::Inner: {
-          NodeID child_node_id = NavigateInnerNode(context_p);
+      // This is the node we have just loaded
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-          // Navigate could abort since it might go to another NodeID
-          // if there is a split delta and the key is >= split key
-          if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort. ABORT\n");
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf\n");
 
-            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-            // as a double check
-            // This is the only situation that this function returns
-            // INVALID_NODE_ID
-            assert(child_node_id == INVALID_NODE_ID);
+        break;
+      }
+    } //while(1)
 
-            context_p->current_state = OpState::Abort;
+    if(value_list_p == nullptr) {
+      if(value_p == nullptr) {
+        // If both are nullptr then we just Traverse with a
+        // default constructed value which will lead us to the
+        // correct leaf page
+        // Do not overwrite ret here
+        NavigateLeafNode(context_p, ValueType{});
+      } else {
+        // If a value is given then use this value to Traverse down leaf
+        // page to find whether the value exists or not
+        ret = NavigateLeafNode(context_p, *value_p);
+      }
+    } else {
+      // If the value list is given then Traverse down leaf node with the
+      // intention of collecting value for the given key. Also do not
+      // overwrite ret here
+      // NOTE: Even if NavigateLeafNode aborts,
+      // the vector is not affected
+      NavigateLeafNode(context_p, *value_list_p);
+    }
 
-            break;
-          }
+    if(context_p->abort_flag == true) {
+      bwt_printf("NavigateLeafNode aborts. ABORT\n");
 
-          // This might load a leaf child
-          // Also LoadNodeID() does not guarantee the node bound matches
-          // seatch key. Since we could readjust using the split side link
-          // during Navigate...Node()
-          LoadNodeID(child_node_id, context_p);
+      goto abort_traverse;
+    }
 
-          if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted. ABORT\n");
+    bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
+               context_p->abort_counter,
+               context_p->current_level);
 
-            context_p->current_state = OpState::Abort;
+    // If there is no abort then we could safely return
+    return ret;
+    
+abort_traverse:
+    assert(context_p->current_level >= 0);
 
-            break;
-          }
+    context_p->current_level = -1;
 
-          // This is the node we have just loaded
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    context_p->abort_flag = false;
+    context_p->abort_counter++;
 
-          if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf\n");
-
-            // If there is an abort later on then we just go to
-            // abort state
-            context_p->current_state = OpState::Leaf;
-          }
-
-          break;
-        } // case Inner
-        case OpState::Leaf: {
-          // For value collection it always returns true
-          bool ret = true;
-
-          if(value_list_p == nullptr) {
-            if(value_p == nullptr) {
-              // If both are nullptr then we just Traverse with a
-              // default constructed value which will lead us to the
-              // correct leaf page
-              // Do not overwrite ret here
-              NavigateLeafNode(context_p, ValueType{});
-            } else {
-              // If a value is given then use this value to Traverse down leaf
-              // page to find whether the value exists or not
-              ret = NavigateLeafNode(context_p, *value_p);
-            }
-          } else {
-            // If the value list is given then Traverse down leaf node with the
-            // intention of collecting value for the given key. Also do not
-            // overwrite ret here
-            // NOTE: Even if NavigateLeafNode aborts,
-            // the vector is not affected
-            NavigateLeafNode(context_p, *value_list_p);
-          }
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts. ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-
-          bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
-                     context_p->abort_counter,
-                     context_p->current_level);
-
-          // If there is no abort then we could safely return
-          return ret;
-
-          assert(false);
-        }
-        case OpState::Abort: {
-          assert(context_p->current_level >= 0);
-
-          context_p->current_state = OpState::Init;
-          context_p->current_level = -1;
-
-          context_p->abort_flag = false;
-          context_p->abort_counter++;
-
-          break;
-        } // case Abort
-        default: {
-          bwt_printf("ERROR: Unknown State: %d\n",
-                     static_cast<int>(context_p->current_state));
-          assert(false);
-          break;
-        }
-      } // switch current_state
-    } // while(1)
-
+    goto retry_traverse;
+      
     assert(false);
     return false;
   }
@@ -3935,123 +3877,89 @@ before_switch:
    */
   inline void TraverseReadOptimized(Context *context_p,
                                     std::vector<ValueType> *value_list_p) {
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    // This is the serialization point for reading/writing root node
+    NodeID start_node_id = root_id.load();
+
+    // We need to call this even for root node since there could
+    // be split delta posted on to root node
+    LoadNodeIDReadOptimized(start_node_id, context_p);
+
+    // There could be an abort here, and we could not directly jump
+    // to Init state since we would like to do some clean up or
+    // statistics after aborting
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID (RO)\n");
+
     while(1) {
-      // NOTE: break only breaks out this switch
-      switch(context_p->current_state) {
-        case OpState::Init: {
-          assert(context_p->abort_flag == false);
-          assert(context_p->current_level == -1);
+      NodeID child_node_id = NavigateInnerNode(context_p);
 
-          // This is the serialization point for reading/writing root node
-          NodeID start_node_id = root_id.load();
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
 
-          // We need to call this even for root node since there could
-          // be split delta posted on to root node
-          LoadNodeIDReadOptimized(start_node_id, context_p);
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
 
-          // There could be an abort here, and we could not directly jump
-          // to Init state since we would like to do some clean up or
-          // statistics after aborting
-          if(context_p->abort_flag == true) {
-            context_p->current_state = OpState::Abort;
+        goto abort_traverse;
+      }
 
-            // This goes to the beginning of loop
-            break;
-          }
+      // This might load a leaf child
+      // Also LoadNodeID() does not guarantee the node bound matches
+      // search key. Since we could readjust using the split side link
+      // during Navigate...Node(), or abort if we reach the bottom
+      // while still observing an inconsistent high key
+      // (low key is always consistent)
+      LoadNodeIDReadOptimized(child_node_id, context_p);
 
-          bwt_printf("Successfully loading root node ID (RO)\n");
-          
-          context_p->current_state = OpState::Inner;
-          
-          break;
-        } // case Init
-        case OpState::Inner: {
-          NodeID child_node_id = NavigateInnerNode(context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted (RO). ABORT\n");
 
-          // Navigate could abort since it might go to another NodeID
-          // if there is a split delta and the key is >= split key
-          if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
+        goto abort_traverse;
+      }
 
-            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-            // as a double check
-            // This is the only situation that this function returns
-            // INVALID_NODE_ID
-            assert(child_node_id == INVALID_NODE_ID);
+      // This is the node we have just loaded
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-            context_p->current_state = OpState::Abort;
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf (RO)\n");
+        
+        NavigateLeafNode(context_p, *value_list_p);
 
-            break;
-          }
+        if(context_p->abort_flag == true) {
+          bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
 
-          // This might load a leaf child
-          // Also LoadNodeID() does not guarantee the node bound matches
-          // search key. Since we could readjust using the split side link
-          // during Navigate...Node(), or abort if we reach the bottom
-          // while still observing an inconsistent high key
-          // (low key is always consistent)
-          LoadNodeIDReadOptimized(child_node_id, context_p);
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted (RO). ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-
-          // This is the node we have just loaded
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-          if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf (RO)\n");
-            
-            context_p->current_state = OpState::Leaf;
-            
-            break;
-          }
-          
-          break;
-        } // case Inner
-        case OpState::Leaf: {
-          NavigateLeafNode(context_p, *value_list_p);
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-
-          bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
-                     context_p->abort_counter,
-                     context_p->current_level);
-
-          // If there is no abort then we could safely return
-          return;
-
-          assert(false);
+          goto abort_traverse;
         }
-        case OpState::Abort: {
-          assert(context_p->current_level >= 0);
 
-          context_p->current_state = OpState::Init;
-          context_p->current_level = -1;
+        bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
+                   context_p->abort_counter,
+                   context_p->current_level);
 
-          context_p->abort_flag = false;
-          context_p->abort_counter++;
-
-          break;
-        } // case Abort
-        default: {
-          bwt_printf("ERROR: Unknown State (RO): %d\n",
-                     static_cast<int>(context_p->current_state));
-          assert(false);
-          break;
-        }
-      } // switch current_state
+        // If there is no abort then we could safely return
+        return;
+      }
     } // while(1)
+          
+abort_traverse:
+    assert(context_p->current_level >= 0);
+
+    context_p->current_level = -1;
+
+    context_p->abort_flag = false;
+    context_p->abort_counter++;
+
+    goto retry_traverse;
 
     assert(false);
     return;
