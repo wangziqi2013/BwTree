@@ -568,7 +568,7 @@ class BwTree {
    * KeyCmpLess() - Compare two keys for "less than" relation
    *
    * If key1 < key2 return true
-   * If key1 >= key2 return false
+   * If not return false
    *
    * NOTE: In older version of the implementation this might be defined
    * as the comparator to wrapped key type. However wrapped key has
@@ -576,21 +576,13 @@ class BwTree {
    * compares KeyType specified in template argument.
    */
   inline bool KeyCmpLess(const KeyType &key1, const KeyType &key2) const {
-    // The wrapped key comparator object is defined as a object member
-    // since we need it to be passed in std::map as the comparator
     return key_cmp_obj(key1, key2);
   }
 
   /*
    * KeyCmpEqual() - Compare a pair of keys for equality
    *
-   * This function tests whether two keys are equal or not. It correctly
-   * deals with +Inf and -Inf, in the sense that +Inf == +Inf and
-   * -Inf == -Inf.
-   *
-   * If two keys are both of raw key type then their raw keys are
-   * compared using the object. Otherwise their types are compared
-   * directly by numeric values.
+   * This functions compares keys for equality relation
    */
   inline bool KeyCmpEqual(const KeyType &key1, const KeyType &key2) const {
       return key_eq_obj(key1, key2);
@@ -2329,14 +2321,14 @@ class BwTree {
    * do not make any assumption about how jump is performed)
    */
   inline NodeID NavigateInnerNode(Context *context_p) {
+    // This search key will not be changed during navigation
+    const KeyType &search_key = context_p->search_key;
+    
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
-
-    // This search key will not be changed during navigation
-    const KeyType &search_key = context_p->search_key;
 
     // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
@@ -2358,6 +2350,10 @@ class BwTree {
           // could be arbitraty value
           if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
              (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
+            bwt_printf("Bounds checking failed (id = %lu) - "
+                       "Must have missed an InnerSplitNode\n",
+                       snapshot_p->node_id);
+                       
             // The node has splited but we did not see split node
             // it must have been consolidated after partial split delta being
             // finished. Abort here and go back one level to get the latest
@@ -2483,8 +2479,14 @@ class BwTree {
           // high key does not need to be updated
           // Since we still could not know the high key
           if(KeyCmpGreaterEqual(search_key, merge_key)) {
+            bwt_printf("Take merge right branch (ID = %lu)\n",
+                       snapshot_p->node_id);
+            
             node_p = merge_node_p->right_merge_p;
           } else {
+            bwt_printf("Take merge left branch (ID = %lu)\n",
+                       snapshot_p->node_id);
+                       
             node_p = merge_node_p->child_node_p;
           }
 
@@ -3026,6 +3028,10 @@ class BwTree {
           // then the high key is +Inf and we do not need to compare
           if((high_key_pair_p->second != INVALID_NODE_ID) &&
              KeyCmpGreaterEqual(search_key, high_key_pair_p->first)) {
+            bwt_printf("Bounds check on LeafNode (id = %lu) failed - "
+                       "must have ignored a split delta\n",
+                       snapshot_p->node_id);
+            
             context_p->abort_flag = true;
 
             return false;
