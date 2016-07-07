@@ -1096,7 +1096,7 @@ class BwTree {
       // This is the key part of the key-value pair, also the low key
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
-      const KeyType &split_key = copy_start_it->first;
+      //const KeyType &split_key = copy_start_it->first;
 
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
