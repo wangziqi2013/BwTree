@@ -917,6 +917,9 @@ class BwTree {
      * The return value is nullptr for LeafNode and its delta chain
      */
     inline const KeyNodeIDPair &GetLowKeyPair() const {
+      // Make sure this is not called on leaf nodes
+      assert(IsOnLeafDeltaChain() == false);
+      
       return *metadata.low_key_p;
     }
 
@@ -2334,6 +2337,8 @@ class BwTree {
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
+    
+    bwt_printf("Navigating inner node delta chain...\n");
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2392,11 +2397,12 @@ class BwTree {
           if((next_item.second == INVALID_NODE_ID) ||
              (KeyCmpLess(search_key, next_item.first))) {
             // If search key >= insert key
-            if(KeyCmpGreaterEqual(search_key, insert_item.first))
-            bwt_printf("Find target ID = %lu in insert delta\n",
-                       insert_item.second);
+            if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
+              bwt_printf("Find target ID = %lu in insert delta\n",
+                         insert_item.second);
 
-            return insert_item.second;
+              return insert_item.second;
+            }
           }
 
           node_p = insert_node_p->child_node_p;
@@ -2422,11 +2428,12 @@ class BwTree {
             // keys directly since we know the search key is definitely smaller
             // then +Inf
             if((next_item.second == INVALID_NODE_ID) ||
-               (KeyCmpLess(search_key, next_item.first)))
-            bwt_printf("Find target ID = %lu in delete delta\n",
-                       prev_item.second);
+               (KeyCmpLess(search_key, next_item.first))) {
+              bwt_printf("Find target ID = %lu in delete delta\n",
+                         prev_item.second);
 
-            return prev_item.second;
+              return prev_item.second;
+            }
           }
 
           node_p = delete_node_p->child_node_p;
@@ -2444,7 +2451,7 @@ class BwTree {
           // we need to update tree snapshot to reflect the fact that we have
           // traversed to a new NodeID
           if(KeyCmpGreaterEqual(search_key, split_key)) {
-            bwt_printf("Go to split branch\n");
+            bwt_printf("Going to inner split sibling node\n");
 
             NodeID branch_id = split_node_p->insert_item.second;
 
@@ -3583,18 +3590,19 @@ class BwTree {
 
     // This returns the first iterator >= current low key
     // Note that we start searching on the second element
-    auto it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                               inner_node_p->sep_list.end(),
-                               // Search using the low key pair of the current
-                               // removed node. Since we know it is not
-                               // the leftmost node, the high key should be
-                               // a valid key
-                               snapshot_p->node_p->GetLowKeyPair(),
-                               [this](const KeyNodeIDPair &knp1,
-                                      const KeyNodeIDPair &knp2) {
-                                 return this->key_cmp_obj(knp1.first, knp2.first);
-                               });
+    auto it = std::find_if(inner_node_p->sep_list.begin() + 1,
+                           inner_node_p->sep_list.end(),
+                           [removed_node_id](const KeyNodeIDPair &knp) {
+                             return knp.second == removed_node_id;
+                           });
 
+    // The removed node ID may not be found in the inner node
+    if(it == inner_node_p->sep_list.end()) {
+      context_p->abort_flag = true;
+      
+      return;
+    }
+    
     // it points to the current node (must be an exact match),
     // so it-- points to its possible left sibling
     it--;
@@ -3825,10 +3833,6 @@ before_switch:
         const BaseNode *merge_right_branch = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
 
-        // This serves as the merge key (for remove node there is always a
-        // valid low key)
-        const KeyType &merge_key = snapshot_p->node_p->GetLowKey();
-
         // This will also be recorded in merge delta such that when
         // we finish merge delta we could recycle the node id as well
         // as the RemoveNode
@@ -3849,6 +3853,10 @@ before_switch:
         // Update snapshot pointer if we fall through to posting
         // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
+        
+        // This serves as the merge key (for left sibling there is always a
+        // valid high key)
+        const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
 
         // This holds the merge node if installation is successful
         // Not changed if CAS fails
@@ -3883,7 +3891,6 @@ before_switch:
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
-          assert(merge_node_p == nullptr);
           context_p->abort_flag = true;
 
           return;
@@ -4111,11 +4118,6 @@ before_switch:
         const BaseNode *merge_right_branch = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
 
-        // This serves as the merge key
-        // Note that since the removed node could not be a left most node
-        // so the low key is always a valid key
-        const KeyType &merge_key = snapshot_p->node_p->GetLowKey();
-
         // This will also be recorded in merge delta such that when
         // we finish merge delta we could recycle the node id as well
         // as the RemoveNode
@@ -4139,9 +4141,13 @@ before_switch:
         // Update snapshot pointer if we fall through to posting
         // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
+        
+        // This serves as the merge key
+        // Note that the left sibling node must have a valid high key
+        const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
 
         // This holds the merge node if installation is successful
-        // Not changed if CAS fails
+        // Not changed (i.e.undefined) if CAS fails
         const BaseNode *merge_node_p;
 
         bool ret;
@@ -4175,7 +4181,6 @@ before_switch:
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
-          assert(merge_node_p == nullptr);
           context_p->abort_flag = true;
 
           return false;
@@ -4776,6 +4781,7 @@ before_switch:
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
         
         // Since this is a split sibling, the low key must be a valid key
+        // NOTE: Only for InnerNodes could we call GetLowKey()
         const KeyType &split_key = new_inner_node_p->GetLowKey();
 
         // New node has at least one item (this is the basic requirement)
