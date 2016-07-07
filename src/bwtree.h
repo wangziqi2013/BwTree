@@ -222,7 +222,6 @@ static DummyOutObject dummy_out;
 
 using NodeID = uint64_t;
 
-extern NodeID INVALID_NODE_ID;
 extern bool print_flag;
 
 /*
@@ -344,6 +343,8 @@ class BwTree {
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 32;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
+  
+  constexpr static NodeID INVALID_NODE_ID = 0;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -1640,7 +1641,7 @@ class BwTree {
       tree_height{2UL},
 
       // NodeID counter
-      next_unused_node_id{0},
+      next_unused_node_id{1},
 
       // Initialize free NodeID stack
       free_node_id_list{},
@@ -1906,12 +1907,12 @@ class BwTree {
     bwt_printf("Initializing node layout for root and first page...\n");
 
     root_id = GetNextNodeID();
-    assert(root_id == 0UL);
+    assert(root_id == 1UL);
 
     // This is important since in the iterator we will use NodeID = 1
     // as the starting point of the traversal
     first_node_id = GetNextNodeID();
-    assert(first_node_id == 1UL);
+    assert(first_node_id == 2UL);
 
     // For the first inner node, it needs an empty low key
     // the search procedure will not look at it and only use it
@@ -2221,7 +2222,7 @@ abort_traverse:
                                [this](const KeyNodeIDPair &knp1,
                                       const KeyNodeIDPair &knp2) {
                                   return this->key_cmp_obj(knp1.first, knp2.first);
-                                });
+                               });
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -2722,14 +2723,17 @@ abort_traverse:
     const BaseNode *node_p = snapshot_p->node_p;
 
     assert(snapshot_p->IsLeaf() == true);
+    
+    // We only collect values for this key
+    const KeyType &search_key = context_p->search_key;
 
-    // This is used to control what could be collected
+    // This is used to detect whether the high key is too low for
+    // the current search key
+    // This will happen if a node splits and we missed the split delta
+    // after InnerInsertNode has been posted
     // NOTE: We should use pointer since it will be updated on presense
     // of a JumpToNodeID()
     const KeyNodeIDPair *high_key_pair_p = &node_p->GetHighKeyPair();
-
-    // We only collect values for this key
-    const KeyType &search_key = context_p->search_key;
 
     // The maximum size of present set and deleted set is just
     // the length of the delta chain. Since when we reached the leaf node
