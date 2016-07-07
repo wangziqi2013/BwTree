@@ -2163,6 +2163,10 @@ class BwTree {
 
             break;
           }
+          
+          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
+          assert((high_key_pair.second == INVALID_NODE_ID) ||
+                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
 
           // This might load a leaf child
           // Also LoadNodeID() does not guarantee the node bound matches
@@ -2223,6 +2227,10 @@ class BwTree {
 
             break;
           }
+          
+          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
+          assert((high_key_pair.second == INVALID_NODE_ID) ||
+                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
 
           bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
                      context_p->abort_counter,
@@ -2403,7 +2411,6 @@ class BwTree {
           const InnerDeleteNode *delete_node_p = \
             static_cast<const InnerDeleteNode *>(node_p);
 
-          const KeyNodeIDPair &delete_item = delete_node_p->delete_item;
           const KeyNodeIDPair &prev_item = delete_node_p->prev_item;
           const KeyNodeIDPair &next_item = delete_node_p->next_item;
 
@@ -2421,9 +2428,9 @@ class BwTree {
             if((next_item.second == INVALID_NODE_ID) ||
                (KeyCmpLess(search_key, next_item.first)))
             bwt_printf("Find target ID = %lu in delete delta\n",
-                       delete_item.second);
+                       prev_item.second);
 
-            return delete_item.second;
+            return prev_item.second;
           }
 
           node_p = delete_node_p->child_node_p;
@@ -2565,8 +2572,8 @@ class BwTree {
     // sort the first element - just leave it there
     std::sort(sep_list_p->begin() + 1,
               sep_list_p->end(),
-              [this](const KeyNodeIDPair &kvp1, const KeyNodeIDPair &kvp2) {
-                return this->key_cmp_obj(kvp1.first, kvp2.first);
+              [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
+                return this->key_cmp_obj(knp1.first, knp2.first);
               });
 
     return inner_node_p;
@@ -2613,9 +2620,9 @@ class BwTree {
               std::lower_bound(inner_node_p->sep_list.begin() + 1,
                                inner_node_p->sep_list.end(),
                                high_key_pair,     // This contains the high key
-                               [this](const KeyNodeIDPair &kvp1,
-                                      const KeyNodeIDPair &kvp2) {
-                                 return this->key_cmp_obj(kvp1.first, kvp2.first);
+                               [this](const KeyNodeIDPair &knp1,
+                                      const KeyNodeIDPair &knp2) {
+                                 return this->key_cmp_obj(knp1.first, knp2.first);
                                });
           }
           
@@ -2680,6 +2687,8 @@ class BwTree {
           if((high_key_pair.second == INVALID_NODE_ID) ||
              (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first))) {
             if(present_set.Exists(delete_node_p->delete_item) == false) {
+              // We do not need to check in deleted_set since if the element
+              // does not exist, then it could not be in the deleted_set
               deleted_set.Insert(delete_node_p->delete_item);
             }
           }
@@ -4391,8 +4400,10 @@ before_switch:
 
           // If this is false then we know the index term has already
           // been inserted
-          bool split_key_absent = \
-            FindSplitNextKey(context_p, parent_snapshot_p, insert_item_p, &next_item_p);
+          bool split_key_absent = FindSplitNextKey(context_p,
+                                                   parent_snapshot_p,
+                                                   insert_item_p,
+                                                   &next_item_p);
 
           if(context_p->abort_flag == true) {
             bwt_printf("Index term found but NodeID does not match - "
@@ -4667,8 +4678,11 @@ before_switch:
           bwt_printf("Leaf split delta CAS fails\n");
 
           // Need to use the epoch manager to recycle NodeID
+          // NOTE: DO NOT CHANGE THE NEW LEAF NODE since the
+          // constructor needs some pointer to initialize
+          // the high key and low key
           const LeafRemoveNode *fake_remove_node_p = \
-            new LeafRemoveNode{new_node_id, nullptr};
+            new LeafRemoveNode{new_node_id, new_leaf_node_p};
 
           epoch_manager.AddGarbageNode(fake_remove_node_p);
 
