@@ -86,7 +86,6 @@ using DeltaNode = typename TreeType::DeltaNode;
 
 using NodeType = typename TreeType::NodeType;
 using ValueSet = typename TreeType::ValueSet;
-using KeyType = typename TreeType::KeyType;
 using NodeSnapshot = typename TreeType::NodeSnapshot;
 using BaseNode = typename TreeType::BaseNode;
 

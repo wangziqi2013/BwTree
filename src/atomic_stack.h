@@ -10,16 +10,17 @@
  * a sense that CAS might wrongly return success even if the memory region
  * being compared has been modified several times with the final value
  * unchanged. In this case we attach a monotomically increasing version
- * number with the pointer, and updat them using double word compare and swap
+ * number with the pointer, and update them using double word compare and swap
  * which will be compiled into LOCK CMPXCHG16B on x86-64
  *
  * Since CMPXCHG16B requires 16 byte memory alignment, if this object is used
  * as a member or stack variable it should be specially treated and allocated
  * on a 16 byte aligned address.
  *
- * Double word load will be translated into LOCK CMPXCHG16B with 18 bit value 0
+ * Double word load will be translated into LOCK CMPXCHG16B with 128 bit value 0
  * If comparison is successful then we know the destination is 0. If CAS fails
- * then not the destination is loaded into RDX:RAX
+ * then the destination is loaded into RDX:RAX. In both case RDX:RAX could
+ * be loaded with the value in atomic variable.
  */
 template <typename T>
 class VersionedPointer {
@@ -32,6 +33,9 @@ class VersionedPointer {
 
   /*
    * Default Constructor
+   *
+   * NOTE: The noexcept is used to fulfill requirements on std::atomic
+   * constructor
    */
   inline VersionedPointer(T *p_ptr) noexcept :
     ptr{p_ptr},
@@ -40,6 +44,9 @@ class VersionedPointer {
 
   /*
    * Default Constructor - This is required by std::atomic
+   *
+   * NOTE: The noexcept is used to fulfill requirements on std::atomic
+   * constructor
    */
   inline VersionedPointer() noexcept :
     ptr{nullptr},
@@ -200,33 +207,14 @@ class AtomicStack {
    * The return value is the stack top before switching it to nullptr
    */
   inline VersionedPointer<T> PreparePush() {
-    /*
-    bool cas_ret;
-
-    // If CAS fails this value would be automatically reloaded
-    VersionedPointer<T> snapshot_top_p = top_p.load();
-
-    // Switch the current stack to empty mode by CAS top pointer
-    // to nullptr
-    // This eliminates contention between Push() and Pop()
-    do {
-      #ifdef BWTREE_DEBUG
-      assert((snapshot_top_p - data + 1) < STACK_SIZE);
-      #endif
-
-      // This contends with Pop()
-      cas_ret = top_p.compare_exchange_strong(snapshot_top_p,
-                                              nullptr);
-    } while(cas_ret == false);
-
-    return snapshot_top_p;
-    */
     VersionedPointer<T> snapshot_top_p = top_p.exchange(nullptr);
     
     #ifdef BWTREE_DEBUG
     assert((snapshot_top_p - data + 1) < STACK_SIZE);
     #endif
     
+    // If this return value contains nullptr internally
+    // then we know there is another Push() operation going on
     return snapshot_top_p;
   }
 
