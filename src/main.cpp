@@ -90,7 +90,6 @@ using NodeSnapshot = typename TreeType::NodeSnapshot;
 using BaseNode = typename TreeType::BaseNode;
 
 using Context = typename TreeType::Context;
-using OpState = typename TreeType::OpState;
 
 template <typename Fn, typename... Args>
 void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
