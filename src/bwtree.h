@@ -3968,58 +3968,61 @@ before_switch:
           }
 
           bwt_printf("Successfully loading root node ID (RO)\n");
-          
-          // Fall through here
 
+          // root node must be an inner node
+          // NOTE: We do not traverse down in this state, just hand it
+          // to Inner state and let it do all generic job
+          context_p->current_state = OpState::Inner;
+
+          break;
         } // case Init
         case OpState::Inner: {
-          while(1) {
-            NodeID child_node_id = NavigateInnerNode(context_p);
+          NodeID child_node_id = NavigateInnerNode(context_p);
 
-            // Navigate could abort since it might go to another NodeID
-            // if there is a split delta and the key is >= split key
-            if(context_p->abort_flag == true) {
-              bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
+          // Navigate could abort since it might go to another NodeID
+          // if there is a split delta and the key is >= split key
+          if(context_p->abort_flag == true) {
+            bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
 
-              // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-              // as a double check
-              // This is the only situation that this function returns
-              // INVALID_NODE_ID
-              assert(child_node_id == INVALID_NODE_ID);
+            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+            // as a double check
+            // This is the only situation that this function returns
+            // INVALID_NODE_ID
+            assert(child_node_id == INVALID_NODE_ID);
 
-              context_p->current_state = OpState::Abort;
+            context_p->current_state = OpState::Abort;
 
-              break;
-            }
+            break;
+          }
 
-            // This might load a leaf child
-            // Also LoadNodeID() does not guarantee the node bound matches
-            // search key. Since we could readjust using the split side link
-            // during Navigate...Node(), or abort if we reach the bottom
-            // while still observing an inconsistent high key
-            // (low key is always consistent)
-            LoadNodeIDReadOptimized(child_node_id, context_p);
+          // This might load a leaf child
+          // Also LoadNodeID() does not guarantee the node bound matches
+          // search key. Since we could readjust using the split side link
+          // during Navigate...Node(), or abort if we reach the bottom
+          // while still observing an inconsistent high key
+          // (low key is always consistent)
+          LoadNodeIDReadOptimized(child_node_id, context_p);
 
-            if(context_p->abort_flag == true) {
-              bwt_printf("LoadNodeID aborted (RO). ABORT\n");
+          if(context_p->abort_flag == true) {
+            bwt_printf("LoadNodeID aborted (RO). ABORT\n");
 
-              context_p->current_state = OpState::Abort;
+            context_p->current_state = OpState::Abort;
 
-              break;
-            }
+            break;
+          }
 
-            // This is the node we have just loaded
-            NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+          // This is the node we have just loaded
+          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-            if(snapshot_p->IsLeaf() == true) {
-              bwt_printf("The next node is a leaf (RO)\n");
-              
-              break;
-            }
-          } // while(1)
-          
-          // Fall though here
-          //break;
+          if(snapshot_p->IsLeaf() == true) {
+            bwt_printf("The next node is a leaf (RO)\n");
+
+            // If there is an abort later on then we just go to
+            // abort state
+            context_p->current_state = OpState::Leaf;
+          }
+
+          break;
         } // case Inner
         case OpState::Leaf: {
           NavigateLeafNode(context_p, *value_list_p);
