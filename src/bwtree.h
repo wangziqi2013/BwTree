@@ -344,7 +344,12 @@ class BwTree {
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
   
+  // This constant represents INVALID_NODE_ID which is used as an indication
+  // that the node is actually the last node on that level
   constexpr static NodeID INVALID_NODE_ID = 0;
+  
+  // The NodeID for the first leaf is fixed, which is 2
+  constexpr static NodeID FIRST_LEAF_NODE_ID = 2;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -1908,15 +1913,15 @@ class BwTree {
     root_id = GetNextNodeID();
     assert(root_id == 1UL);
 
-    // This is important since in the iterator we will use NodeID = 1
+    // This is important since in the iterator we will use NodeID = 2
     // as the starting point of the traversal
-    first_node_id = GetNextNodeID();
-    assert(first_node_id == 2UL);
+    first_leaf_id = GetNextNodeID();
+    assert(first_leaf_id == FIRST_LEAF_NODE_ID);
 
     // For the first inner node, it needs an empty low key
     // the search procedure will not look at it and only use it
     // if the search key could not be matched to anything after the first key
-    KeyNodeIDPair first_sep{KeyType{}, first_node_id};
+    KeyNodeIDPair first_sep{KeyType{}, first_leaf_id};
 
     // Initially there is one element inside the root node
     // so we set item count to be 1
@@ -1928,7 +1933,7 @@ class BwTree {
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
-               first_node_id);
+               first_leaf_id);
 
     InstallNewNode(root_id, root_node_p);
 
@@ -1937,7 +1942,7 @@ class BwTree {
     LeafNode *left_most_leaf = \
       new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 0};
 
-    InstallNewNode(first_node_id, left_most_leaf);
+    InstallNewNode(first_leaf_id, left_most_leaf);
 
     return;
   }
@@ -5706,8 +5711,12 @@ before_switch:
   // for NodeSnapshot
   std::atomic<size_t> tree_height;
 
+  // This value is atomic and will change
   std::atomic<NodeID> root_id;
-  NodeID first_node_id;
+
+  // This value is non-atomic, but it remains constant after constructor
+  NodeID first_leaf_id;
+  
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
@@ -6416,7 +6425,7 @@ try_join_again:
       leaf_node_p{nullptr},
       // On initialization, next key is set to -Inf
       // to indicate it is begin() vector
-      next_key{tree_p->GetNegInfKey()},
+      next_key_pair{},
       // These two will be set in LoadNextKey()
       is_end{false} {
       // 1. If the tree is not empty then this prepares the first page
