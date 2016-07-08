@@ -25,7 +25,7 @@ full-speed:
 	make clean
 	make OPT_FLAG=" -O3 -DNDEBUG -DBWTREE_NODEBUG"
 
-benchmark-all: main
+benchmark-all: main ./benchmark/btree.h ./benchmark/btree_multimap.h
 	$(PRELOAD_LIB) ./main --benchmark-all
 
 benchmark-bwtree: main
