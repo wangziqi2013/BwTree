@@ -1223,6 +1223,44 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+/*
+ * IteratorTest() - Tests iterator functionalities
+ */
+void IteratorTest(TreeType *t) {
+  const long key_num = 1024 * 1024;
+  
+  // First insert from 0 to 1 million
+  for(long int i = 0;i < key_num;i++) {
+    t->Insert(i, i);
+  }
+  
+  auto it = t->Begin();
+  
+  long i = 0;
+  while(it.IsEnd() == false) {
+    assert(it->first == it->second);
+    assert(it->first == i);
+    
+    i++;
+    it++;
+  }
+  
+  assert(i == (key_num));
+  
+  auto it2 = t->Begin(key_num - 1);
+  auto it3 = it2;
+  
+  it2++;
+  assert(it2.IsEnd() == true);
+  
+  assert(it3->first == (key_num - 1));
+  
+  auto it4 = t->Begin(key_num + 1);
+  assert(it4.IsEnd() == true);
+  
+  return;
+}
+
 void TestEpochManager(TreeType *t) {
   std::atomic<int> thread_finished;
   
@@ -1391,47 +1429,20 @@ int main(int argc, char **argv) {
     //////////////
     // Test iterator
     //////////////
-
-    LaunchParallelTestID(thread_num, InsertTest2, t1);
-    printf("Finished inserting all keys\n");
-
+    
+    printf("Testing iterator...\n");
+    
+    IteratorTest(t1);
     PrintStat(t1);
+    
+    printf("Finised tetsing iterator\n");
 
-    //IteratorGetValueTest(t1);
-    //printf("Finished scanning the tree\n");
-
-    /*
-    auto it = t1->Begin(888);
-    auto it2 = it;
-    for(int i = 0;i < 5;i++) {
-      printf("%lf ", *it++);
-    }
-
-    putchar('\n');
-
-    for(int i = 0;i < 5;i++) {
-      printf("%lf ", *it2++);
-    }
-
-    putchar('\n');
-
-    auto it3 = it;
-
-    for(int i = 0;i < 5;i++) {
-      printf("%lf ", *it3++);
-    }
-
-    putchar('\n');
-
-    assert(it < it3);
-    assert(it == it2);
-    */
+    // Do not print here otherwise we could not see result
+    delete t1;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
 
     //////////////
-
-    insert_success = 0UL;
-    delete_success = 0UL;
-    delete_attempt = 0UL;
 
     LaunchParallelTestID(thread_num, MixedTest1, t1);
     printf("Finished mixed testing\n");
