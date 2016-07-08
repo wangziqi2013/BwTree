@@ -2081,14 +2081,10 @@ class BwTree {
    * For value_p and value_list_p, at most one of them could be non-nullptr
    * If both are nullptr then we just traverse and do not do anything
    */
-  bool Traverse(Context *context_p,
-                const ValueType *value_p,
-                std::vector<ValueType> *value_list_p) {
-    // At most one could be non-nullptr
-    assert((value_p == nullptr) || (value_list_p == nullptr));
+  const KeyValuePair *Traverse(Context *context_p, const ValueType *value_p) {
     
-    // For value collection it always returns true
-    bool ret = true;
+    // For value collection it always returns nullptr
+    const KeyValuePair *found_pair_p = nullptr;
 
 retry_traverse:
     assert(context_p->abort_flag == false);
@@ -2149,25 +2145,16 @@ retry_traverse:
       }
     } //while(1)
 
-    if(value_list_p == nullptr) {
-      if(value_p == nullptr) {
-        // If both are nullptr then we just Traverse with a
-        // default constructed value which will lead us to the
-        // correct leaf page
-        // Do not overwrite ret here
-        NavigateLeafNode(context_p, ValueType{});
-      } else {
-        // If a value is given then use this value to Traverse down leaf
-        // page to find whether the value exists or not
-        ret = NavigateLeafNode(context_p, *value_p);
-      }
+    if(value_p == nullptr) {
+      // If both are nullptr then we just Traverse with a
+      // default constructed value which will lead us to the
+      // correct leaf page
+      // Do not overwrite ret here
+      NavigateLeafNode(context_p, ValueType{});
     } else {
-      // If the value list is given then Traverse down leaf node with the
-      // intention of collecting value for the given key. Also do not
-      // overwrite ret here
-      // NOTE: Even if NavigateLeafNode aborts,
-      // the vector is not affected
-      NavigateLeafNode(context_p, *value_list_p);
+      // If a value is given then use this value to Traverse down leaf
+      // page to find whether the value exists or not
+      found_pair_p = NavigateLeafNode(context_p, *value_p);
     }
 
     if(context_p->abort_flag == true) {
@@ -2181,7 +2168,7 @@ retry_traverse:
                context_p->current_level);
 
     // If there is no abort then we could safely return
-    return ret;
+    return found_pair_p;
     
 abort_traverse:
     assert(context_p->current_level >= 0);
@@ -2194,7 +2181,7 @@ abort_traverse:
     goto retry_traverse;
       
     assert(false);
-    return false;
+    return nullptr;
   }
   
   ///////////////////////////////////////////////////////////////////
@@ -2936,6 +2923,10 @@ abort_traverse:
    * insert/delete/update that only checks existence of values, rather than
    * collecting all values for a single key.
    *
+   * If return value is nullptr, then the key-value pair is not found. Otherwise
+   * a pointer to the matching item is returned. The caller should check return
+   * value and act accordingly.
+   *
    * This function works by traversing down the delta chain and compare
    * values with those in delta nodes and in the base node. No special data
    * structure is required
@@ -2944,8 +2935,8 @@ abort_traverse:
    * There are possibility that the switch aborts, and in this case this
    * function returns with value false.
    */
-  bool NavigateLeafNode(Context *context_p,
-                        const ValueType &search_value) {
+  const KeyValuePair *NavigateLeafNode(Context *context_p,
+                                       const ValueType &search_value) {
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -2981,7 +2972,7 @@ abort_traverse:
             
             context_p->abort_flag = true;
 
-            return false;
+            return nullptr;
           }
 
           const LeafNode *leaf_node_p = \
@@ -3006,13 +2997,15 @@ abort_traverse:
             // value has been deleted earlier then this function would
             // already have returned
             if(ValueCmpEqual(scan_start_it->second, search_value)) {
-              return true;
+              // Return a pointer to the item inside LeafNode;
+              // This pointer should remain valid until epoch is exited
+              return &(*scan_start_it);
             }
 
             scan_start_it++;
           }
 
-          return false;
+          return nullptr;
         }
         case NodeType::LeafInsertType: {
           const LeafInsertNode *insert_node_p = \
@@ -3020,7 +3013,7 @@ abort_traverse:
 
           if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
             if(ValueCmpEqual(insert_node_p->insert_item.second, search_value)) {
-              return true;
+              return &insert_node_p->insert_item;
             }
           }
 
@@ -3035,7 +3028,7 @@ abort_traverse:
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->delete_item.first)) {
             if(ValueCmpEqual(delete_node_p->delete_item.second, search_value)) {
-              return false;
+              return nullptr;
             }
           }
 
@@ -3088,7 +3081,8 @@ abort_traverse:
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
 
-              return false;
+              // This valus does not matter
+              return nullptr;
             }
 
             // These three needs to be refreshed after switching node
@@ -3115,7 +3109,7 @@ abort_traverse:
 
     // We cannot reach here
     assert(false);
-    return false;
+    return nullptr;
   }
   
   /*
@@ -5238,10 +5232,10 @@ before_switch:
       Context context{key};
 
       // Check whether the key-value pair exists
-      bool value_exist = Traverse(&context, &value, nullptr);
+      const KeyValuePair *item_p = Traverse(&context, &value);
 
       // If the key-value pair already exists then return false
-      if(value_exist == true) {
+      if(item_p != nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
 
         return false;
@@ -5320,7 +5314,7 @@ before_switch:
       std::vector<ValueType> existing_value_list{};
 
       // Collect values with node navigation
-      Traverse(&context, &existing_value_list);
+      TraverseReadOptimized(&context, &existing_value_list);
 
       // At the beginning of each iteration we just set the value pointer
       // to be empty
@@ -5406,8 +5400,7 @@ before_switch:
    *
    * This functions shares a same structure with the Insert() one
    */
-  bool Delete(const KeyType &key,
-              const ValueType &value) {
+  bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
 
     delete_op_count.fetch_add(1);
@@ -5419,8 +5412,9 @@ before_switch:
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      bool value_exist = Traverse(&context, &value, nullptr);
-      if(value_exist == false) {
+      const KeyValuePair *item_p = Traverse(&context, &value);
+      
+      if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
 
         return false;
@@ -5466,17 +5460,16 @@ before_switch:
   #ifdef BWTREE_PELOTON
 
   /*
-   * DeleteItemPointer() - Deletes an item pointer from the index by comparing
-   *                       the target of the pointer, rather than pointer itself
+   * DeleteExchange() - Deletes an item pointer and copies the deleted
+   *                    value to the input parameter
    *
-   * Note that this function assumes the value always being ItemPointer *
-   * and in this function we compare item pointer's target rather than
-   * the value of pointers themselves. Also when a value is deleted, we
-   * free the memory, which is allocated when the value is inserted
+   * If the key-value pair is found, then they will be deleted from the
+   * index, and input parameter value would be overwritten
+   * using the deleted value of value (key is unchanged; of course it
+   * should not change since the key must be the same)
    */
-  bool DeleteItemPointer(const KeyType &key,
-                         const ItemPointer &value) {
-    bwt_printf("Delete Item Pointer called\n");
+  bool DeleteItemPointer(KeyType &key, ItemPointer &value) {
+    bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
 
@@ -5485,76 +5478,31 @@ before_switch:
     while(1) {
       Context context{key};
 
-      // Collect values with node navigation
-      Traverse(&context, true);
+      // Navigate leaf nodes to check whether the key-value
+      // pair exists
+      const KeyValuePair *item_p = Traverse(&context, &value);
+      
+      // If value not found just return
+      if(item_p == nullptr) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        return false;
+      }
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
-      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
-      KeyValueSet &container = logical_node_p->GetContainer();
-
-      // If the key or key-value pair does not exist then we just
-      // return false
-      typename KeyValueSet::iterator it = container.find(key);
-      if(it == container.end()) {
-        epoch_manager.LeaveEpoch(epoch_node_p);
-
-        return false;
-      }
-
-      bool found_flag = false;
-      ItemPointer *found_value = nullptr;
-      // We iterator over values stored with the given key
-      // v should be ItemPointer *
-      for(ItemPointer *v : it->second) {
-        if((v->block == value.block) &&
-           (v->offset == value.offset)) {
-          found_flag = true;
-          found_value = v;
-        }
-      }
-
-      // If the value was not found, then just leave the epoch
-      // and return false to notify the caller
-      if(found_flag == false) {
-        assert(found_value == nullptr);
-
-        epoch_manager.LeaveEpoch(epoch_node_p);
-
-        return false;
-      }
 
       // We will CAS on top of this
       const BaseNode *node_p = snapshot_p->node_p;
       NodeID node_id = snapshot_p->node_id;
 
-      // If node_p is a delta node then we have to use its
-      // delta value
-      int depth = 1;
-
-      if(node_p->IsDeltaNode() == true) {
-        const DeltaNode *delta_node_p = \
-          static_cast<const DeltaNode *>(node_p);
-
-        depth = delta_node_p->depth + 1;
-      }
-
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, found_value, depth, node_p};
+        new LeafDeleteNode{key, value, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
                                       node_p);
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
-
-        // This will actually not be used anymore, so maybe
-        // could save this assignment
-        snapshot_p->SwitchPhysicalPointer(delete_node_p);
-
-        // This piece of memory holds ItemPointer, and is allocated by
-        // InsertEntry() in its wrapper class. We need to free the memory
-        // when the index is deleted
-        delete found_value;
 
         // If install is a success then just break from the loop
         // and return
@@ -5573,46 +5521,15 @@ before_switch:
       bwt_printf("Retry installing leaf delete delta from the root\n");
     }
 
+    // Assign the old deleted value to input parameter value
+    value = item_p->second;
+
     epoch_manager.LeaveEpoch(epoch_node_p);
 
     return true;
   }
 
   #endif
-
-  /*
-   * DebugNoEpochGotoLeaf() - Go to leaf page without actually copying values
-   *                          and joining epoch
-   *
-   * This is used for debugging to measure the overhead brought by epoch
-   */
-  void DebugNoEpochGotoLeaf(const KeyType &search_key) {
-    bwt_printf("DebugNoEpochGotoLeaf()\n");
-
-    Context context{search_key};
-    Traverse(&context, nullptr, nullptr);
-
-    return;
-  }
-
-  /*
-   * DebugGotoLeaf() - Go to leaf page without actually copying values
-   *
-   * This is used to measure the overhead of copying values
-   */
-  void DebugGotoLeaf(const KeyType &search_key) {
-    bwt_printf("DebugGotoLeaf()\n");
-
-    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
-
-    Context context{search_key};
-
-    Traverse(&context, nullptr, nullptr);
-
-    epoch_manager.LeaveEpoch(epoch_node_p);
-
-    return;
-  }
 
   /*
    * GetValue() - Fill a value list with values stored
@@ -5652,7 +5569,7 @@ before_switch:
     Context context{search_key};
 
     std::vector<ValueType> value_list{};
-    Traverse(&context, nullptr, &value_list);
+    TraverseReadOptimized(&context, &value_list);
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
@@ -6735,7 +6652,7 @@ try_join_again:
 
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
-        tree_p->Traverse(&context, nullptr, nullptr);
+        tree_p->Traverse(&context, nullptr);
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
