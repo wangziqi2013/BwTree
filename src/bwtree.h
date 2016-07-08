@@ -6623,7 +6623,6 @@ try_join_again:
         return *this;
       }
 
-      is_begin = false;
       MoveAheadByOne();
 
       return *this;
@@ -6641,11 +6640,6 @@ try_join_again:
 
       // Make a copy of the current one before advancing
       ForwardIterator temp = *this;
-
-      // Since it is forward iterator, it is sufficient
-      // to set begin flag to false everytime the iterator is advanced
-      // But this has to be done after saving temp
-      is_begin = false;
 
       MoveAheadByOne();
 
@@ -6781,78 +6775,23 @@ try_join_again:
     }
 
     /*
-     * IsLastLeafPage() - Return true if the leaf page is the last one
-     *
-     * We check for last page by checking whether the next key is +Inf
-     * If it is true then we know we are now on the last page, and if keys
-     * run out then we further know we are at the end of iteration
-     */
-    bool IsLastLeafPage() {
-      // If the next key is +Inf then we are on the last page
-      return next_key.IsPosInf();
-    }
-
-    /*
      * MoveAheadByOne() - Move the iterator ahead by one
      *
      * The caller is responsible for checking whether the iterator has reached
      * its end. If iterator has reached end then assertion fails.
      */
     inline void MoveAheadByOne() {
-      // This invalidates the iterator as the begin iterator
-      is_begin = false;
+      // Move the iterator on leaf node data list
+      it++;
 
-      value_it++;
-      value_distance++;
-
-      // If we have reached the last element for a given key,
-      // then change to the next key (in key order)
-      // and readjust value iterator to the first element
-      if(value_it == key_it->second.end()) {
-        // Try to increament the key iterator first, and if we
-        // run out of keys we know this is the end of page
-        key_it++;
-        key_distance++;
-
-        if(key_it == logical_node_p->key_value_set.end()) {
-          // If we ran out of keys, and we are on the last page
-          if(IsLastLeafPage() == true) {
-            is_end = true;
-
-            return;
-          } else {
-            // This will set key_it to the first key >= next_key
-            // but not sure about key distance
-            // NOTE: This function could result in reaching the end iterator
-            // in that case key_it is invalid
-            LoadNextKey();
-
-            // If current page is not last page, but load next key
-            // sets is_end flag, then we know the page after this page
-            // has been merged into current page, and all keys >= next_key
-            // has been deleted
-            // This is an extremely complicated case, and it worth that many
-            // lines of comments to make it clear
-            if(is_end == true) {
-              return;
-            }
-          } // if is last leaf page == true
-        } else {
-          // NOTE: If we switch key and do not have to load a new page
-          // then we need to update the raw key pointer to reflect
-          // the key change
-          // During iteration this key is very important
-          raw_key_p = &key_it->first.key;
-        } // if key_it == end()
-
-        // If we switched to the next key in current page
-        // or we have loaded a new page and readjusted the key to be
-        // the first element in the page, we need also to readjust the
-        // value iterator to the first element for the current key
-        value_it = key_it->second.begin();
-        value_distance = 0;
-      } // if value_it == end()
-
+      // If we have reached the last element then either go to the next
+      // then just try to load the next key. This has the possibility
+      // that the is_end flag is set, but we do not care about it, and
+      // directly returns after LowerBound() returns
+      if(it == leaf_node_p->data_list.end()) {
+        LowerBound();
+      }
+      
       return;
     }
   }; // ForwardIterator
