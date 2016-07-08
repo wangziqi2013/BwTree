@@ -24,6 +24,8 @@
 #include <cstring>
 #include <functional>
 
+#define BLOOM_FILTER_ENABLED
+
 /*
  * class BloomFilter
  */
@@ -51,7 +53,9 @@ class BloomFilter {
   static constexpr size_t BYTE_OFFSET_MASK = 0x00000000000000F8;
   
  private:
+  #ifdef BLOOM_FILTER_ENABLED
   unsigned char bit_array_0[FILTER_SIZE];
+  #endif
   
   const ValueType **data_p;
   int value_count;
@@ -89,8 +93,9 @@ class BloomFilter {
     value_count{0},
     value_eq_obj{p_value_eq_obj},
     value_hash_obj{p_value_hash_obj} {
-      
+    #ifdef BLOOM_FILTER_ENABLED
     memset(bit_array_0, 0, sizeof(bit_array_0));
+    #endif
     
     return;
   }
@@ -123,10 +128,12 @@ class BloomFilter {
     // sufficient space holding all values
     data_p[value_count] = &value;
     value_count++;
-    
+
+    #ifdef BLOOM_FILTER_ENABLED
     bit_array_0[(hash_value & BYTE_OFFSET_MASK) >> 3] |= \
       (0x1 << (hash_value & BIT_OFFSET_MASK));
- 
+    #endif
+    
     return;
   }
   
@@ -147,12 +154,15 @@ class BloomFilter {
    * data structure (e.g. simple linear array)
    */
   inline bool __ExistsScalar(const ValueType &value) {
+    
+    #ifdef BLOOM_FILTER_ENABLED
     register size_t hash_value = value_hash_obj(value);
 
     if((bit_array_0[(hash_value & BYTE_OFFSET_MASK) >> 3] & \
       (0x1 << (hash_value & BIT_OFFSET_MASK))) == 0x00) {
       return false;
     }
+    #endif
     
     // We are still not sure whether the element exists or not
     // even if we reach here - though it should be a rare event
