@@ -5457,8 +5457,6 @@ before_switch:
     return true;
   }
 
-  #ifdef BWTREE_PELOTON
-
   /*
    * DeleteExchange() - Deletes an item pointer and copies the deleted
    *                    value to the input parameter
@@ -5528,8 +5526,6 @@ before_switch:
 
     return true;
   }
-
-  #endif
 
   /*
    * GetValue() - Fill a value list with values stored
