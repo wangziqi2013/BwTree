@@ -5466,10 +5466,12 @@ before_switch:
    * using the deleted value of value (key is unchanged; of course it
    * should not change since the key must be the same)
    */
-  bool DeleteExchange(KeyType &key, ItemPointer &value) {
+  bool DeleteExchange(KeyType &key, ValueType &value) {
     bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
+    
+    const KeyValuePair *item_p;
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5478,7 +5480,7 @@ before_switch:
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      const KeyValuePair *item_p = Traverse(&context, &value);
+      item_p = Traverse(&context, &value);
       
       // If value not found just return
       if(item_p == nullptr) {
