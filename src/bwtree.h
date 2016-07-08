@@ -6580,8 +6580,8 @@ try_join_again:
      * If one of them is not then the result is false
      * Otherwise the result is the comparison result of current key
      */
-    inline bool operator==(const ForwardIterator &it) const {
-      if(it.is_end == true) {
+    inline bool operator==(const ForwardIterator &other) const {
+      if(other.is_end == true) {
         if(is_end == true) {
           // Two end iterators are equal to each other
           return true;
@@ -6680,7 +6680,7 @@ try_join_again:
     KeyNodeIDPair next_key_pair;
     
     // This is the actual iterator
-    std::vector<KeyValuePair>::const_iterator it;
+    typename std::vector<KeyValuePair>::const_iterator it;
 
     // We use this flag to indicate whether we have reached the end of
     // iteration.
@@ -6741,7 +6741,7 @@ try_join_again:
         assert(node_p->IsOnLeafDeltaChain() == true);
 
         // Set high key pair for next call of this function
-        high_key_pair = node_p->GetHighKeyPair();
+        next_key_pair = node_p->GetHighKeyPair();
 
         // Colsolidate leaf node
         leaf_node_p = CollectAllValuesOnLeaf(node_p);
@@ -6756,8 +6756,8 @@ try_join_again:
         it = std::lower_bound(leaf_node_p->data_list.begin(),
                               leaf_node_p->data_list.end(),
                               std::make_pair(*start_key_p, ValueType{}),
-                              [tree_p](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                                return tree_p->key_cmp_obj(kvp1.first, kvp2.first);
+                              [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+                                return this->tree_p->key_cmp_obj(kvp1.first, kvp2.first);
                               });
 
         // All keys in the leaf page are < start key. Switch the next key until
