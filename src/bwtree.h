@@ -92,6 +92,7 @@
                                             typename ValueType, \
                                             typename KeyComparator, \
                                             typename KeyEqualityChecker, \
+                                            typename KeyHasher, \
                                             typename ValueEqualityChecker, \
                                             typename ValueHashFunc>
 
