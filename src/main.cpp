@@ -619,9 +619,6 @@ bool insert_get_value_print = false;
 void InsertGetValueTest(TreeType *t) {
   bwt_printf("GetValueTest()\n");
 
-  auto value_set = t->GetValue(0);
-  assert(value_set.size() == 1);
-
   for(int i = 0;i < key_num * thread_num;i++) {
     auto value_set = t->GetValue(i);
 
