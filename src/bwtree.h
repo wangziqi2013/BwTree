@@ -6471,12 +6471,13 @@ try_join_again:
     /*
      * Copy Constructor - Constructs a new iterator instance from existing one
      *
-     * In ForwardIterator we always maintain the property that logical leaf node
-     * is not shared between iterators. This implies we need to also copy the
-     * logical leaf node during copy construction.
+     * During copy construction we need to take care that the iterator is
+     * invalidated after copy constructing LeafNode from the other iterator
+     * to this. So we should move the iterator manually
      */
     ForwardIterator(const ForwardIterator &other) :
       tree_p{other.tree_p},
+      // This copy constructs all members recursively by default
       leaf_node_p{new LeafNode{*other.leaf_node_p}},
       next_key_pair{other.next_key_pair},
       is_end{other.is_end} {
@@ -6495,7 +6496,7 @@ try_join_again:
      * for logical leaf node, and direct assign the logical leaf node from
      * the source object to the current object
      */
-    ForwardIterator &operator=(const ForwardIterator &it) {
+    ForwardIterator &operator=(const ForwardIterator &other) {
       // It is crucial to prevent self assignment since we do pointer
       // operation here
       if(this == &it) {
@@ -6504,34 +6505,18 @@ try_join_again:
 
       // First copy the logical node into current instance
       // DO NOT NEED delete; JUST DO A VALUE COPY
-      assert(logical_node_p != nullptr);
-      *logical_node_p = *it.logical_node_p;
+      // since the storage has already been allocated during construction
+      *leaf_node_p = *other.leaf_node_p;
 
       // Copy everything that could be copied
-      tree_p = it.tree_p;
-      next_key = it.next_key;
+      tree_p = other.tree_p;
+      next_key_pair = other.next_key_pair;
+      
+      is_end = other.is_end;
 
-      is_begin = it.is_begin;
-      is_end = it.is_end;
-
-      key_distance = it.key_distance;
-      value_distance = it.value_distance;
-
-      // The following is copied from the copy constructor
-
-      // NOTE: It is possible that for an empty container
-      // the key value set is empty. In that case key_distance
-      // and value_distance must be 0
-      key_it = logical_node_p->key_value_set.begin();
-      std::advance(key_it, key_distance);
-
-      value_it = key_it->second.begin();
-      std::advance(value_it, value_distance);
-
-      raw_key_p = &key_it->first.key;
-      value_set_p = &key_it->second;
-
-      // The above is copied from the copy constructor
+      // Move the iterator ahead
+      it = leaf_node_p->data_list.begin() + \
+           std::distance(other.leaf_node_p->data_list, other.it);
 
       return *this;
     }
@@ -6543,9 +6528,9 @@ try_join_again:
      * NOTE: We need to return a constant reference to both save a value copy
      * and also to prevent caller modifying value using the reference
      */
-    inline const ValueType &operator*() {
+    inline const KeyValuePair &operator*() {
       // This itself is a ValueType reference
-      return (*value_it);
+      return (*it);
     }
 
     /*
@@ -6554,8 +6539,8 @@ try_join_again:
      * Note that this function returns a contsnat pointer which can be used
      * to access members of the value, but cannot modify
      */
-    inline const ValueType *operator->() {
-      return &(*value_it);
+    inline const KeyValuePair *operator->() {
+      return &(*it);
     }
 
     /*
@@ -6571,8 +6556,8 @@ try_join_again:
      * all existing keys in the tree. In that case, end flag is set, so
      * in this function we check end flag first
      */
-    inline bool operator<(const ForwardIterator &it) const {
-      if(it.is_end == true) {
+    inline bool operator<(const ForwardIterator &other) const {
+      if(other.is_end == true) {
         if(is_end == true) {
           // If both are end iterator then no one is less than another
           return false;
@@ -6584,7 +6569,8 @@ try_join_again:
       }
 
       // If none of them is end iterator, we simply do a key comparison
-      return tree_p->RawKeyCmpLess(*raw_key_p, *it.raw_key_p);
+      // using the iterator
+      return tree_p->KeyCmpLess(it->first, other.it->first);
     }
 
     /*
@@ -6605,7 +6591,7 @@ try_join_again:
         }
       }
 
-      return tree_p->RawKeyCmpEqual(*raw_key_p, *it.raw_key_p);
+      return tree_p->KeyCmpEqual(it->first, other.it->first);
     }
 
     /*
@@ -6617,9 +6603,9 @@ try_join_again:
      */
     ~ForwardIterator() {
       // This holds even if the tree is empty
-      assert(logical_node_p != nullptr);
+      assert(leaf_node_p != nullptr);
 
-      delete logical_node_p;
+      delete leaf_node_p;
 
       return;
     }
