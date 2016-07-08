@@ -222,7 +222,6 @@ static DummyOutObject dummy_out;
 
 using NodeID = uint64_t;
 
-extern NodeID INVALID_NODE_ID;
 extern bool print_flag;
 
 /*
@@ -334,8 +333,6 @@ class BwTree {
   // So maximum delta chain length on leaf is 8
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
 
-  constexpr static int STATIC_CONSOLIDATION_THREAHOLD = 10;
-
   // If node size goes above this then we split it
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 128;
@@ -344,6 +341,13 @@ class BwTree {
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 32;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
+  
+  // This constant represents INVALID_NODE_ID which is used as an indication
+  // that the node is actually the last node on that level
+  constexpr static NodeID INVALID_NODE_ID = 0;
+  
+  // The NodeID for the first leaf is fixed, which is 2
+  constexpr static NodeID FIRST_LEAF_NODE_ID = 2;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -626,23 +630,6 @@ class BwTree {
   }
 
   /*
-   * enum class OpState - Current state of the state machine
-   *
-   * Init - We need to load root ID and start the traverse
-   *        After loading root ID should switch to Inner state
-   *        since we know there must be an inner node
-   * Inner - We are currently on an inner node, and want to go one
-   *         level down
-   * Abort - We just saw abort flag, and will reset everything back to Init
-   */
-  enum class OpState {
-    Init,
-    Inner,
-    Leaf,
-    Abort
-  };
-
-  /*
    * class Context - Stores per thread context data that is used during
    *                 tree traversal
    *
@@ -667,10 +654,6 @@ class BwTree {
     // On initialization this is set to -1
     int current_level;
 
-    // It is used in the finite state machine that drives the traversal
-    // process down to a leaf node
-    OpState current_state;
-
     // Whether to abort current traversal, and start a new one
     // after seeing this flag, all function should return without
     // any further action, and let the main driver to perform abort
@@ -682,12 +665,10 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key,
-            size_t p_tree_height) :
+    Context(const KeyType p_search_key) :
       search_key{p_search_key},
       abort_counter{0},
       current_level{-1},
-      current_state{OpState::Init},
       abort_flag{false}
     {}
 
@@ -1096,7 +1077,7 @@ class BwTree {
       // This is the key part of the key-value pair, also the low key
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
-      const KeyType &split_key = copy_start_it->first;
+      //const KeyType &split_key = copy_start_it->first;
 
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
@@ -1662,7 +1643,7 @@ class BwTree {
       tree_height{2UL},
 
       // NodeID counter
-      next_unused_node_id{0},
+      next_unused_node_id{1},
 
       // Initialize free NodeID stack
       free_node_id_list{},
@@ -1928,17 +1909,17 @@ class BwTree {
     bwt_printf("Initializing node layout for root and first page...\n");
 
     root_id = GetNextNodeID();
-    assert(root_id == 0UL);
+    assert(root_id == 1UL);
 
-    // This is important since in the iterator we will use NodeID = 1
+    // This is important since in the iterator we will use NodeID = 2
     // as the starting point of the traversal
-    first_node_id = GetNextNodeID();
-    assert(first_node_id == 1UL);
+    first_leaf_id = GetNextNodeID();
+    assert(first_leaf_id == FIRST_LEAF_NODE_ID);
 
     // For the first inner node, it needs an empty low key
     // the search procedure will not look at it and only use it
     // if the search key could not be matched to anything after the first key
-    KeyNodeIDPair first_sep{KeyType{}, first_node_id};
+    KeyNodeIDPair first_sep{KeyType{}, first_leaf_id};
 
     // Initially there is one element inside the root node
     // so we set item count to be 1
@@ -1950,7 +1931,7 @@ class BwTree {
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
-               first_node_id);
+               first_leaf_id);
 
     InstallNewNode(root_id, root_node_p);
 
@@ -1959,7 +1940,7 @@ class BwTree {
     LeafNode *left_most_leaf = \
       new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 0};
 
-    InstallNewNode(first_node_id, left_most_leaf);
+    InstallNewNode(first_leaf_id, left_most_leaf);
 
     return;
   }
@@ -2100,164 +2081,107 @@ class BwTree {
    * For value_p and value_list_p, at most one of them could be non-nullptr
    * If both are nullptr then we just traverse and do not do anything
    */
-  bool Traverse(Context *context_p,
-                const ValueType *value_p,
-                std::vector<ValueType> *value_list_p) {
-    // At most one could be non-nullptr
-    assert((value_p == nullptr) || (value_list_p == nullptr));
+  const KeyValuePair *Traverse(Context *context_p, const ValueType *value_p) {
+    
+    // For value collection it always returns nullptr
+    const KeyValuePair *found_pair_p = nullptr;
+
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    // This is the serialization point for reading/writing root node
+    NodeID start_node_id = root_id.load();
+
+    // We need to call this even for root node since there could
+    // be split delta posted on to root node
+    LoadNodeID(start_node_id, context_p);
+
+    // There could be an abort here, and we could not directly jump
+    // to Init state since we would like to do some clean up or
+    // statistics after aborting
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID\n");
 
     while(1) {
-      // NOTE: break only breaks out this switch
-      switch(context_p->current_state) {
-        case OpState::Init: {
-          assert(context_p->abort_flag == false);
-          assert(context_p->current_level == -1);
+      NodeID child_node_id = NavigateInnerNode(context_p);
 
-          // This is the serialization point for reading/writing root node
-          NodeID start_node_id = root_id.load();
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort. ABORT\n");
 
-          // We need to call this even for root node since there could
-          // be split delta posted on to root node
-          LoadNodeID(start_node_id,
-                     context_p);
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
 
-          // There could be an abort here, and we could not directly jump
-          // to Init state since we would like to do some clean up or
-          // statistics after aborting
-          if(context_p->abort_flag == true) {
-            context_p->current_state = OpState::Abort;
+        goto abort_traverse;
+      }
 
-            // This goes to the beginning of loop
-            break;
-          }
+      // This might load a leaf child
+      // Also LoadNodeID() does not guarantee the node bound matches
+      // seatch key. Since we could readjust using the split side link
+      // during Navigate...Node()
+      LoadNodeID(child_node_id, context_p);
 
-          bwt_printf("Successfully loading root node ID\n");
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted. ABORT\n");
 
-          // root node must be an inner node
-          // NOTE: We do not traverse down in this state, just hand it
-          // to Inner state and let it do all generic job
-          context_p->current_state = OpState::Inner;
+        goto abort_traverse;
+      }
 
-          break;
-        } // case Init
-        case OpState::Inner: {
-          NodeID child_node_id = NavigateInnerNode(context_p);
+      // This is the node we have just loaded
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-          // Navigate could abort since it might go to another NodeID
-          // if there is a split delta and the key is >= split key
-          if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort. ABORT\n");
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf\n");
 
-            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-            // as a double check
-            // This is the only situation that this function returns
-            // INVALID_NODE_ID
-            assert(child_node_id == INVALID_NODE_ID);
+        break;
+      }
+    } //while(1)
 
-            context_p->current_state = OpState::Abort;
+    if(value_p == nullptr) {
+      // If both are nullptr then we just Traverse with a
+      // default constructed value which will lead us to the
+      // correct leaf page
+      // Do not overwrite ret here
+      NavigateLeafNode(context_p, ValueType{});
+    } else {
+      // If a value is given then use this value to Traverse down leaf
+      // page to find whether the value exists or not
+      found_pair_p = NavigateLeafNode(context_p, *value_p);
+    }
 
-            break;
-          }
-          
-          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
-          assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
+    if(context_p->abort_flag == true) {
+      bwt_printf("NavigateLeafNode aborts. ABORT\n");
 
-          // This might load a leaf child
-          // Also LoadNodeID() does not guarantee the node bound matches
-          // seatch key. Since we could readjust using the split side link
-          // during Navigate...Node()
-          LoadNodeID(child_node_id, context_p);
+      goto abort_traverse;
+    }
 
-          if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted. ABORT\n");
+    bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
+               context_p->abort_counter,
+               context_p->current_level);
 
-            context_p->current_state = OpState::Abort;
+    // If there is no abort then we could safely return
+    return found_pair_p;
+    
+abort_traverse:
+    assert(context_p->current_level >= 0);
 
-            break;
-          }
+    context_p->current_level = -1;
 
-          // This is the node we have just loaded
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    context_p->abort_flag = false;
+    context_p->abort_counter++;
 
-          if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf\n");
-
-            // If there is an abort later on then we just go to
-            // abort state
-            context_p->current_state = OpState::Leaf;
-          }
-
-          break;
-        } // case Inner
-        case OpState::Leaf: {
-          // For value collection it always returns true
-          bool ret = true;
-
-          if(value_list_p == nullptr) {
-            if(value_p == nullptr) {
-              // If both are nullptr then we just Traverse with a
-              // default constructed value which will lead us to the
-              // correct leaf page
-              // Do not overwrite ret here
-              NavigateLeafNode(context_p, ValueType{});
-            } else {
-              // If a value is given then use this value to Traverse down leaf
-              // page to find whether the value exists or not
-              ret = NavigateLeafNode(context_p, *value_p);
-            }
-          } else {
-            // If the value list is given then Traverse down leaf node with the
-            // intention of collecting value for the given key. Also do not
-            // overwrite ret here
-            // NOTE: Even if NavigateLeafNode aborts,
-            // the vector is not affected
-            NavigateLeafNode(context_p, *value_list_p);
-          }
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts. ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-          
-          auto high_key_pair = GetLatestNodeSnapshot(context_p)->node_p->GetHighKeyPair();
-          assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(context_p->search_key, high_key_pair.first)));
-
-          bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
-                     context_p->abort_counter,
-                     context_p->current_level);
-
-          // If there is no abort then we could safely return
-          return ret;
-
-          assert(false);
-        }
-        case OpState::Abort: {
-          assert(context_p->current_level >= 0);
-
-          context_p->current_state = OpState::Init;
-          context_p->current_level = -1;
-
-          context_p->abort_flag = false;
-          context_p->abort_counter++;
-
-          break;
-        } // case Abort
-        default: {
-          bwt_printf("ERROR: Unknown State: %d\n",
-                     static_cast<int>(context_p->current_state));
-          assert(false);
-          break;
-        }
-      } // switch current_state
-    } // while(1)
-
+    goto retry_traverse;
+      
     assert(false);
-    return false;
+    return nullptr;
   }
   
   ///////////////////////////////////////////////////////////////////
@@ -2287,7 +2211,7 @@ class BwTree {
                                [this](const KeyNodeIDPair &knp1,
                                       const KeyNodeIDPair &knp2) {
                                   return this->key_cmp_obj(knp1.first, knp2.first);
-                                });
+                               });
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -2788,14 +2712,17 @@ class BwTree {
     const BaseNode *node_p = snapshot_p->node_p;
 
     assert(snapshot_p->IsLeaf() == true);
+    
+    // We only collect values for this key
+    const KeyType &search_key = context_p->search_key;
 
-    // This is used to control what could be collected
+    // This is used to detect whether the high key is too low for
+    // the current search key
+    // This will happen if a node splits and we missed the split delta
+    // after InnerInsertNode has been posted
     // NOTE: We should use pointer since it will be updated on presense
     // of a JumpToNodeID()
     const KeyNodeIDPair *high_key_pair_p = &node_p->GetHighKeyPair();
-
-    // We only collect values for this key
-    const KeyType &search_key = context_p->search_key;
 
     // The maximum size of present set and deleted set is just
     // the length of the delta chain. Since when we reached the leaf node
@@ -2996,6 +2923,10 @@ class BwTree {
    * insert/delete/update that only checks existence of values, rather than
    * collecting all values for a single key.
    *
+   * If return value is nullptr, then the key-value pair is not found. Otherwise
+   * a pointer to the matching item is returned. The caller should check return
+   * value and act accordingly.
+   *
    * This function works by traversing down the delta chain and compare
    * values with those in delta nodes and in the base node. No special data
    * structure is required
@@ -3004,8 +2935,8 @@ class BwTree {
    * There are possibility that the switch aborts, and in this case this
    * function returns with value false.
    */
-  bool NavigateLeafNode(Context *context_p,
-                        const ValueType &search_value) {
+  const KeyValuePair *NavigateLeafNode(Context *context_p,
+                                       const ValueType &search_value) {
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -3041,7 +2972,7 @@ class BwTree {
             
             context_p->abort_flag = true;
 
-            return false;
+            return nullptr;
           }
 
           const LeafNode *leaf_node_p = \
@@ -3066,13 +2997,15 @@ class BwTree {
             // value has been deleted earlier then this function would
             // already have returned
             if(ValueCmpEqual(scan_start_it->second, search_value)) {
-              return true;
+              // Return a pointer to the item inside LeafNode;
+              // This pointer should remain valid until epoch is exited
+              return &(*scan_start_it);
             }
 
             scan_start_it++;
           }
 
-          return false;
+          return nullptr;
         }
         case NodeType::LeafInsertType: {
           const LeafInsertNode *insert_node_p = \
@@ -3080,7 +3013,7 @@ class BwTree {
 
           if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
             if(ValueCmpEqual(insert_node_p->insert_item.second, search_value)) {
-              return true;
+              return &insert_node_p->insert_item;
             }
           }
 
@@ -3095,7 +3028,7 @@ class BwTree {
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->delete_item.first)) {
             if(ValueCmpEqual(delete_node_p->delete_item.second, search_value)) {
-              return false;
+              return nullptr;
             }
           }
 
@@ -3148,7 +3081,8 @@ class BwTree {
             if(context_p->abort_flag == true) {
               bwt_printf("JumpToNodeID aborts. ABORT\n");
 
-              return false;
+              // This valus does not matter
+              return nullptr;
             }
 
             // These three needs to be refreshed after switching node
@@ -3175,7 +3109,7 @@ class BwTree {
 
     // We cannot reach here
     assert(false);
-    return false;
+    return nullptr;
   }
   
   /*
@@ -3943,123 +3877,89 @@ before_switch:
    */
   inline void TraverseReadOptimized(Context *context_p,
                                     std::vector<ValueType> *value_list_p) {
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    // This is the serialization point for reading/writing root node
+    NodeID start_node_id = root_id.load();
+
+    // We need to call this even for root node since there could
+    // be split delta posted on to root node
+    LoadNodeIDReadOptimized(start_node_id, context_p);
+
+    // There could be an abort here, and we could not directly jump
+    // to Init state since we would like to do some clean up or
+    // statistics after aborting
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID (RO)\n");
+
     while(1) {
-      // NOTE: break only breaks out this switch
-      switch(context_p->current_state) {
-        case OpState::Init: {
-          assert(context_p->abort_flag == false);
-          assert(context_p->current_level == -1);
+      NodeID child_node_id = NavigateInnerNode(context_p);
 
-          // This is the serialization point for reading/writing root node
-          NodeID start_node_id = root_id.load();
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
 
-          // We need to call this even for root node since there could
-          // be split delta posted on to root node
-          LoadNodeIDReadOptimized(start_node_id, context_p);
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
 
-          // There could be an abort here, and we could not directly jump
-          // to Init state since we would like to do some clean up or
-          // statistics after aborting
-          if(context_p->abort_flag == true) {
-            context_p->current_state = OpState::Abort;
+        goto abort_traverse;
+      }
 
-            // This goes to the beginning of loop
-            break;
-          }
+      // This might load a leaf child
+      // Also LoadNodeID() does not guarantee the node bound matches
+      // search key. Since we could readjust using the split side link
+      // during Navigate...Node(), or abort if we reach the bottom
+      // while still observing an inconsistent high key
+      // (low key is always consistent)
+      LoadNodeIDReadOptimized(child_node_id, context_p);
 
-          bwt_printf("Successfully loading root node ID (RO)\n");
-          
-          context_p->current_state = OpState::Inner;
-          
-          break;
-        } // case Init
-        case OpState::Inner: {
-          NodeID child_node_id = NavigateInnerNode(context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted (RO). ABORT\n");
 
-          // Navigate could abort since it might go to another NodeID
-          // if there is a split delta and the key is >= split key
-          if(context_p->abort_flag == true) {
-            bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
+        goto abort_traverse;
+      }
 
-            // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-            // as a double check
-            // This is the only situation that this function returns
-            // INVALID_NODE_ID
-            assert(child_node_id == INVALID_NODE_ID);
+      // This is the node we have just loaded
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-            context_p->current_state = OpState::Abort;
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf (RO)\n");
+        
+        NavigateLeafNode(context_p, *value_list_p);
 
-            break;
-          }
+        if(context_p->abort_flag == true) {
+          bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
 
-          // This might load a leaf child
-          // Also LoadNodeID() does not guarantee the node bound matches
-          // search key. Since we could readjust using the split side link
-          // during Navigate...Node(), or abort if we reach the bottom
-          // while still observing an inconsistent high key
-          // (low key is always consistent)
-          LoadNodeIDReadOptimized(child_node_id, context_p);
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("LoadNodeID aborted (RO). ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-
-          // This is the node we have just loaded
-          NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-          if(snapshot_p->IsLeaf() == true) {
-            bwt_printf("The next node is a leaf (RO)\n");
-            
-            context_p->current_state = OpState::Leaf;
-            
-            break;
-          }
-          
-          break;
-        } // case Inner
-        case OpState::Leaf: {
-          NavigateLeafNode(context_p, *value_list_p);
-
-          if(context_p->abort_flag == true) {
-            bwt_printf("NavigateLeafNode aborts (RO). ABORT\n");
-
-            context_p->current_state = OpState::Abort;
-
-            break;
-          }
-
-          bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
-                     context_p->abort_counter,
-                     context_p->current_level);
-
-          // If there is no abort then we could safely return
-          return;
-
-          assert(false);
+          goto abort_traverse;
         }
-        case OpState::Abort: {
-          assert(context_p->current_level >= 0);
 
-          context_p->current_state = OpState::Init;
-          context_p->current_level = -1;
+        bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
+                   context_p->abort_counter,
+                   context_p->current_level);
 
-          context_p->abort_flag = false;
-          context_p->abort_counter++;
-
-          break;
-        } // case Abort
-        default: {
-          bwt_printf("ERROR: Unknown State (RO): %d\n",
-                     static_cast<int>(context_p->current_state));
-          assert(false);
-          break;
-        }
-      } // switch current_state
+        // If there is no abort then we could safely return
+        return;
+      }
     } // while(1)
+          
+abort_traverse:
+    assert(context_p->current_level >= 0);
+
+    context_p->current_level = -1;
+
+    context_p->abort_flag = false;
+    context_p->abort_counter++;
+
+    goto retry_traverse;
 
     assert(false);
     return;
@@ -5329,13 +5229,13 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Check whether the key-value pair exists
-      bool value_exist = Traverse(&context, &value, nullptr);
+      const KeyValuePair *item_p = Traverse(&context, &value);
 
       // If the key-value pair already exists then return false
-      if(value_exist == true) {
+      if(item_p != nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
 
         return false;
@@ -5395,8 +5295,6 @@ before_switch:
    * predicates returning true for one of the values of a given key
    * or because the value is already in the index
    *
-   * Argument value_p is set to nullptr if all predicate tests returned false
-   *
    * NOTE: We first test the predicate, and then test for duplicated values
    * so predicate test result is always available
    */
@@ -5404,21 +5302,19 @@ before_switch:
                          const ValueType &value,
                          std::function<bool(const ItemPointer &)> predicate,
                          bool *predicate_satisfied) {
-    bwt_printf("Consitional Insert called\n");
+    bwt_printf("Insert (cond.) called\n");
 
     insert_op_count.fetch_add(1);
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
+      
+      std::vector<ValueType> existing_value_list{};
 
       // Collect values with node navigation
-      Traverse(&context, true);
-
-      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
-      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
-      KeyValueSet &container = logical_node_p->GetContainer();
+      TraverseReadOptimized(&context, &existing_value_list);
 
       // At the beginning of each iteration we just set the value pointer
       // to be empty
@@ -5427,36 +5323,30 @@ before_switch:
       // is a pointer type
       *predicate_satisfied = false;
 
-      // For insertion for should iterate through existing values first
-      // to make sure the key-value pair does not exist
-      typename KeyValueSet::iterator it = container.find(key);
-      if(it != container.end()) {
-        // v is a reference to ValueType
-        for(auto &v : it->second) {
-          if(predicate(*v) == true) {
-            // To notify the caller that predicate
-            // has been satisfied and we cannot insert
-            *predicate_satisfied = true;
+      // For every existing element in the value vector, test predicate on that
+      // and if the predicate is satisfied then just return without
+      // any insertion happening
+      for(auto &v : existing_value_list) {
+        // Note that predicate tests ItemPointer which is the type of
+        // dereferencing ValueType
+        if(predicate(*v) == true) {
+          // To notify the caller that predicate
+          // has been satisfied and we cannot insert
+          *predicate_satisfied = true;
 
-            // Do not forget this!
-            epoch_manager.LeaveEpoch(epoch_node_p);
-
-            return false;
-          }
-        }
-
-        // After evaluating predicate on all values we continue to find
-        // whether there is duplication for the value
-        auto it2 = it->second.find(value);
-
-        if(it2 != it->second.end()) {
+          // Do not forget this!
           epoch_manager.LeaveEpoch(epoch_node_p);
 
-          // In this case, value_p is set to nullptr
-          // and return value is false
+          return false;
+        } else if(value_eq_obj(v, value)) {
+          // If the value does not pass predicate testing but it already exists
+          // in the index, we just return with predicate_satisfied setting to
+          // false and return value being false
           return false;
         }
       }
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
 
       // We will CAS on top of this
       const BaseNode *node_p = snapshot_p->node_p;
@@ -5469,13 +5359,13 @@ before_switch:
                                       insert_node_p,
                                       node_p);
       if(ret == true) {
-        bwt_printf("Leaf Insert delta (cond) CAS succeed\n");
+        bwt_printf("Leaf Insert (cond.) delta CAS succeed\n");
 
         // If install is a success then just break from the loop
         // and return
         break;
       } else {
-        bwt_printf("Leaf Insert delta (cond) CAS failed\n");
+        bwt_printf("Leaf insert (cond.) delta CAS failed\n");
 
         context.abort_counter++;
 
@@ -5483,7 +5373,7 @@ before_switch:
       }
 
       // Update abort counter
-      // NOTE 1: We could not do this before return since the context
+      // NOTW 1: We could not do this before return since the context
       // object is cleared at the end of loop
       // NOTE 2: Since Traverse() might abort due to other CAS failures
       // context.abort_counter might be larger than 1 when
@@ -5491,7 +5381,7 @@ before_switch:
       insert_abort_count.fetch_add(context.abort_counter);
 
       // We reach here only because CAS failed
-      bwt_printf("Retry installing leaf insert delta from the root\n");
+      bwt_printf("Retry installing leaf insert (cond.) delta from the root\n");
     }
 
     epoch_manager.LeaveEpoch(epoch_node_p);
@@ -5510,8 +5400,7 @@ before_switch:
    *
    * This functions shares a same structure with the Insert() one
    */
-  bool Delete(const KeyType &key,
-              const ValueType &value) {
+  bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
 
     delete_op_count.fetch_add(1);
@@ -5519,12 +5408,13 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      bool value_exist = Traverse(&context, &value, nullptr);
-      if(value_exist == false) {
+      const KeyValuePair *item_p = Traverse(&context, &value);
+      
+      if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
 
         return false;
@@ -5567,98 +5457,52 @@ before_switch:
     return true;
   }
 
-  #ifdef BWTREE_PELOTON
-
   /*
-   * DeleteItemPointer() - Deletes an item pointer from the index by comparing
-   *                       the target of the pointer, rather than pointer itself
+   * DeleteExchange() - Deletes an item pointer and copies the deleted
+   *                    value to the input parameter
    *
-   * Note that this function assumes the value always being ItemPointer *
-   * and in this function we compare item pointer's target rather than
-   * the value of pointers themselves. Also when a value is deleted, we
-   * free the memory, which is allocated when the value is inserted
+   * If the key-value pair is found, then they will be deleted from the
+   * index, and input parameter value would be overwritten
+   * using the deleted value of value (key is unchanged; of course it
+   * should not change since the key must be the same)
    */
-  bool DeleteItemPointer(const KeyType &key,
-                         const ItemPointer &value) {
-    bwt_printf("Delete Item Pointer called\n");
+  bool DeleteExchange(KeyType &key, ValueType &value) {
+    bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
+    
+    const KeyValuePair *item_p;
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
-      // Collect values with node navigation
-      Traverse(&context, true);
+      // Navigate leaf nodes to check whether the key-value
+      // pair exists
+      item_p = Traverse(&context, &value);
+      
+      // If value not found just return
+      if(item_p == nullptr) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        return false;
+      }
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
-      LogicalLeafNode *logical_node_p = snapshot_p->GetLogicalLeafNode();
-      KeyValueSet &container = logical_node_p->GetContainer();
-
-      // If the key or key-value pair does not exist then we just
-      // return false
-      typename KeyValueSet::iterator it = container.find(key);
-      if(it == container.end()) {
-        epoch_manager.LeaveEpoch(epoch_node_p);
-
-        return false;
-      }
-
-      bool found_flag = false;
-      ItemPointer *found_value = nullptr;
-      // We iterator over values stored with the given key
-      // v should be ItemPointer *
-      for(ItemPointer *v : it->second) {
-        if((v->block == value.block) &&
-           (v->offset == value.offset)) {
-          found_flag = true;
-          found_value = v;
-        }
-      }
-
-      // If the value was not found, then just leave the epoch
-      // and return false to notify the caller
-      if(found_flag == false) {
-        assert(found_value == nullptr);
-
-        epoch_manager.LeaveEpoch(epoch_node_p);
-
-        return false;
-      }
 
       // We will CAS on top of this
       const BaseNode *node_p = snapshot_p->node_p;
       NodeID node_id = snapshot_p->node_id;
 
-      // If node_p is a delta node then we have to use its
-      // delta value
-      int depth = 1;
-
-      if(node_p->IsDeltaNode() == true) {
-        const DeltaNode *delta_node_p = \
-          static_cast<const DeltaNode *>(node_p);
-
-        depth = delta_node_p->depth + 1;
-      }
-
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, found_value, depth, node_p};
+        new LeafDeleteNode{key, value, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
                                       node_p);
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
-
-        // This will actually not be used anymore, so maybe
-        // could save this assignment
-        snapshot_p->SwitchPhysicalPointer(delete_node_p);
-
-        // This piece of memory holds ItemPointer, and is allocated by
-        // InsertEntry() in its wrapper class. We need to free the memory
-        // when the index is deleted
-        delete found_value;
 
         // If install is a success then just break from the loop
         // and return
@@ -5677,45 +5521,12 @@ before_switch:
       bwt_printf("Retry installing leaf delete delta from the root\n");
     }
 
+    // Assign the old deleted value to input parameter value
+    value = item_p->second;
+
     epoch_manager.LeaveEpoch(epoch_node_p);
 
     return true;
-  }
-
-  #endif
-
-  /*
-   * DebugNoEpochGotoLeaf() - Go to leaf page without actually copying values
-   *                          and joining epoch
-   *
-   * This is used for debugging to measure the overhead brought by epoch
-   */
-  void DebugNoEpochGotoLeaf(const KeyType &search_key) {
-    bwt_printf("DebugNoEpochGotoLeaf()\n");
-
-    Context context{search_key, tree_height};
-    Traverse(&context, nullptr, nullptr);
-
-    return;
-  }
-
-  /*
-   * DebugGotoLeaf() - Go to leaf page without actually copying values
-   *
-   * This is used to measure the overhead of copying values
-   */
-  void DebugGotoLeaf(const KeyType &search_key) {
-    bwt_printf("DebugGotoLeaf()\n");
-
-    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
-
-    Context context{search_key, tree_height};
-
-    Traverse(&context, nullptr, nullptr);
-
-    epoch_manager.LeaveEpoch(epoch_node_p);
-
-    return;
   }
 
   /*
@@ -5733,7 +5544,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
 
     TraverseReadOptimized(&context, &value_list);
 
@@ -5753,10 +5564,10 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
 
     std::vector<ValueType> value_list{};
-    Traverse(&context, nullptr, &value_list);
+    TraverseReadOptimized(&context, &value_list);
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
@@ -5813,8 +5624,12 @@ before_switch:
   // for NodeSnapshot
   std::atomic<size_t> tree_height;
 
+  // This value is atomic and will change
   std::atomic<NodeID> root_id;
-  NodeID first_node_id;
+
+  // This value is non-atomic, but it remains constant after constructor
+  NodeID first_leaf_id;
+  
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
@@ -6467,6 +6282,439 @@ try_join_again:
     }
 
   }; // Epoch manager
+  
+  /*
+   * Iterator Interface
+   */
+  class ForwardIterator;
+
+  /*
+   * Begin() - Return an iterator pointing the first element in the tree
+   *
+   * If the tree is currently empty, then the iterator is both a begin
+   * iterator and an end iterator (i.e. both flags are set to true). This
+   * is a valid state.
+   */
+  ForwardIterator Begin() {
+    return ForwardIterator{this};
+  }
+
+  /*
+   * Begin() - Return an iterator using a given key
+   *
+   * The iterator returned will points to a data item whose key is greater than
+   * or equal to the given start key. If such key does not exist then it will
+   * be the smallest key that is greater than start_key
+   */
+  ForwardIterator Begin(const KeyType &start_key) {
+    return ForwardIterator{this, start_key};
+  }
+
+  /*
+   * Iterators
+   */
+
+  /*
+   * class ForwardIterator - Iterator that supports forward iteration of
+   *                         tree elements
+   *
+   * NOTE: An iterator could be begin() and end() iterator at the same time,
+   * as long as the container is empty. To correctly identify this case, we
+   * need to try loading the first page with key = -Inf to test whether
+   * there is any element stored in the tree. And if not then the iterator
+   * is both begin() and end() iterator at the same time
+   */
+  class ForwardIterator {
+   public:
+    /*
+     * Default Constructor
+     *
+     * NOTE: We try to load the first page using -Inf as the next key
+     * during construction in order to correctly identify the case where
+     * the tree is empty, and such that begin() iterator equals end() iterator
+     */
+    ForwardIterator(BwTree *p_tree_p) :
+      tree_p{p_tree_p},
+      is_end{false} {
+      // Load the first leaf page
+      const BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
+      
+      assert(node_p != nullptr);
+      assert(node_p->IsOnLeafDeltaChain() == true);
+      
+      // Use the high key of current node as the next key locking
+      next_key_pair = node_p->GetHighKeyPair();
+      
+      NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
+      
+      // Consolidate the current node (this does not change high key)
+      leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
+      
+      it = leaf_node_p->data_list.begin();
+      
+      // Corner case: if the vector is itself empty
+      // then we should set the flag manually
+      if(leaf_node_p->data_list.size() == 0UL) {
+        is_end = true;
+      }
+
+      return;
+    }
+
+    /*
+     * Constructor - Construct an iterator given a key
+     *
+     * The given key would locate the iterator on an data item whose
+     * key is >= the given key. This is useful in range query if
+     * a starting key could be derived according to conditions
+     */
+    ForwardIterator(BwTree *p_tree_p,
+                    const KeyType &start_key) :
+      tree_p{p_tree_p},
+      is_end{false} {
+      
+      // This sets all members, and might return with is_end == true
+      // Also this function
+      LowerBound(&start_key);
+      
+      // After LowerBound(), either it points to KeyValuePair or
+      // is_end is set to true
+
+      return;
+    }
+
+    /*
+     * Copy Constructor - Constructs a new iterator instance from existing one
+     *
+     * During copy construction we need to take care that the iterator is
+     * invalidated after copy constructing LeafNode from the other iterator
+     * to this. So we should move the iterator manually
+     */
+    ForwardIterator(const ForwardIterator &other) :
+      tree_p{other.tree_p},
+      // This copy constructs all members recursively by default
+      leaf_node_p{new LeafNode{*other.leaf_node_p}},
+      next_key_pair{other.next_key_pair},
+      is_end{other.is_end} {
+      
+      // Move the iterator ahead
+      it = leaf_node_p->data_list.begin() + \
+           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+
+      return;
+    }
+
+    /*
+     * operator= - Assigns one object to another
+     *
+     * DONE: As an optimization we could define an assignment operation
+     * for logical leaf node, and direct assign the logical leaf node from
+     * the source object to the current object
+     */
+    ForwardIterator &operator=(const ForwardIterator &other) {
+      // It is crucial to prevent self assignment since we do pointer
+      // operation here
+      if(this == &it) {
+        return *this;
+      }
+
+      // First copy the logical node into current instance
+      // DO NOT NEED delete; JUST DO A VALUE COPY
+      // since the storage has already been allocated during construction
+      *leaf_node_p = *other.leaf_node_p;
+
+      // Copy everything that could be copied
+      tree_p = other.tree_p;
+      next_key_pair = other.next_key_pair;
+      
+      is_end = other.is_end;
+
+      // Move the iterator ahead
+      it = leaf_node_p->data_list.begin() + \
+           std::distance(other.leaf_node_p->data_list, other.it);
+
+      return *this;
+    }
+
+    /*
+     * operator*() - Return the value reference currently pointed to by this
+     *               iterator
+     *
+     * NOTE: We need to return a constant reference to both save a value copy
+     * and also to prevent caller modifying value using the reference
+     */
+    inline const KeyValuePair &operator*() {
+      // This itself is a ValueType reference
+      return (*it);
+    }
+
+    /*
+     * operator->() - Returns the value pointer pointed to by this iterator
+     *
+     * Note that this function returns a contsnat pointer which can be used
+     * to access members of the value, but cannot modify
+     */
+    inline const KeyValuePair *operator->() {
+      return &(*it);
+    }
+
+    /*
+     * operator< - Compares two iterators by comparing their current key
+     *
+     * Since the structure of the tree keeps changing, there is not a
+     * universal coordinate system that allows us to compare absolute
+     * positions of two iterators, all comparisons are done using the current
+     * key associated with values.
+     *
+     * NOTE: It is possible that for an iterator, no raw keys are stored. This
+     * happens when the tree is empty, or the requested key is larger than
+     * all existing keys in the tree. In that case, end flag is set, so
+     * in this function we check end flag first
+     */
+    inline bool operator<(const ForwardIterator &other) const {
+      if(other.is_end == true) {
+        if(is_end == true) {
+          // If both are end iterator then no one is less than another
+          return false;
+        } else {
+          // Otherwise, the left one is smaller as long as the
+          // RHS is an end iterator
+          return true;
+        }
+      }
+
+      // If none of them is end iterator, we simply do a key comparison
+      // using the iterator
+      return tree_p->KeyCmpLess(it->first, other.it->first);
+    }
+
+    /*
+     * operator==() - Compares whether two iterators refer to the same key
+     *
+     * If both iterators are end iterator then we return true
+     * If one of them is not then the result is false
+     * Otherwise the result is the comparison result of current key
+     */
+    inline bool operator==(const ForwardIterator &other) const {
+      if(other.is_end == true) {
+        if(is_end == true) {
+          // Two end iterators are equal to each other
+          return true;
+        } else {
+          // Otherwise they are not equal
+          return false;
+        }
+      }
+
+      return tree_p->KeyCmpEqual(it->first, other.it->first);
+    }
+
+    /*
+     * Destructor
+     *
+     * NOTE: Since we always make copies of logical node object when copy
+     * constructing the iterator, we could always safely delete the logical
+     * node, because its memory is not shared between iterators
+     */
+    ~ForwardIterator() {
+      // This holds even if the tree is empty
+      assert(leaf_node_p != nullptr);
+
+      delete leaf_node_p;
+
+      return;
+    }
+
+    /*
+     * Prefix operator++ - Move the iterator ahead and return the new iterator
+     *
+     * This operator moves iterator first, and then return the operator itself
+     * as value of expression
+     *
+     * If the iterator is end() iterator then we do nothing
+     */
+    inline ForwardIterator &operator++() {
+      if(is_end == true) {
+        return *this;
+      }
+
+      MoveAheadByOne();
+
+      return *this;
+    }
+
+    /*
+     * Postfix operator++ - Move the iterator ahead, and return the old one
+     *
+     * For end() iterator we do not do anything but return the same iterator
+     */
+    inline ForwardIterator operator++(int) {
+      if(is_end == true) {
+        return *this;
+      }
+
+      // Make a copy of the current one before advancing
+      ForwardIterator temp = *this;
+
+      MoveAheadByOne();
+
+      return temp;
+    }
+
+    /*
+     * IsEnd() - Returns true if we have reached the end of iteration
+     *
+     * This is just a wrapper of the private member is_end
+     */
+    inline bool IsEnd() const {
+      return is_end;
+    }
+
+   private:
+    // We need access to the tree in order to traverse down using
+    // a low key to leaf node level
+    BwTree *tree_p;
+
+    // This points to a consolidated leaf node
+    // The leaf node is not shared with any internal structure of
+    // BwTree and also not between iterators. Each iterator
+    // keeps an instance of LeafNode on which it iterates
+    LeafNode *leaf_node_p;
+
+    // The upper bound of current logical leaf node. Used to access the next
+    // position (i.e. leaf node) inside bwtree
+    // NOTE: We cannot use next_node_id to access next node since
+    // it might become invalid since the logical node was created. The only
+    // pivotal point we could rely on is the high key, which indicates a
+    // lowerbound of keys we have not seen
+    // NOTE 2: This has to be an object rather than pointer. The reason is that
+    // after this iterator is returned to the user, the actual bwtree node
+    // might be recycled by the epoch manager since thread has exited current
+    // epoch. Therefore we need to copy the wrapped key from bwtree physical
+    // node into the iterator
+    KeyNodeIDPair next_key_pair;
+    
+    // This is the actual iterator
+    typename std::vector<KeyValuePair>::const_iterator it;
+
+    // We use this flag to indicate whether we have reached the end of
+    // iteration.
+    // NOTE: We could not directly check for next_key being +Inf, since
+    // there might still be keys not scanned yet even if next_key is +Inf
+    // LoadNextKey() checks whether the current page has no key >= next_key
+    // and the next key is +Inf for current page. If these two conditions hold
+    // then we know we have reached the last key of the last page
+    bool is_end;
+
+    /*
+     * LowerBound() - Load leaf page whose key > start_key
+     *
+     * NOTE: Consider the case where there are two nodes [1, 2, 3] [4, 5, 6]
+     * after we have scanned [1, 2, 3] (i.e. got its logical leaf node object)
+     * the node [4, 5, 6] is merged into [1, 2, 3], forming [1, 2, 3, 4, 5, 6]
+     * then when we query again using the saved high key = 4, we would still
+     * be reading [1, 2, 3] first, which is not consistent (duplicated values)
+     *
+     * To address this problem, after loading a logical node, we need to advance
+     * the key iterator to locate the first key that >= next_key
+     *
+     * NOTE: If no argument is given then this function uses next_key_pair
+     * and checks for INVALID_NODE_ID. Otherwise it uses the given key
+     * as the starting point of iteration, and sets next_key_pair
+     */
+    void LowerBound(const KeyType *start_key_p = nullptr) {
+      // Caller needs to guarantee this function not being called if
+      // we have already reached the end
+      assert(is_end == false);
+      
+      while(1) {
+        // If we use the nexy_key_pair
+        if(start_key_p == nullptr) {
+          // If there is no next key, then just return
+          if(next_key_pair.second == INVALID_NODE_ID) {
+            // If there is no next key then we are at the end of the iteration
+            is_end = true;
+
+            return;
+          }
+
+          start_key_p = &next_key_pair.first;
+        }
+
+        // We need to save this since the start key pointer will be overwritten
+        const KeyType start_key = *start_key_p;
+
+        // First join the epoch to prevent physical nodes being deallocated
+        // too early
+        EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
+
+        // Traverse down the tree to get to leaf node
+        Context context{*start_key_p};
+        tree_p->Traverse(&context, nullptr);
+
+        NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+        const BaseNode *node_p = snapshot_p->node_p;
+
+        // The page must be on a leaf delta chain
+        assert(node_p->IsOnLeafDeltaChain() == true);
+
+        // Set high key pair for next call of this function
+        next_key_pair = node_p->GetHighKeyPair();
+
+        // Consolidate the current node
+        leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
+
+        // Leave the epoch, since we have already had all information
+        tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
+
+        // Then we need to find the start key in the leaf node until we have seen
+        // a larger key
+
+        // Find the lower bound of the current start search key
+        // NOTE: Do not use start_key_p since it has been changed by the
+        // assignment to next_key_pair
+        it = std::lower_bound(leaf_node_p->data_list.begin(),
+                              leaf_node_p->data_list.end(),
+                              std::make_pair(start_key, ValueType{}),
+                              [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+                                return this->tree_p->key_cmp_obj(kvp1.first, kvp2.first);
+                              });
+
+        // All keys in the leaf page are < start key. Switch the next key until
+        // we have found the key or until we have reached end of tree
+        if(it != leaf_node_p->data_list.end()) {
+          return;
+        }
+        
+        // Need to set this to nullptr to let the function to use next key pair
+        start_key_p = nullptr;
+      } // while(1)
+
+      assert(false);
+      return;
+    }
+
+    /*
+     * MoveAheadByOne() - Move the iterator ahead by one
+     *
+     * The caller is responsible for checking whether the iterator has reached
+     * its end. If iterator has reached end then assertion fails.
+     */
+    inline void MoveAheadByOne() {
+      // Move the iterator on leaf node data list
+      it++;
+
+      // If we have reached the last element then either go to the next
+      // then just try to load the next key. This has the possibility
+      // that the is_end flag is set, but we do not care about it, and
+      // directly returns after LowerBound() returns
+      if(it == leaf_node_p->data_list.end()) {
+        LowerBound();
+      }
+      
+      return;
+    }
+  }; // ForwardIterator
 
 }; // class BwTree
 
