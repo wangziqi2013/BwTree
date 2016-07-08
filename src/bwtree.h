@@ -6475,23 +6475,15 @@ try_join_again:
      * is not shared between iterators. This implies we need to also copy the
      * logical leaf node during copy construction.
      */
-    ForwardIterator(const ForwardIterator &it) :
-      tree_p{it.tree_p},
-      // We allocate memory here and call copy constructor
-      leaf_node_p{new LeafNode{*it.leaf_node_p}},
-      next_key{it.next_key},
-      is_end{it.is_end} {
-      // First locate key using key distance
-      key_it = logical_node_p->key_value_set.begin();
-      std::advance(key_it, key_distance);
-
-      // Next locate value using value distance
-      value_it = key_it->second.begin();
-      std::advance(value_it, value_distance);
-
-      // This refers to the raw key pointer in the new object
-      raw_key_p = &key_it->first.key;
-      value_set_p = &key_it->second;
+    ForwardIterator(const ForwardIterator &other) :
+      tree_p{other.tree_p},
+      leaf_node_p{new LeafNode{*other.leaf_node_p}},
+      next_key_pair{other.next_key_pair},
+      is_end{other.is_end} {
+      
+      // Move the iterator ahead
+      it = leaf_node_p->data_list.begin() + \
+           std::distance(other.leaf_node_p->data_list, other.it);
 
       return;
     }
