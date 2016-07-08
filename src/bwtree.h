@@ -40,6 +40,21 @@
 #include <vector>
 
 /*
+ * class PointerComparator - A template class for comparing pointer types
+ *
+ * If the ValueType of BwTree is pointer type, we usually do not want to
+ * compare pointers directly, but instead we hope to dereference the pointer
+ * and do comparison with the dereferenced type
+ */
+template <typename DereferencedType,
+          typename DereferencedTypeComparator = std::equal_to<DereferencedType>>
+class PointerComparator {
+  inline bool operator()(const DereferencedType *p1, const DereferencedType *p2) {
+    return DereferencedTypeComparator(*p1, *p2);
+  }
+};
+
+/*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
  *                  We strive to make BwTree a standalone and independent
@@ -2733,13 +2748,15 @@ abort_traverse:
     const ValueType *present_set_data_p[set_max_size];
     const ValueType *deleted_set_data_p[set_max_size];
 
-    BloomFilter<ValueType> present_set{present_set_data_p,
-                                       value_eq_obj,
-                                       value_hash_obj};
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      present_set{present_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
 
-    BloomFilter<ValueType> deleted_set{deleted_set_data_p,
-                                       value_eq_obj,
-                                       value_hash_obj};
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      deleted_set{deleted_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -5461,7 +5478,7 @@ before_switch:
    * using the deleted value of value (key is unchanged; of course it
    * should not change since the key must be the same)
    */
-  bool DeleteExchange(KeyType &key, ValueType &value) {
+  bool DeleteExchange(KeyType &key, ValueType *value_p) {
     bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
@@ -5475,7 +5492,7 @@ before_switch:
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      item_p = Traverse(&context, &value);
+      item_p = Traverse(&context, value_p);
       
       // If value not found just return
       if(item_p == nullptr) {
@@ -5491,7 +5508,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p};
+        new LeafDeleteNode{key, *value_p, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -5517,7 +5534,7 @@ before_switch:
     }
 
     // Assign the old deleted value to input parameter value
-    value = item_p->second;
+    *value_p = item_p->second;
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
