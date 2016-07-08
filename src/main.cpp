@@ -745,7 +745,7 @@ void PinToCore(size_t core_id) {
   
   int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
   
-  bwt_printf("pthread_setaffinity_np() returns %d\n", ret);
+  printf("pthread_setaffinity_np() returns %d\n", ret);
   
   return;
 }
@@ -1108,7 +1108,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   
   auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
     // First pin the thread to a core
-    PinToCore(thread_id);
+    //PinToCore(thread_id);
     
     std::vector<long> v{};
     
