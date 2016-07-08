@@ -92,7 +92,7 @@
                                             typename ValueType, \
                                             typename KeyComparator, \
                                             typename KeyEqualityChecker, \
-                                            typename KeyHasher, \
+                                            typename KeyHashFunc, \
                                             typename ValueEqualityChecker, \
                                             typename ValueHashFunc>
 
@@ -3283,7 +3283,7 @@ abort_traverse:
                                            leaf_node_p->data_list.end(),
                                            // It only compares key so we
                                            // just use high key pair
-                                           high_key_pair,
+                                           std::make_pair(high_key_pair.first, ValueType{}),
                                            [this](const KeyValuePair &kvp1,
                                                   const KeyValuePair &kvp2) {
                                              return this->key_cmp_obj(kvp1.first, kvp2.first);
