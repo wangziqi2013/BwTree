@@ -6432,7 +6432,7 @@ try_join_again:
 
       // Move the iterator ahead
       it = leaf_node_p->data_list.begin() + \
-           std::distance(other.leaf_node_p->data_list, other.it);
+           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
 
       return *this;
     }
