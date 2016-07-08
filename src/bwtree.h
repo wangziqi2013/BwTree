@@ -6424,7 +6424,7 @@ try_join_again:
       tree_p{p_tree_p},
       is_end{false} {
       // Load the first leaf page
-      BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
+      const BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
       
       assert(node_p != nullptr);
       assert(node_p->IsOnLeafDeltaChain() == true);
@@ -6432,8 +6432,10 @@ try_join_again:
       // Use the high key of current node as the next key locking
       next_key_pair = node_p->GetHighKeyPair();
       
+      NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
+      
       // Consolidate the current node (this does not change high key)
-      leaf_node_p = CollectAllValuesOnInner({FIRST_LEAF_NODE_ID, node_p});
+      leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
       
       it = leaf_node_p->data_list.begin();
       
@@ -6484,7 +6486,7 @@ try_join_again:
       
       // Move the iterator ahead
       it = leaf_node_p->data_list.begin() + \
-           std::distance(other.leaf_node_p->data_list, other.it);
+           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
 
       return;
     }
@@ -6692,7 +6694,7 @@ try_join_again:
     bool is_end;
 
     /*
-     * LoadNextKey() - Load leaf page whose key > start_key
+     * LowerBound() - Load leaf page whose key > start_key
      *
      * NOTE: Consider the case where there are two nodes [1, 2, 3] [4, 5, 6]
      * after we have scanned [1, 2, 3] (i.e. got its logical leaf node object)
@@ -6726,13 +6728,16 @@ try_join_again:
           start_key_p = &next_key_pair.first;
         }
 
+        // We need to save this since the start key pointer will be overwritten
+        const KeyType start_key = *start_key_p;
+
         // First join the epoch to prevent physical nodes being deallocated
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
 
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
-        Traverse(&context, nullptr, nullptr);
+        tree_p->Traverse(&context, nullptr, nullptr);
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
@@ -6743,8 +6748,8 @@ try_join_again:
         // Set high key pair for next call of this function
         next_key_pair = node_p->GetHighKeyPair();
 
-        // Colsolidate leaf node
-        leaf_node_p = CollectAllValuesOnLeaf(node_p);
+        // Consolidate the current node
+        leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
 
         // Leave the epoch, since we have already had all information
         tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
@@ -6753,9 +6758,11 @@ try_join_again:
         // a larger key
 
         // Find the lower bound of the current start search key
+        // NOTE: Do not use start_key_p since it has been changed by the
+        // assignment to next_key_pair
         it = std::lower_bound(leaf_node_p->data_list.begin(),
                               leaf_node_p->data_list.end(),
-                              std::make_pair(*start_key_p, ValueType{}),
+                              std::make_pair(start_key, ValueType{}),
                               [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
                                 return this->tree_p->key_cmp_obj(kvp1.first, kvp2.first);
                               });
