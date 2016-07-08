@@ -4,6 +4,8 @@
 #include <random>
 #include <map>
 
+#include <pthread.h>
+
 #include "bwtree.h"
 #include "../benchmark/btree.h"
 #include "../benchmark/btree_multimap.h"
@@ -733,6 +735,21 @@ void IteratorGetValueTest(TreeType *t) {
 }
 */
 
+/*
+ * PinToCore() - Pin the current calling thread to a particular core
+ */
+void PinToCore(size_t core_id) {
+  cpu_set_t cpu_set;
+  CPU_ZERO(&cpu_set);
+  CPU_SET(core_id, &cpu_set);
+  
+  int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
+  
+  bwt_printf("pthread_setaffinity_np() returns %d\n", ret);
+  
+  return;
+}
+
 void TestStdMapInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
@@ -1090,6 +1107,9 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   
   auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
+    // First pin the thread to a core
+    PinToCore(thread_id);
+    
     std::vector<long> v{};
     
     v.reserve(100);
