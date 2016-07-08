@@ -5466,7 +5466,7 @@ before_switch:
    * using the deleted value of value (key is unchanged; of course it
    * should not change since the key must be the same)
    */
-  bool DeleteItemPointer(KeyType &key, ItemPointer &value) {
+  bool DeleteExchange(KeyType &key, ItemPointer &value) {
     bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
