@@ -50,12 +50,6 @@
 // Used for debugging
 #include <mutex>
 
-#ifdef BWTREE_PELOTON
-// This contains IndexMetadata definition
-// It uses peloton::index namespace
-#include "index/index.h"
-#endif
-
 #include "bloom_filter.h"
 #include "atomic_stack.h"
 
@@ -5301,7 +5295,7 @@ before_switch:
    */
   bool ConditionalInsert(const KeyType &key,
                          const ValueType &value,
-                         std::function<bool(const ItemPointer &)> predicate,
+                         std::function<bool(const void *)> predicate,
                          bool *predicate_satisfied) {
     bwt_printf("Insert (cond.) called\n");
 
@@ -5330,7 +5324,7 @@ before_switch:
       for(auto &v : existing_value_list) {
         // Note that predicate tests ItemPointer which is the type of
         // dereferencing ValueType
-        if(predicate(*v) == true) {
+        if(predicate(v) == true) {
           // To notify the caller that predicate
           // has been satisfied and we cannot insert
           *predicate_satisfied = true;
