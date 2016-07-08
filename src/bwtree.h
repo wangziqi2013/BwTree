@@ -764,7 +764,7 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    const NodeType type;
+    NodeType type;
 
     // This holds low key, high key, and next node ID
     NodeMetaData metadata;
@@ -6415,7 +6415,7 @@ try_join_again:
     ForwardIterator &operator=(const ForwardIterator &other) {
       // It is crucial to prevent self assignment since we do pointer
       // operation here
-      if(this == &it) {
+      if(this == &other) {
         return *this;
       }
 
