@@ -662,8 +662,7 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key,
-            size_t p_tree_height) :
+    Context(const KeyType p_search_key) :
       search_key{p_search_key},
       abort_counter{0},
       current_level{-1},
@@ -5233,7 +5232,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Check whether the key-value pair exists
       bool value_exist = Traverse(&context, &value, nullptr);
@@ -5315,7 +5314,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5423,7 +5422,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
@@ -5491,7 +5490,7 @@ before_switch:
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
-      Context context{key, tree_height};
+      Context context{key};
 
       // Collect values with node navigation
       Traverse(&context, true);
@@ -5597,7 +5596,7 @@ before_switch:
   void DebugNoEpochGotoLeaf(const KeyType &search_key) {
     bwt_printf("DebugNoEpochGotoLeaf()\n");
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
     Traverse(&context, nullptr, nullptr);
 
     return;
@@ -5613,7 +5612,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
 
     Traverse(&context, nullptr, nullptr);
 
@@ -5637,7 +5636,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
 
     TraverseReadOptimized(&context, &value_list);
 
@@ -5657,7 +5656,7 @@ before_switch:
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
-    Context context{search_key, tree_height};
+    Context context{search_key};
 
     std::vector<ValueType> value_list{};
     Traverse(&context, nullptr, &value_list);
