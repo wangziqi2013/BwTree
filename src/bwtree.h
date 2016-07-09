@@ -1050,7 +1050,8 @@ class BwTree {
       // This will used as upper_bound and lower_bound key
       const KeyValuePair &central_kvp = data_list[central_index];
 
-      auto it = data_list.begin() + central_index;
+      // Move it to the element before data_list
+      auto it = data_list.begin() + central_index - 1;
       
       // If iterator has reached the begin then we know there could not
       // be any split points
@@ -1059,13 +1060,33 @@ class BwTree {
         it--;
       }
       
-      if(it != data_list.begin()) {
-        int left_sibling_size = std::distance(data_list.begin(), it);
-        
-        if(left_sibling_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
-
-        }
+      // This is the real split point
+      it++;
+      
+      // This size is exactly the index of the split point
+      int left_sibling_size = std::distance(data_list.begin(), it);
+      
+      if(left_sibling_size > LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+        return left_sibling_size;
       }
+      
+      // Move it to the element after data_list
+      auto it = data_list.begin() + central_index + 1;
+
+      // If iterator has reached the end then we know there could not
+      // be any split points
+      while((it != data_list.end()) && \
+            (KeyCmpEqual(it->first, central_kvp.first) == true)) {
+        it++;
+      }
+      
+      int right_sibling_size = std::distance(it, data_list.end());
+      
+      if(right_sibling_size > LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+        return std::distance(data_list.begin(), it);
+      }
+      
+      return -1;
     }
 
     /*
@@ -1090,36 +1111,26 @@ class BwTree {
      * NOTE 3: This function assumes no out-of-bound key, i.e. all keys
      * stored in the leaf node are < high key. This is valid since we
      * already filtered out those key >= high key in consolidation.
+     *
+     * NOTE 4: On failure of split (i.e. could not find a split key that evenly
+     * or almost evenly divide the leaf node) then the return value of this
+     * function is nullptr
      */
     LeafNode *GetSplitSibling() const {
-      int key_num = static_cast<int>(item_prefix_sum.size());
-      assert(key_num >= 2);
-
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
       assert(static_cast<int>(data_list.size()) == this->GetItemCount());
 
-      // This is the index of the key in prefix sum array
-      int split_key_index = key_num / 2;
-
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
       // inner node
-      int split_item_index = item_prefix_sum[split_key_index];
-
-      // This points to the prefix sum array and we use this to copy
-      // the prefix sum array
-      auto prefix_sum_start_it = item_prefix_sum.begin();
-      std::advance(prefix_sum_start_it, split_key_index);
-
-      auto prefix_sum_end_it = item_prefix_sum.end();
+      int split_item_index = FindSplitPoint();
 
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's
       // RandomAccessIterator
-      auto copy_start_it = data_list.begin();
-      std::advance(copy_start_it, split_item_index);
+      auto copy_start_it = data_list.begin() + split_item_index;
 
       // This is the end point for later copy of data
       auto copy_end_it = data_list.end();
