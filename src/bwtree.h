@@ -676,7 +676,17 @@ class BwTree {
      * Constructor - Initialize a context object into initial state
      */
     Context(const KeyType p_search_key) :
+      #ifdef BWTREE_PELOTON
+      
+      // Because earlier versions of g++ does not support
+      // initializer list so must use () form
+      search_key(p_search_key),
+      
+      #else
+      
       search_key{p_search_key},
+      
+      #endif
       abort_counter{0},
       current_level{-1},
       abort_flag{false}
@@ -6680,9 +6690,23 @@ try_join_again:
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
 
+        #ifdef BWTREE_PELOTON
+
+        // This is used to avoid segmentation fault
+        ItemPointer dummy_ip{0, 0};
+        ItemPointer *ip_p = &dummy_ip;
+
+        // Traverse down the tree to get to leaf node
+        Context context{*start_key_p};
+        tree_p->Traverse(&context, &ip_p);
+        
+        #else
+        
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
         tree_p->Traverse(&context, nullptr);
+        
+        #endif
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
