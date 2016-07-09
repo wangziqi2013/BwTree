@@ -1149,16 +1149,6 @@ class BwTree {
       // Copy data item into the new node using batch assign()
       leaf_node_p->data_list.assign(copy_start_it, copy_end_it);
 
-      // Copy prefix sum into the new node and later we will modify it
-      leaf_node_p->item_prefix_sum.assign(prefix_sum_start_it,
-                                          prefix_sum_end_it);
-
-      // Adjust prefix sum in the new leaf node by subtracting them
-      // from the index of item on the split point
-      for(auto &prefix_sum : leaf_node_p->item_prefix_sum) {
-        prefix_sum -= split_item_index;
-      }
-
       return leaf_node_p;
     }
   };
