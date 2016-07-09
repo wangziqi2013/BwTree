@@ -1043,7 +1043,7 @@ class BwTree {
      * and return -1 instead. Otherwise the index of the spliting point
      * is returned
      */
-    int FindSplitPoint() const {
+    int FindSplitPoint(const BwTree *t) const {
       int central_index = static_cast<int>(data_list.size()) / 2;
       assert(central_index > 1);
       
@@ -1056,7 +1056,7 @@ class BwTree {
       // If iterator has reached the begin then we know there could not
       // be any split points
       while((it != data_list.begin()) && \
-            (KeyCmpEqual(it->first, central_kvp.first) == true)) {
+            (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it--;
       }
       
@@ -1066,23 +1066,23 @@ class BwTree {
       // This size is exactly the index of the split point
       int left_sibling_size = std::distance(data_list.begin(), it);
       
-      if(left_sibling_size > LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+      if(left_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
         return left_sibling_size;
       }
       
       // Move it to the element after data_list
-      auto it = data_list.begin() + central_index + 1;
+      it = data_list.begin() + central_index + 1;
 
       // If iterator has reached the end then we know there could not
       // be any split points
       while((it != data_list.end()) && \
-            (KeyCmpEqual(it->first, central_kvp.first) == true)) {
+            (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it++;
       }
       
       int right_sibling_size = std::distance(it, data_list.end());
       
-      if(right_sibling_size > LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+      if(right_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
         return std::distance(data_list.begin(), it);
       }
       
@@ -1116,7 +1116,7 @@ class BwTree {
      * or almost evenly divide the leaf node) then the return value of this
      * function is nullptr
      */
-    LeafNode *GetSplitSibling() const {
+    LeafNode *GetSplitSibling(const BwTree *t) const {
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
@@ -1125,7 +1125,7 @@ class BwTree {
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
       // inner node
-      int split_item_index = FindSplitPoint();
+      int split_item_index = FindSplitPoint(t);
 
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's
@@ -4553,7 +4553,9 @@ before_switch:
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
-        const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
+        // Note: This function takes this as argument since it will
+        // do key comparison
+        const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling(this);
         
         // If the new leaf node pointer is nullptr then it means the
         // although the size of the leaf node exceeds split threshold
