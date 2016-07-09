@@ -6431,8 +6431,10 @@ try_join_again:
       }
 
       // First copy the logical node into current instance
-      // DO NOT NEED delete; JUST DO A VALUE COPY
+      // DO NOT NEED new and delete; JUST DO A VALUE COPY
       // since the storage has already been allocated during construction
+      // and the old value with be automatically dealt with LeafNode
+      // and vector's assignment operation
       *leaf_node_p = *other.leaf_node_p;
 
       // Copy everything that could be copied
