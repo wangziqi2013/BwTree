@@ -6399,6 +6399,8 @@ try_join_again:
     ForwardIterator(BwTree *p_tree_p,
                     const KeyType &start_key) :
       tree_p{p_tree_p},
+      leaf_node_p{nullptr}, // This is used to singal LowerBound() that
+                            // no memory should be freed
       is_end{false} {
       
       // This sets all members, and might return with is_end == true
@@ -6691,6 +6693,15 @@ try_join_again:
         // Set high key pair for next call of this function
         next_key_pair = node_p->GetHighKeyPair();
 
+        // If this is nullptr then we are calling it from the constructor
+        if(leaf_node_p != nullptr) {
+          // Only we call it from the constructor will the start key pointer
+          // be a null pointer
+          assert(start_key_p != nullptr);
+          
+          delete leaf_node_p;
+        }
+        
         // Consolidate the current node
         leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
 
