@@ -4547,13 +4547,29 @@ before_switch:
       // evenly, and in the worst case if there is one key in the
       // node the node could not be splited while having a large
       // item count
-      size_t node_size = leaf_node_p->item_prefix_sum.size();
+      size_t node_size = leaf_node_p->GetItemCount();
 
       // Perform corresponding action based on node size
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
         const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
+        
+        // If the new leaf node pointer is nullptr then it means the
+        // although the size of the leaf node exceeds split threshold
+        // but we could not find a spliting point that evenly or almost
+        // evenly divides the key space into two siblings whose sizes
+        // are both larger than the merge threshold (o.w. the node will
+        // be immediately merged)
+        // NOTE: This is a potential problem if a leaf becomes very unbalanced
+        // since all threads will try to split the leaf node when traversing
+        // to it (not for reader threads)
+        if(new_leaf_node_p == nullptr) {
+          bwt_printf("LeafNode size exceeds overhead, "
+                     "but could not find split point\n");
+          
+          return;
+        }
         
         // Since we would like to access its first element to get the low key
         assert(new_leaf_node_p->data_list.size() > 0UL);
