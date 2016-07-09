@@ -1002,9 +1002,6 @@ class BwTree {
     // We always hold data within a vector of KeyValuePair
     std::vector<KeyValuePair> data_list;
 
-    // This stores accumulated number of items for each key for fast access
-    std::vector<int> item_prefix_sum;
-
     // This holds high key and the next node ID inside a pair
     // so that they could be accessed in a compacted manner
     KeyNodeIDPair high_key;
@@ -1027,6 +1024,49 @@ class BwTree {
                p_item_count},
       high_key{p_high_key_p}
     {}
+    
+    /*
+     * FindSplitPoint() - Find the split point that could divide the node
+     *                    into two even siblings
+     *
+     * If such point does not exist then we manage to find a point that
+     * divides the node into two halves that are as even as possible (i.e.
+     * make the size difference as small as possible)
+     *
+     * This function works by first finding the key on the exact central
+     * position, after which it scans forward to find a KeyValuePair
+     * with a different key. If this fails then it scans backwards to find
+     * a KeyValuePair with a different key.
+     *
+     * NOTE: If both split points would make an uneven division with one of
+     * the node size below the merge threshold, then we do not split,
+     * and return -1 instead. Otherwise the index of the spliting point
+     * is returned
+     */
+    int FindSplitPoint() const {
+      int central_index = static_cast<int>(data_list.size()) / 2;
+      assert(central_index > 1);
+      
+      // This will used as upper_bound and lower_bound key
+      const KeyValuePair &central_kvp = data_list[central_index];
+
+      auto it = data_list.begin() + central_index;
+      
+      // If iterator has reached the begin then we know there could not
+      // be any split points
+      while((it != data_list.begin()) && \
+            (KeyCmpEqual(it->first, central_kvp.first) == true)) {
+        it--;
+      }
+      
+      if(it != data_list.begin()) {
+        int left_sibling_size = std::distance(data_list.begin(), it);
+        
+        if(left_sibling_size <= LEAF_NODE_SIZE_LOWER_THRESHOLD) {
+
+        }
+      }
+    }
 
     /*
      * GetSplitSibling() - Split the node into two halves
