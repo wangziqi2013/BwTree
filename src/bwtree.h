@@ -3236,49 +3236,6 @@ abort_traverse:
               data_list_p->end(),
               key_value_pair_cmp_obj);
 
-    // We reserve that many space for storing the prefix sum
-    // Note that if the node is going to be consolidated then this will
-    // definitely cause reallocation
-    leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
-
-    // Next we compute prefix sum of key numbers
-    // We compute that by finding the upper bound of the current key
-    // and compute the distance, and switch the current key to the
-    // current upper bound, until we have reached end() iterator
-
-    auto range_begin_it = data_list_p->begin();
-    auto end_it = data_list_p->end();
-
-    // This is used to compute prefix sum of distinct elements
-    int prefix_sum = 0;
-
-    while(range_begin_it != end_it) {
-      // Search for the first item whose key > current key
-      // and their difference is the number of elements
-      auto range_end_it = std::upper_bound(range_begin_it,
-                                           end_it,
-                                           *range_begin_it,
-                                           key_value_pair_cmp_obj);
-
-      // The first element is always 0 since the index starts with 0
-      leaf_node_p->item_prefix_sum.push_back(prefix_sum);
-
-      // The distance should be > 0 otherwise the key is not found
-      // which is impossible because we know the key exists in
-      // the data list
-      int distance = std::distance(range_begin_it, range_end_it);
-      assert(distance > 0);
-
-      // Then increase prefix sum with the length of the range
-      // which is also the distance between the two variables
-      prefix_sum += distance;
-
-      // Start from the end of current range which is the next key
-      // If there is no more elements then std::upper_bound() returns
-      // end() iterator, which would fail while loop testing
-      range_begin_it = range_end_it;
-    }
-
     return leaf_node_p;
   }
 
