@@ -3740,7 +3740,7 @@ abort_traverse:
       return;
     }
 
-    ConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3773,7 +3773,7 @@ abort_traverse:
       return;
     }
 
-    ConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4056,6 +4056,8 @@ abort_traverse:
       // updated
       parent_snapshot_p->node_p = insert_node_p;
 
+      ConsolidateNode(GetLatestNodeSnapshot(context_p));
+
       return true;
     } else {
       bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
@@ -4135,6 +4137,8 @@ abort_traverse:
 
       parent_snapshot_p->node_p = delete_node_p;
 
+      ConsolidateNode(GetLatestNodeSnapshot(context_p));
+
       return true;
     } else {
       bwt_printf("Index term delete delta install failed. ABORT\n");
@@ -4148,6 +4152,43 @@ abort_traverse:
 
     assert(false);
     return false;
+  }
+
+  /*
+   * ConsolidateNode() - Consolidates current node unconditionally
+   *
+   * This function is called after finishing split/merge SMO, since we
+   * want to prevent other threads from seeing the finished SMO and
+   * do an useless consolidation on the parent node
+   *
+   * NOTE: This function does not return any value reflecting the status
+   * of CAS operation, since consolidation is an optional operation, and it
+   * would not have any effect even if it fails
+   */
+  void ConsolidateNode(NodeSnapshot *snapshot_p) {
+    if(snapshot_p->node_p->IsOnLeafDeltaChain() == true) {
+      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      leaf_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == false) {
+        delete leaf_node_p;
+      }
+    } else {
+      InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      inner_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == false) {
+        delete inner_node_p;
+      }
+    } // if on leaf/inner node
+
+    return;
   }
 
   /*
@@ -4320,17 +4361,19 @@ before_switch:
           // corresponding sep in parent then it has already been removed
           // so we propose a consolidation on current node to
           // get rid of the merge delta
-          return true;
+          ConsolidateNode(snapshot_p);
+
+          return false;
         }
 
         // It will post an InnerDeleteNode on the parent node
         // and the return value is the result of CAS
-        return PostInnerDeleteNode(context_p,
-                                   *delete_item_p,
-                                   *prev_item_p,
-                                   *next_item_p);
+        PostInnerDeleteNode(context_p,
+                            *delete_item_p,
+                            *prev_item_p,
+                            *next_item_p);
 
-        break;
+        return false;
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
@@ -4470,7 +4513,9 @@ before_switch:
             // We have seen a split, but the sep in parent node is already
             // installed. In this case we propose a consolidation on current
             // node to prevent further encountering the "false" split delta
-            return true;
+            ConsolidateNode(snapshot_p);
+
+            return false;
           }
 
           // Post InnerInsertNode on the parent node. If return value is true then
@@ -4478,10 +4523,10 @@ before_switch:
           // Also if this returns true then we have successfully completed split SMO
           // which means the SMO could be removed by a consolidation to avoid
           // consolidating the parent node again and again
-          return PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
-        } // if split root / else not split root
+          PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
 
-        break;
+          return false;
+        } // if split root / else not split root
       } // case split node
       default: {
         return false;
@@ -4495,8 +4540,8 @@ before_switch:
   }
 
   /*
-   * ConsolidateNode() - Consolidate current node if its length exceeds the
-   *                     threshold value
+   * TryConsolidateNode() - Consolidate current node if its length exceeds the
+   *                        threshold value
    *
    * If the length of delta chain does not exceed the threshold then this
    * function does nothing
@@ -4512,8 +4557,8 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool ConsolidateNode(Context *context_p,
-                       bool recommend_consolidation) {
+  bool TryConsolidateNode(Context *context_p,
+                          bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Do not overwrite this pointer since we will use this
