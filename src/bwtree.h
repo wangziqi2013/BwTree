@@ -4026,6 +4026,8 @@ abort_traverse:
    *
    * This is used to finish the partial node split SMO as part of the help
    * along protocol
+   *
+   * NOTE: This function may abort
    */
   inline bool PostInnerInsertNode(Context *context_p,
                                   const KeyNodeIDPair &insert_item,
@@ -4082,6 +4084,8 @@ abort_traverse:
    * This function is called to complete node merges as part of the SMO help-along
    * protocol. It posts an InnerDeleteNode on the parent node and returns the result
    * of CAS instruction
+   *
+   * NOTE: This function may abort
    */
   inline bool PostInnerDeleteNode(Context *context_p,
                                   const KeyNodeIDPair &delete_item,
@@ -4145,6 +4149,9 @@ abort_traverse:
 
       // DO NOT FORGET TO DELETE THIS
       delete delete_node_p;
+
+      // The caller just returns after this function, so do not have
+      // to branch on abort_flag after this function returns
       context_p->abort_flag = true;
 
       return false;
@@ -4368,6 +4375,8 @@ before_switch:
 
         // It will post an InnerDeleteNode on the parent node
         // and the return value is the result of CAS
+        // Note: Even if this function aborts, since we return immediately
+        // so do not have to test abort_flag here
         PostInnerDeleteNode(context_p,
                             *delete_item_p,
                             *prev_item_p,
@@ -4523,6 +4532,8 @@ before_switch:
           // Also if this returns true then we have successfully completed split SMO
           // which means the SMO could be removed by a consolidation to avoid
           // consolidating the parent node again and again
+          // Note: Even if this function aborts, since we return immediately
+          // so do not have to test abort_flag here
           PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
 
           return false;
