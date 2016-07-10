@@ -4075,6 +4075,82 @@ abort_traverse:
   }
 
   /*
+   * PostInnerDeleteNode() - Posts an InnerDeleteNode on the current parent node
+   *
+   * This function is called to complete node merges as part of the SMO help-along
+   * protocol. It posts an InnerDeleteNode on the parent node and returns the result
+   * of CAS instruction
+   */
+  inline bool PostInnerDeleteNode(Context *context_p,
+                                  const KeyNodeIDPair &delete_item,
+                                  const KeyNodeIDPair &prev_item,
+                                  const KeyNodeIDPair &next_item) {
+    NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
+
+    // Arguments are:
+    // Deleted item; Prev item; next item (NodeID not used for next item)
+    // and delta chail child node
+    const InnerDeleteNode *delete_node_p = \
+      new InnerDeleteNode{delete_item,
+                          prev_item,
+                          next_item,
+                          parent_snapshot_p->node_p};
+
+    // Assume parent has not changed, and CAS the index term delete delta
+    // If CAS failed then parent has changed, and we have no idea how it
+    // could be modified. The safest way is just abort
+    bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
+                                    delete_node_p,
+                                    parent_snapshot_p->node_p);
+
+    // If we installed the IndexTermDeleteDelta successfully the next
+    // step is to put the remove node into garbage chain
+    // and also recycle the deleted NodeID since now no new thread
+    // could access that NodeID until it is reused
+    if(ret == true) {
+      bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
+                 parent_snapshot_p->node_id);
+
+      // The deleted node ID must resolve to a RemoveNode of either
+      // Inner or Leaf category
+      const BaseNode *garbage_node_p = GetNode(delete_item.second);
+      assert(garbage_node_p->IsRemoveNode());
+
+      // Put the remove node into garbage chain
+      // This will not remove the child node of the remove node, which
+      // should be removed together with the merge node above it
+      // Also, the remove node acts as a container for removed NodeID
+      // which will be recycled when the remove node is recycled
+      epoch_manager.AddGarbageNode(garbage_node_p);
+
+      // To avoid this entry being recycled during tree destruction
+      // Since the entry still remains in the old inner base node
+      // but we should have already deleted it
+      // NOTE: We could not do it here since some thread will fetch
+      // nullptr from the mapping table
+      // We should recycle the NodeID using EpochManager
+      // and requires that epoch manager finishes all epoches before
+      // the tree is destroyed
+      //mapping_table[deleted_node_id] = nullptr;
+
+      parent_snapshot_p->node_p = delete_node_p;
+
+      return true;
+    } else {
+      bwt_printf("Index term delete delta install failed. ABORT\n");
+
+      // DO NOT FORGET TO DELETE THIS
+      delete delete_node_p;
+      context_p->abort_flag = true;
+
+      return false;
+    }
+
+    assert(false);
+    return false;
+  }
+
+  /*
    * FinishPartialSMO() - Finish partial completed SMO if there is one
    *
    * This function defines the help-along protocol, i.e. if we find
@@ -4247,64 +4323,12 @@ before_switch:
           return true;
         }
 
-        // Arguments are:
-        // Deleted item; Prev item; next item (NodeID not used for next item)
-        // and delta chail child node
-        const InnerDeleteNode *delete_node_p = \
-          new InnerDeleteNode{*delete_item_p,
-                              *prev_item_p,
-                              *next_item_p,
-                              parent_snapshot_p->node_p};
-
-        // Assume parent has not changed, and CAS the index term delete delta
-        // If CAS failed then parent has changed, and we have no idea how it
-        // could be modified. The safest way is just abort
-        bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
-                                        delete_node_p,
-                                        parent_snapshot_p->node_p);
-
-        // If we installed the IndexTermDeleteDelta successfully the next
-        // step is to put the remove node into garbage chain
-        // and also recycle the deleted NodeID since now no new thread
-        // could access that NodeID until it is reused
-        if(ret == true) {
-          bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
-                     parent_snapshot_p->node_id);
-
-          // The deleted node ID must resolve to a RemoveNode of either
-          // Inner or Leaf category
-          const BaseNode *garbage_node_p = GetNode(delete_item_p->second);
-          assert(garbage_node_p->IsRemoveNode());
-
-          // Put the remove node into garbage chain
-          // This will not remove the child node of the remove node, which
-          // should be removed together with the merge node above it
-          // Also, the remove node acts as a container for removed NodeID
-          // which will be recycled when the remove node is recycled
-          epoch_manager.AddGarbageNode(garbage_node_p);
-
-          // To avoid this entry being recycled during tree destruction
-          // Since the entry still remains in the old inner base node
-          // but we should have already deleted it
-          // NOTE: We could not do it here since some thread will fetch
-          // nullptr from the mapping table
-          // We should recycle the NodeID using EpochManager
-          // and requires that epoch manager finishes all epoches before
-          // the tree is destroyed
-          //mapping_table[deleted_node_id] = nullptr;
-
-          parent_snapshot_p->node_p = delete_node_p;
-
-          return true;
-        } else {
-          bwt_printf("Index term delete delta install failed. ABORT\n");
-
-          // DO NOT FORGET TO DELETE THIS
-          delete delete_node_p;
-          context_p->abort_flag = true;
-
-          return false;
-        }
+        // It will post an InnerDeleteNode on the parent node
+        // and the return value is the result of CAS
+        return PostInnerDeleteNode(context_p,
+                                   *delete_item_p,
+                                   *prev_item_p,
+                                   *next_item_p);
 
         break;
       } // case Inner/LeafMergeNode
