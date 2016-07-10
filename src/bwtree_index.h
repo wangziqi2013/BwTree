@@ -15,24 +15,44 @@
 #include <vector>
 #include <string>
 #include <map>
-#include <functional>
 
-#include "catalog/manager.h"
-#include "common/platform.h"
-#include "common/types.h"
-#include "index/index.h"
+#include "backend/catalog/manager.h"
+#include "backend/common/platform.h"
+#include "backend/common/types.h"
+#include "backend/index/index.h"
 
-#include "index/bwtree.h"
+#include "backend/index/bwtree.h"
 
 #define BWTREE_INDEX_TYPE BWTreeIndex <KeyType, \
                                        ValueType, \
                                        KeyComparator, \
                                        KeyEqualityChecker, \
+                                       KeyHashFunc, \
                                        ValueEqualityChecker, \
                                        ValueHashFunc>
 
 namespace peloton {
 namespace index {
+  
+class ItemPointerComparator {
+ public:
+  bool operator()(ItemPointer * const &p1, ItemPointer * const &p2) const {
+    return (p1->block == p2->block) && (p1->offset == p2->offset);
+  }
+  
+  ItemPointerComparator(const ItemPointerComparator&) {}
+  ItemPointerComparator() {}
+};
+
+class ItemPointerHashFunc {
+ public:
+  size_t operator()(ItemPointer * const &p) const {
+    return std::hash<oid_t>()(p->block) ^ std::hash<oid_t>()(p->offset);
+  }
+  
+  ItemPointerHashFunc(const ItemPointerHashFunc&) {}
+  ItemPointerHashFunc() {}
+};
 
 /**
  * BW tree-based index implementation.
@@ -45,11 +65,12 @@ namespace index {
  * @see Index
  */
 template <typename KeyType,
-          typename ValueType = ItemPointer *,
-          typename KeyComparator = std::less<KeyType>,
-          typename KeyEqualityChecker = std::equal_to<KeyType>,
-          typename ValueEqualityChecker = std::equal_to<ValueType>,
-          typename ValueHashFunc = std::hash<ValueType>>
+          typename ValueType,
+          typename KeyComparator,
+          typename KeyEqualityChecker,
+          typename KeyHashFunc,
+          typename ValueEqualityChecker,
+          typename ValueHashFunc>
 class BWTreeIndex : public Index {
   friend class IndexFactory;
 
@@ -57,6 +78,7 @@ class BWTreeIndex : public Index {
                          ValueType,
                          KeyComparator,
                          KeyEqualityChecker,
+                         KeyHashFunc,
                          ValueEqualityChecker,
                          ValueHashFunc>;
 
@@ -69,8 +91,10 @@ class BWTreeIndex : public Index {
 
   bool DeleteEntry(const storage::Tuple *key, const ItemPointer &location);
 
-  bool CondInsertEntry(const storage::Tuple *key, const ItemPointer &location,
-                       std::function<bool(const ItemPointer &)> predicate);
+  bool CondInsertEntry(const storage::Tuple *key,
+                       const ItemPointer &location,
+                       std::function<bool(const void *)> predicate,
+                       ItemPointer **itemptr_ptr);
 
   void Scan(const std::vector<Value> &values,
             const std::vector<oid_t> &key_column_ids,
@@ -105,12 +129,10 @@ class BWTreeIndex : public Index {
   // equality checker and comparator
   KeyComparator comparator;
   KeyEqualityChecker equals;
+  KeyHashFunc hash_func;
   
   // container
   MapType container;
-
-  // synch helper
-  RWLock index_lock;
 };
 
 }  // End index namespace
