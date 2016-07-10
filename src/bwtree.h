@@ -62,6 +62,12 @@ class PointerComparator {
  */
 //#define BWTREE_PELOTON
 
+#ifdef BWTREE_PELOTON
+
+#include "backend/index/index.h"
+
+#endif
+
 // Used for debugging
 #include <mutex>
 
@@ -1977,16 +1983,33 @@ class BwTree {
     first_leaf_id = GetNextNodeID();
     assert(first_leaf_id == FIRST_LEAF_NODE_ID);
 
+    #ifdef BWTREE_PELOTON
+    
+    // For the first inner node, it needs an empty low key
+    // the search procedure will not look at it and only use it
+    // if the search key could not be matched to anything after the first key
+    KeyNodeIDPair first_sep{KeyType(), first_leaf_id};
+    
+    // Initially there is one element inside the root node
+    // so we set item count to be 1
+    // The high key is +Inf which is identified by INVALID_NODE_ID
+    InnerNode *root_node_p = \
+      new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 1};
+    
+    #else
+    
     // For the first inner node, it needs an empty low key
     // the search procedure will not look at it and only use it
     // if the search key could not be matched to anything after the first key
     KeyNodeIDPair first_sep{KeyType{}, first_leaf_id};
-
+    
     // Initially there is one element inside the root node
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
       new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 1};
+      
+    #endif
 
     root_node_p->sep_list.push_back(first_sep);
 
@@ -1998,8 +2021,17 @@ class BwTree {
 
     // Initially there is no element inside the leaf node so we set element
     // count to be 0
+    #ifdef BWTREE_PELOTON
+    
+    LeafNode *left_most_leaf = \
+      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID), 0};
+      
+    #else
+    
     LeafNode *left_most_leaf = \
       new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 0};
+    
+    #endif
 
     InstallNewNode(first_leaf_id, left_most_leaf);
 
@@ -4266,14 +4298,28 @@ before_switch:
           // to the first element in the sep list
           // NOTE: Storage will be automatically reserved inside the
           // constructor
+          #ifdef BWTREE_PELOTON
+
+          InnerNode *inner_node_p = \
+            new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 2};
+
+          // NOTE: Since we never directly access the first element in the
+          // InnerNode object, it is OK to just put an empty KeyType
+          // object into the list
+          inner_node_p->sep_list.push_back(std::make_pair(KeyType(),
+                                                          snapshot_p->node_id));
+                                                          
+          #else
+          
           InnerNode *inner_node_p = \
             new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
-
+          
           // NOTE: Since we never directly access the first element in the
           // InnerNode object, it is OK to just put an empty KeyType
           // object into the list
           inner_node_p->sep_list.push_back(std::make_pair(KeyType{},
                                                           snapshot_p->node_id));
+          #endif
 
           inner_node_p->sep_list.push_back(*insert_item_p);
 
