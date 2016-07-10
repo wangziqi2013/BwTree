@@ -6554,6 +6554,42 @@ try_join_again:
 
       return *this;
     }
+    
+    /*
+     * Move Assignment - Assigns a temporary iterator object
+     *
+     * NOTE: In move assignment we do not need to move iterator; instead
+     * iterator could be directly copied since the leaf node does not change
+     * and such that the iterator is not invalidated
+     */
+    ForwardIterator &operator=(ForwardIterator &&other) {
+      if(this == &other) {
+        return *this;
+      }
+
+      // For an empty iterator this branch is necessary
+      if(leaf_node_p != nullptr) {
+        delete leaf_node_p;
+      }
+      
+      // Direcrly moves the leaf node pointer without copying
+      leaf_node_p = other.leaf_node_p;
+      
+      // Since the leaf node does not change, the constructor is not invalidated
+      // we could just copy it here
+      it = other.it;
+
+      tree_p = other.tree_p;
+      next_key_pair = other.next_key_pair;
+
+      is_end = other.is_end;
+
+      // This is necessary to avoid the leaf node pointer being
+      // deleted when the other is destructed
+      other.leaf_node_p = nullptr;
+
+      return *this;
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
