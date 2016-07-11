@@ -4582,7 +4582,7 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool TryConsolidateNode(Context *context_p) {
+  void TryConsolidateNode(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Do not overwrite this pointer since we will use this
@@ -4599,7 +4599,7 @@ before_switch:
       // JumpToLeftSibling())
       // assert(node_p->metadata.depth == 0);
 
-      return false;
+      return;
     }
 
     // If depth does not exceed threshold then we check recommendation flag
@@ -4607,11 +4607,11 @@ before_switch:
 
     if(snapshot_p->IsLeaf() == true) {
       if(depth < LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) {
-        return false;
+        return;
       }
     } else {
       if(depth < INNER_DELTA_CHAIN_LENGTH_THRESHOLD) {
-        return false;
+        return;
       }
     }
 
@@ -4619,7 +4619,7 @@ before_switch:
 
     ConsolidateNode(snapshot_p);
 
-    return true;
+    return;
   }
 
   /*
