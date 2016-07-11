@@ -40,6 +40,21 @@
 #include <vector>
 
 /*
+ * class PointerComparator - A template class for comparing pointer types
+ *
+ * If the ValueType of BwTree is pointer type, we usually do not want to
+ * compare pointers directly, but instead we hope to dereference the pointer
+ * and do comparison with the dereferenced type
+ */
+template <typename DereferencedType,
+          typename DereferencedTypeComparator = std::equal_to<DereferencedType>>
+class PointerComparator {
+  inline bool operator()(const DereferencedType *p1, const DereferencedType *p2) {
+    return DereferencedTypeComparator(*p1, *p2);
+  }
+};
+
+/*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
  *                  We strive to make BwTree a standalone and independent
@@ -47,14 +62,14 @@
  */
 //#define BWTREE_PELOTON
 
+#ifdef BWTREE_PELOTON
+
+#include "backend/index/index.h"
+
+#endif
+
 // Used for debugging
 #include <mutex>
-
-#ifdef BWTREE_PELOTON
-// This contains IndexMetadata definition
-// It uses peloton::index namespace
-#include "index/index.h"
-#endif
 
 #include "bloom_filter.h"
 #include "atomic_stack.h"
@@ -92,6 +107,7 @@
                                             typename ValueType, \
                                             typename KeyComparator, \
                                             typename KeyEqualityChecker, \
+                                            typename KeyHashFunc, \
                                             typename ValueEqualityChecker, \
                                             typename ValueHashFunc>
 
@@ -334,18 +350,18 @@ class BwTree {
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
 
   // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
-  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 128;
+  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 64;
+  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 32;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 16;
+  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 16;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
-  
+
   // This constant represents INVALID_NODE_ID which is used as an indication
   // that the node is actually the last node on that level
   constexpr static NodeID INVALID_NODE_ID = 0;
-  
+
   // The NodeID for the first leaf is fixed, which is 2
   constexpr static NodeID FIRST_LEAF_NODE_ID = 2;
 
@@ -666,7 +682,17 @@ class BwTree {
      * Constructor - Initialize a context object into initial state
      */
     Context(const KeyType p_search_key) :
+      #ifdef BWTREE_PELOTON
+
+      // Because earlier versions of g++ does not support
+      // initializer list so must use () form
+      search_key(p_search_key),
+
+      #else
+
       search_key{p_search_key},
+
+      #endif
       abort_counter{0},
       current_level{-1},
       abort_flag{false}
@@ -763,7 +789,7 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    const NodeType type;
+    NodeType type;
 
     // This holds low key, high key, and next node ID
     NodeMetaData metadata;
@@ -900,7 +926,7 @@ class BwTree {
     inline const KeyNodeIDPair &GetLowKeyPair() const {
       // Make sure this is not called on leaf nodes
       assert(IsOnLeafDeltaChain() == false);
-      
+
       return *metadata.low_key_p;
     }
 
@@ -936,7 +962,7 @@ class BwTree {
     inline int GetItemCount() const {
       return metadata.item_count;
     }
-    
+
     /*
      * SetLowKeyPair() - Sets the low key pair of metadata
      *
@@ -946,9 +972,9 @@ class BwTree {
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       assert(IsOnLeafDeltaChain() == false);
-      
+
       metadata.low_key_p = p_low_key_p;
-      
+
       return;
     }
   };
@@ -992,9 +1018,6 @@ class BwTree {
     // We always hold data within a vector of KeyValuePair
     std::vector<KeyValuePair> data_list;
 
-    // This stores accumulated number of items for each key for fast access
-    std::vector<int> item_prefix_sum;
-
     // This holds high key and the next node ID inside a pair
     // so that they could be accessed in a compacted manner
     KeyNodeIDPair high_key;
@@ -1019,6 +1042,70 @@ class BwTree {
     {}
 
     /*
+     * FindSplitPoint() - Find the split point that could divide the node
+     *                    into two even siblings
+     *
+     * If such point does not exist then we manage to find a point that
+     * divides the node into two halves that are as even as possible (i.e.
+     * make the size difference as small as possible)
+     *
+     * This function works by first finding the key on the exact central
+     * position, after which it scans forward to find a KeyValuePair
+     * with a different key. If this fails then it scans backwards to find
+     * a KeyValuePair with a different key.
+     *
+     * NOTE: If both split points would make an uneven division with one of
+     * the node size below the merge threshold, then we do not split,
+     * and return -1 instead. Otherwise the index of the spliting point
+     * is returned
+     */
+    int FindSplitPoint(const BwTree *t) const {
+      int central_index = static_cast<int>(data_list.size()) / 2;
+      assert(central_index > 1);
+
+      // This will used as upper_bound and lower_bound key
+      const KeyValuePair &central_kvp = data_list[central_index];
+
+      // Move it to the element before data_list
+      auto it = data_list.begin() + central_index - 1;
+
+      // If iterator has reached the begin then we know there could not
+      // be any split points
+      while((it != data_list.begin()) && \
+            (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
+        it--;
+      }
+
+      // This is the real split point
+      it++;
+
+      // This size is exactly the index of the split point
+      int left_sibling_size = std::distance(data_list.begin(), it);
+
+      if(left_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
+        return left_sibling_size;
+      }
+
+      // Move it to the element after data_list
+      it = data_list.begin() + central_index + 1;
+
+      // If iterator has reached the end then we know there could not
+      // be any split points
+      while((it != data_list.end()) && \
+            (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
+        it++;
+      }
+
+      int right_sibling_size = std::distance(it, data_list.end());
+
+      if(right_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
+        return std::distance(data_list.begin(), it);
+      }
+
+      return -1;
+    }
+
+    /*
      * GetSplitSibling() - Split the node into two halves
      *
      * Although key-values are stored as independent pairs, we always split
@@ -1040,36 +1127,26 @@ class BwTree {
      * NOTE 3: This function assumes no out-of-bound key, i.e. all keys
      * stored in the leaf node are < high key. This is valid since we
      * already filtered out those key >= high key in consolidation.
+     *
+     * NOTE 4: On failure of split (i.e. could not find a split key that evenly
+     * or almost evenly divide the leaf node) then the return value of this
+     * function is nullptr
      */
-    LeafNode *GetSplitSibling() const {
-      int key_num = static_cast<int>(item_prefix_sum.size());
-      assert(key_num >= 2);
-
+    LeafNode *GetSplitSibling(const BwTree *t) const {
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
       assert(static_cast<int>(data_list.size()) == this->GetItemCount());
 
-      // This is the index of the key in prefix sum array
-      int split_key_index = key_num / 2;
-
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
       // inner node
-      int split_item_index = item_prefix_sum[split_key_index];
-
-      // This points to the prefix sum array and we use this to copy
-      // the prefix sum array
-      auto prefix_sum_start_it = item_prefix_sum.begin();
-      std::advance(prefix_sum_start_it, split_key_index);
-
-      auto prefix_sum_end_it = item_prefix_sum.end();
+      int split_item_index = FindSplitPoint(t);
 
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's
       // RandomAccessIterator
-      auto copy_start_it = data_list.begin();
-      std::advance(copy_start_it, split_item_index);
+      auto copy_start_it = data_list.begin() + split_item_index;
 
       // This is the end point for later copy of data
       auto copy_end_it = data_list.end();
@@ -1087,16 +1164,6 @@ class BwTree {
 
       // Copy data item into the new node using batch assign()
       leaf_node_p->data_list.assign(copy_start_it, copy_end_it);
-
-      // Copy prefix sum into the new node and later we will modify it
-      leaf_node_p->item_prefix_sum.assign(prefix_sum_start_it,
-                                          prefix_sum_end_it);
-
-      // Adjust prefix sum in the new leaf node by subtracting them
-      // from the index of item on the split point
-      for(auto &prefix_sum : leaf_node_p->item_prefix_sum) {
-        prefix_sum -= split_item_index;
-      }
 
       return leaf_node_p;
     }
@@ -1277,7 +1344,7 @@ class BwTree {
       right_merge_p{p_right_merge_p}
     {}
   };
-  
+
   ///////////////////////////////////////////////////////////////////
   // Leaf Delta Chain Node Type End
   ///////////////////////////////////////////////////////////////////
@@ -1294,7 +1361,7 @@ class BwTree {
     // The vector stores the separators, with the first element being the
     // low key-NodeID pair (low key is not used)
     std::vector<KeyNodeIDPair> sep_list;
-    
+
     // This stores the high key of the node
     KeyNodeIDPair high_key;
 
@@ -1316,13 +1383,13 @@ class BwTree {
       // So it is important that the vector does not reallocate its internal
       // memory segment otherwise the pointer to low key is invalidated
       sep_list.reserve(p_item_count);
-      
+
       // Then direct high key and low key pointer to the first and last element
       // NOTE: Once the vector reallocates its memory, this pointer is
       // invalidated. So we should avoid that
       // NOTE 2: Should use "this" pointer to call the low key pair
       this->SetLowKeyPair(&sep_list[0]);
-      
+
       return;
     }
 
@@ -1380,7 +1447,7 @@ class BwTree {
    public:
     // This is the item being inserted
     KeyNodeIDPair insert_item;
-    
+
     // This is the next right after the item being inserted
     // This could be set to the +Inf high key
     // in that case next_item.second == INVALID_NODE_ID
@@ -1424,7 +1491,7 @@ class BwTree {
     // then do not need to compare to it since the search key must >= low key
     // But if the prev_item.second != low key node id then need to compare key
     KeyNodeIDPair prev_item;
-    
+
     // This holds the next key-NodeID item in the inner node
     // If the NodeID inside next_item is INVALID_NODE_ID then we do not have
     // to conduct any comparison since we know it is the high key
@@ -1916,6 +1983,21 @@ class BwTree {
     first_leaf_id = GetNextNodeID();
     assert(first_leaf_id == FIRST_LEAF_NODE_ID);
 
+    #ifdef BWTREE_PELOTON
+
+    // For the first inner node, it needs an empty low key
+    // the search procedure will not look at it and only use it
+    // if the search key could not be matched to anything after the first key
+    KeyNodeIDPair first_sep{KeyType(), first_leaf_id};
+
+    // Initially there is one element inside the root node
+    // so we set item count to be 1
+    // The high key is +Inf which is identified by INVALID_NODE_ID
+    InnerNode *root_node_p = \
+      new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 1};
+
+    #else
+
     // For the first inner node, it needs an empty low key
     // the search procedure will not look at it and only use it
     // if the search key could not be matched to anything after the first key
@@ -1927,6 +2009,8 @@ class BwTree {
     InnerNode *root_node_p = \
       new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 1};
 
+    #endif
+
     root_node_p->sep_list.push_back(first_sep);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
@@ -1937,8 +2021,17 @@ class BwTree {
 
     // Initially there is no element inside the leaf node so we set element
     // count to be 0
+    #ifdef BWTREE_PELOTON
+
+    LeafNode *left_most_leaf = \
+      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID), 0};
+
+    #else
+
     LeafNode *left_most_leaf = \
       new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 0};
+
+    #endif
 
     InstallNewNode(first_leaf_id, left_most_leaf);
 
@@ -2082,7 +2175,7 @@ class BwTree {
    * If both are nullptr then we just traverse and do not do anything
    */
   const KeyValuePair *Traverse(Context *context_p, const ValueType *value_p) {
-    
+
     // For value collection it always returns nullptr
     const KeyValuePair *found_pair_p = nullptr;
 
@@ -2169,7 +2262,7 @@ retry_traverse:
 
     // If there is no abort then we could safely return
     return found_pair_p;
-    
+
 abort_traverse:
     assert(context_p->current_level >= 0);
 
@@ -2179,11 +2272,11 @@ abort_traverse:
     context_p->abort_counter++;
 
     goto retry_traverse;
-      
+
     assert(false);
     return nullptr;
   }
-  
+
   ///////////////////////////////////////////////////////////////////
   // Data Storage Core
   ///////////////////////////////////////////////////////////////////
@@ -2250,7 +2343,7 @@ abort_traverse:
   inline NodeID NavigateInnerNode(Context *context_p) {
     // This search key will not be changed during navigation
     const KeyType &search_key = context_p->search_key;
-    
+
     // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
@@ -2261,7 +2354,7 @@ abort_traverse:
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
-    
+
     bwt_printf("Navigating inner node delta chain...\n");
 
     while(1) {
@@ -2282,7 +2375,7 @@ abort_traverse:
             bwt_printf("Bounds checking failed (id = %lu) - "
                        "Must have missed an InnerSplitNode\n",
                        snapshot_p->node_id);
-                       
+
             // The node has splited but we did not see split node
             // it must have been consolidated after partial split delta being
             // finished. Abort here and go back one level to get the latest
@@ -2412,12 +2505,12 @@ abort_traverse:
           if(KeyCmpGreaterEqual(search_key, merge_key)) {
             bwt_printf("Take merge right branch (ID = %lu)\n",
                        snapshot_p->node_id);
-            
+
             node_p = merge_node_p->right_merge_p;
           } else {
             bwt_printf("Take merge left branch (ID = %lu)\n",
                        snapshot_p->node_id);
-                       
+
             node_p = merge_node_p->child_node_p;
           }
 
@@ -2474,7 +2567,7 @@ abort_traverse:
 
     // Save some typing
     auto sep_list_p = &inner_node_p->sep_list;
-    
+
     // The first element is always the low key
     // In the recursive call below we should take care not to insert the low
     // key again (it is always the first element in data list)
@@ -2558,10 +2651,10 @@ abort_traverse:
                                  return this->key_cmp_obj(knp1.first, knp2.first);
                                });
           }
-          
+
           // Since we want to access its first element
           assert(static_cast<int>(inner_node_p->sep_list.size()) > 0);
-          
+
           // If the first element in the sep list equals the low key pair's
           // NodeID then we are at the leftmost node of the merge tree
           // and we ignore the leftmost sep (since it could be -Inf)
@@ -2712,7 +2805,7 @@ abort_traverse:
     const BaseNode *node_p = snapshot_p->node_p;
 
     assert(snapshot_p->IsLeaf() == true);
-    
+
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
 
@@ -2738,13 +2831,15 @@ abort_traverse:
     const ValueType *present_set_data_p[set_max_size];
     const ValueType *deleted_set_data_p[set_max_size];
 
-    BloomFilter<ValueType> present_set{present_set_data_p,
-                                       value_eq_obj,
-                                       value_hash_obj};
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      present_set{present_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
 
-    BloomFilter<ValueType> deleted_set{deleted_set_data_p,
-                                       value_eq_obj,
-                                       value_hash_obj};
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      deleted_set{deleted_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2969,7 +3064,7 @@ abort_traverse:
             bwt_printf("Bounds check on LeafNode (id = %lu) failed - "
                        "must have ignored a split delta\n",
                        snapshot_p->node_id);
-            
+
             context_p->abort_flag = true;
 
             return nullptr;
@@ -3111,7 +3206,7 @@ abort_traverse:
     assert(false);
     return nullptr;
   }
-  
+
   /*
    * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
    *                            leaf node
@@ -3183,49 +3278,6 @@ abort_traverse:
               data_list_p->end(),
               key_value_pair_cmp_obj);
 
-    // We reserve that many space for storing the prefix sum
-    // Note that if the node is going to be consolidated then this will
-    // definitely cause reallocation
-    leaf_node_p->item_prefix_sum.reserve(LEAF_NODE_SIZE_UPPER_THRESHOLD);
-
-    // Next we compute prefix sum of key numbers
-    // We compute that by finding the upper bound of the current key
-    // and compute the distance, and switch the current key to the
-    // current upper bound, until we have reached end() iterator
-
-    auto range_begin_it = data_list_p->begin();
-    auto end_it = data_list_p->end();
-
-    // This is used to compute prefix sum of distinct elements
-    int prefix_sum = 0;
-
-    while(range_begin_it != end_it) {
-      // Search for the first item whose key > current key
-      // and their difference is the number of elements
-      auto range_end_it = std::upper_bound(range_begin_it,
-                                           end_it,
-                                           *range_begin_it,
-                                           key_value_pair_cmp_obj);
-
-      // The first element is always 0 since the index starts with 0
-      leaf_node_p->item_prefix_sum.push_back(prefix_sum);
-
-      // The distance should be > 0 otherwise the key is not found
-      // which is impossible because we know the key exists in
-      // the data list
-      int distance = std::distance(range_begin_it, range_end_it);
-      assert(distance > 0);
-
-      // Then increase prefix sum with the length of the range
-      // which is also the distance between the two variables
-      prefix_sum += distance;
-
-      // Start from the end of current range which is the next key
-      // If there is no more elements then std::upper_bound() returns
-      // end() iterator, which would fail while loop testing
-      range_begin_it = range_end_it;
-    }
-
     return leaf_node_p;
   }
 
@@ -3282,7 +3334,7 @@ abort_traverse:
                                            leaf_node_p->data_list.end(),
                                            // It only compares key so we
                                            // just use high key pair
-                                           high_key_pair,
+                                           std::make_pair(high_key_pair.first, ValueType{}),
                                            [this](const KeyValuePair &kvp1,
                                                   const KeyValuePair &kvp2) {
                                              return this->key_cmp_obj(kvp1.first, kvp2.first);
@@ -3377,7 +3429,7 @@ abort_traverse:
 
     return;
   }
-  
+
   ///////////////////////////////////////////////////////////////////
   // Control Core
   ///////////////////////////////////////////////////////////////////
@@ -3414,7 +3466,7 @@ abort_traverse:
     // This is the address of the parent node
     return &context_p->parent_snapshot;
   }
-  
+
   /*
    * IsOnLeftMostChild() - Returns true if latest node snapshot represents
    *                       the leftmost child in its parent
@@ -3427,7 +3479,7 @@ abort_traverse:
    */
   inline bool IsOnLeftMostChild(Context *context_p) {
     assert(context_p->current_level >= 1);
-    
+
     return GetLatestParentNodeSnapshot(context_p)->node_p->GetLowKeyNodeID() == \
            GetLatestNodeSnapshot(context_p)->node_id;
   }
@@ -3463,7 +3515,7 @@ abort_traverse:
 
     // Check currently we are on a remove node
     assert(snapshot_p->node_p->IsRemoveNode());
-    
+
     // This is not necessarily true. e.g. if the parent node was merged into
     // its left sibling before we take the snapshot of its previou left child
     // then this no longer holds
@@ -3472,10 +3524,10 @@ abort_traverse:
                  "  Parent node must have been merged. ABORT\n");
 
       context_p->abort_flag = true;
-      
+
       return;
     }
-    
+
     // After here we know we are not on a left most child of the parent
     // InnerNode, and thus the low key is a valid key
 
@@ -3533,10 +3585,10 @@ abort_traverse:
     // The removed node ID may not be found in the inner node
     if(it == inner_node_p->sep_list.end()) {
       context_p->abort_flag = true;
-      
+
       return;
     }
-    
+
     // it points to the current node (must be an exact match),
     // so it-- points to its possible left sibling
     it--;
@@ -3572,9 +3624,9 @@ abort_traverse:
     if(removed_node_id != snapshot_p->node_p->GetNextNodeID()) {
       bwt_printf("Left sibling's next node ID does not match removed NodeID."
                  " ABORT\n");
-                 
+
       context_p->abort_flag = true;
-      
+
       return;
     }
 
@@ -3688,7 +3740,7 @@ abort_traverse:
       return;
     }
 
-    ConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3721,7 +3773,7 @@ abort_traverse:
       return;
     }
 
-    ConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3783,11 +3835,11 @@ before_switch:
 
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
-        
+
         // Update snapshot pointer if we fall through to posting
         // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
-        
+
         // This serves as the merge key (for left sibling there is always a
         // valid high key)
         const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
@@ -3856,7 +3908,7 @@ before_switch:
     TakeNodeSnapshot(node_id, context_p);
 
     FinishPartialSMOReadOptimized(context_p);
-    
+
     // Do not need to check for abort flag here
 
     return;
@@ -3933,7 +3985,7 @@ retry_traverse:
 
       if(snapshot_p->IsLeaf() == true) {
         bwt_printf("The next node is a leaf (RO)\n");
-        
+
         NavigateLeafNode(context_p, *value_list_p);
 
         if(context_p->abort_flag == true) {
@@ -3950,7 +4002,7 @@ retry_traverse:
         return;
       }
     } // while(1)
-          
+
 abort_traverse:
     assert(context_p->current_level >= 0);
 
@@ -3968,6 +4020,183 @@ abort_traverse:
   ///////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////
+
+  /*
+   * PostInnerInsertNode() - Posts an InnerInsertNode on the parent node
+   *
+   * This is used to finish the partial node split SMO as part of the help
+   * along protocol
+   *
+   * NOTE: This function may abort
+   */
+  inline bool PostInnerInsertNode(Context *context_p,
+                                  const KeyNodeIDPair &insert_item,
+                                  const KeyNodeIDPair &next_item) {
+    // We post on the parent node, after which we check for size and decide whether
+    // to consolidate and/or split the node
+    NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
+
+    // Three arguments are: inserted key-node id pair
+    //                      next key-node id pair
+    //                      child node in delta chain
+    const InnerInsertNode *insert_node_p = \
+      new InnerInsertNode{insert_item,
+                          next_item,
+                          parent_snapshot_p->node_p};
+
+    // CAS Index Term Insert Delta onto the parent node
+    bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
+                                    insert_node_p,
+                                    parent_snapshot_p->node_p);
+
+    if(ret == true) {
+      bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
+                 GetLatestNodeSnapshot(context_p)->node_id,
+                 insert_item.second);
+
+      // Update parent node pointer to reflect the fact that it has been
+      // updated
+      parent_snapshot_p->node_p = insert_node_p;
+
+      ConsolidateNode(GetLatestNodeSnapshot(context_p));
+
+      return true;
+    } else {
+      bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
+                 "ABORT\n",
+                 GetLatestNodeSnapshot(context_p)->node_id,
+                 insert_item.second);
+
+      // Set abort, and remove the newly created node
+      context_p->abort_flag = true;
+      delete insert_node_p;
+
+      return false;
+    } // if CAS succeeds/fails
+
+    assert(false);
+    return false;
+  }
+
+  /*
+   * PostInnerDeleteNode() - Posts an InnerDeleteNode on the current parent node
+   *
+   * This function is called to complete node merges as part of the SMO help-along
+   * protocol. It posts an InnerDeleteNode on the parent node and returns the result
+   * of CAS instruction
+   *
+   * NOTE: This function may abort
+   */
+  inline bool PostInnerDeleteNode(Context *context_p,
+                                  const KeyNodeIDPair &delete_item,
+                                  const KeyNodeIDPair &prev_item,
+                                  const KeyNodeIDPair &next_item) {
+    NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
+
+    // Arguments are:
+    // Deleted item; Prev item; next item (NodeID not used for next item)
+    // and delta chail child node
+    const InnerDeleteNode *delete_node_p = \
+      new InnerDeleteNode{delete_item,
+                          prev_item,
+                          next_item,
+                          parent_snapshot_p->node_p};
+
+    // Assume parent has not changed, and CAS the index term delete delta
+    // If CAS failed then parent has changed, and we have no idea how it
+    // could be modified. The safest way is just abort
+    bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
+                                    delete_node_p,
+                                    parent_snapshot_p->node_p);
+
+    // If we installed the IndexTermDeleteDelta successfully the next
+    // step is to put the remove node into garbage chain
+    // and also recycle the deleted NodeID since now no new thread
+    // could access that NodeID until it is reused
+    if(ret == true) {
+      bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
+                 parent_snapshot_p->node_id);
+
+      // The deleted node ID must resolve to a RemoveNode of either
+      // Inner or Leaf category
+      const BaseNode *garbage_node_p = GetNode(delete_item.second);
+      assert(garbage_node_p->IsRemoveNode());
+
+      // Put the remove node into garbage chain
+      // This will not remove the child node of the remove node, which
+      // should be removed together with the merge node above it
+      // Also, the remove node acts as a container for removed NodeID
+      // which will be recycled when the remove node is recycled
+      epoch_manager.AddGarbageNode(garbage_node_p);
+
+      // To avoid this entry being recycled during tree destruction
+      // Since the entry still remains in the old inner base node
+      // but we should have already deleted it
+      // NOTE: We could not do it here since some thread will fetch
+      // nullptr from the mapping table
+      // We should recycle the NodeID using EpochManager
+      // and requires that epoch manager finishes all epoches before
+      // the tree is destroyed
+      //mapping_table[deleted_node_id] = nullptr;
+
+      parent_snapshot_p->node_p = delete_node_p;
+
+      ConsolidateNode(GetLatestNodeSnapshot(context_p));
+
+      return true;
+    } else {
+      bwt_printf("Index term delete delta install failed. ABORT\n");
+
+      // DO NOT FORGET TO DELETE THIS
+      delete delete_node_p;
+
+      // The caller just returns after this function, so do not have
+      // to branch on abort_flag after this function returns
+      context_p->abort_flag = true;
+
+      return false;
+    }
+
+    assert(false);
+    return false;
+  }
+
+  /*
+   * ConsolidateNode() - Consolidates current node unconditionally
+   *
+   * This function is called after finishing split/merge SMO, since we
+   * want to prevent other threads from seeing the finished SMO and
+   * do an useless consolidation on the parent node
+   *
+   * NOTE: This function does not return any value reflecting the status
+   * of CAS operation, since consolidation is an optional operation, and it
+   * would not have any effect even if it fails
+   */
+  void ConsolidateNode(NodeSnapshot *snapshot_p) {
+    if(snapshot_p->node_p->IsOnLeafDeltaChain() == true) {
+      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      leaf_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == false) {
+        delete leaf_node_p;
+      }
+    } else {
+      InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      inner_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == false) {
+        delete inner_node_p;
+      }
+    } // if on leaf/inner node
+
+    return;
+  }
 
   /*
    * FinishPartialSMO() - Finish partial completed SMO if there is one
@@ -4034,18 +4263,18 @@ before_switch:
 
         // That is the left sibling's snapshot
         NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
-        
+
         // Update snapshot pointer if we fall through to posting
         // index term delete delta for merge node
         snapshot_p = left_snapshot_p;
-        
+
         // This serves as the merge key
         // Note that the left sibling node must have a valid high key
         const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
 
         // This holds the merge node if installation is successful
         // Not changed (i.e.undefined) if CAS fails
-        const BaseNode *merge_node_p;
+        const BaseNode *merge_node_p = nullptr;
 
         bool ret;
 
@@ -4068,13 +4297,14 @@ before_switch:
 
         // If CAS fails just abort and return
         if(ret == true) {
-          bwt_printf("Merge delta CAS succeeds. ABORT\n");
+          bwt_printf("Merge delta CAS succeeds. "
+                     "Continue to finish merge SMO\n");
 
-          // TODO: Do not abort here and directly proceed to processing
-          // merge delta
-          context_p->abort_flag = true;
+          left_snapshot_p->node_p = merge_node_p;
 
-          return false;
+          // merge_node_p is set as the newest merge node above
+          // after this point
+          // Also snapshot_p has been to left_snapshot_p above
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
@@ -4083,7 +4313,10 @@ before_switch:
           return false;
         } // if ret == true
 
-        assert(false);
+        //
+        // FALL THROUGH IF POSTING MERGE DELTA SUCCEEDS
+        //
+
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
@@ -4139,69 +4372,21 @@ before_switch:
           // corresponding sep in parent then it has already been removed
           // so we propose a consolidation on current node to
           // get rid of the merge delta
-          return true;
-        }
-
-        // Arguments are:
-        // Deleted item; Prev item; next item (NodeID not used for next item)
-        // and delta chail child node
-        const InnerDeleteNode *delete_node_p = \
-          new InnerDeleteNode{*delete_item_p,
-                              *prev_item_p,
-                              *next_item_p,
-                              parent_snapshot_p->node_p};
-
-        // Assume parent has not changed, and CAS the index term delete delta
-        // If CAS failed then parent has changed, and we have no idea how it
-        // could be modified. The safest way is just abort
-        bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
-                                        delete_node_p,
-                                        parent_snapshot_p->node_p);
-
-        // If we installed the IndexTermDeleteDelta successfully the next
-        // step is to put the remove node into garbage chain
-        // and also recycle the deleted NodeID since now no new thread
-        // could access that NodeID until it is reused
-        if(ret == true) {
-          bwt_printf("Index term delete delta installed, ID = %lu; ABORT\n",
-                     parent_snapshot_p->node_id);
-
-          // The deleted node ID must resolve to a RemoveNode of either
-          // Inner or Leaf category
-          const BaseNode *garbage_node_p = GetNode(delete_item_p->second);
-          assert(garbage_node_p->IsRemoveNode());
-
-          // Put the remove node into garbage chain
-          // This will not remove the child node of the remove node, which
-          // should be removed together with the merge node above it
-          // Also, the remove node acts as a container for removed NodeID
-          // which will be recycled when the remove node is recycled
-          epoch_manager.AddGarbageNode(garbage_node_p);
-
-          // To avoid this entry being recycled during tree destruction
-          // Since the entry still remains in the old inner base node
-          // but we should have already deleted it
-          // NOTE: We could not do it here since some thread will fetch
-          // nullptr from the mapping table
-          // We should recycle the NodeID using EpochManager
-          // and requires that epoch manager finishes all epoches before
-          // the tree is destroyed
-          //mapping_table[deleted_node_id] = nullptr;
-
-          parent_snapshot_p->node_p = delete_node_p;
-
-          return true;
-        } else {
-          bwt_printf("Index term delete delta install failed. ABORT\n");
-
-          // DO NOT FORGET TO DELETE THIS
-          delete delete_node_p;
-          context_p->abort_flag = true;
+          ConsolidateNode(snapshot_p);
 
           return false;
         }
 
-        break;
+        // It will post an InnerDeleteNode on the parent node
+        // and the return value is the result of CAS
+        // Note: Even if this function aborts, since we return immediately
+        // so do not have to test abort_flag here
+        PostInnerDeleteNode(context_p,
+                            *delete_item_p,
+                            *prev_item_p,
+                            *next_item_p);
+
+        return false;
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
@@ -4246,6 +4431,19 @@ before_switch:
           // to the first element in the sep list
           // NOTE: Storage will be automatically reserved inside the
           // constructor
+          #ifdef BWTREE_PELOTON
+
+          InnerNode *inner_node_p = \
+            new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 2};
+
+          // NOTE: Since we never directly access the first element in the
+          // InnerNode object, it is OK to just put an empty KeyType
+          // object into the list
+          inner_node_p->sep_list.push_back(std::make_pair(KeyType(),
+                                                          snapshot_p->node_id));
+
+          #else
+
           InnerNode *inner_node_p = \
             new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
 
@@ -4254,6 +4452,7 @@ before_switch:
           // object into the list
           inner_node_p->sep_list.push_back(std::make_pair(KeyType{},
                                                           snapshot_p->node_id));
+          #endif
 
           inner_node_p->sep_list.push_back(*insert_item_p);
 
@@ -4327,47 +4526,22 @@ before_switch:
             // We have seen a split, but the sep in parent node is already
             // installed. In this case we propose a consolidation on current
             // node to prevent further encountering the "false" split delta
-            return true;
-          }
-
-          // Three arguments are: inserted key-node id pair
-          //                      next key-node id pair
-          //                      child node in delta chain
-          const InnerInsertNode *insert_node_p = \
-            new InnerInsertNode{*insert_item_p,
-                                *next_item_p,
-                                parent_snapshot_p->node_p};
-
-          // CAS Index Term Insert Delta onto the parent node
-          bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
-                                          insert_node_p,
-                                          parent_snapshot_p->node_p);
-
-          if(ret == true) {
-            bwt_printf("Index term insert (from %lu to %lu) delta CAS succeeds\n",
-                       snapshot_p->node_id,
-                       insert_item_p->second);
-
-            // Update parent node pointer to reflect the fact that it has been
-            // updated
-            parent_snapshot_p->node_p = insert_node_p;
-
-            return true;
-          } else {
-            bwt_printf("Index term insert (from %lu to %lu) delta CAS failed. "
-                       "ABORT\n",
-                       snapshot_p->node_id,
-                       insert_item_p->second);
-
-            // Set abort, and remove the newly created node
-            context_p->abort_flag = true;
-            delete insert_node_p;
+            ConsolidateNode(snapshot_p);
 
             return false;
-          } // if CAS succeeds/fails
-        } // if split root / else not split root
+          }
 
-        break;
+          // Post InnerInsertNode on the parent node. If return value is true then
+          // posting is successful
+          // Also if this returns true then we have successfully completed split SMO
+          // which means the SMO could be removed by a consolidation to avoid
+          // consolidating the parent node again and again
+          // Note: Even if this function aborts, since we return immediately
+          // so do not have to test abort_flag here
+          PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
+
+          return false;
+        } // if split root / else not split root
       } // case split node
       default: {
         return false;
@@ -4381,8 +4555,8 @@ before_switch:
   }
 
   /*
-   * ConsolidateNode() - Consolidate current node if its length exceeds the
-   *                     threshold value
+   * TryConsolidateNode() - Consolidate current node if its length exceeds the
+   *                        threshold value
    *
    * If the length of delta chain does not exceed the threshold then this
    * function does nothing
@@ -4398,8 +4572,8 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool ConsolidateNode(Context *context_p,
-                       bool recommend_consolidation) {
+  bool TryConsolidateNode(Context *context_p,
+                          bool recommend_consolidation) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Do not overwrite this pointer since we will use this
@@ -4537,17 +4711,35 @@ before_switch:
       // evenly, and in the worst case if there is one key in the
       // node the node could not be splited while having a large
       // item count
-      size_t node_size = leaf_node_p->item_prefix_sum.size();
+      size_t node_size = leaf_node_p->GetItemCount();
 
       // Perform corresponding action based on node size
       if(node_size >= LEAF_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= leaf upper threshold. Split\n");
 
-        const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling();
-        
+        // Note: This function takes this as argument since it will
+        // do key comparison
+        const LeafNode *new_leaf_node_p = leaf_node_p->GetSplitSibling(this);
+
+        // If the new leaf node pointer is nullptr then it means the
+        // although the size of the leaf node exceeds split threshold
+        // but we could not find a spliting point that evenly or almost
+        // evenly divides the key space into two siblings whose sizes
+        // are both larger than the merge threshold (o.w. the node will
+        // be immediately merged)
+        // NOTE: This is a potential problem if a leaf becomes very unbalanced
+        // since all threads will try to split the leaf node when traversing
+        // to it (not for reader threads)
+        if(new_leaf_node_p == nullptr) {
+          bwt_printf("LeafNode size exceeds overhead, "
+                     "but could not find split point\n");
+
+          return;
+        }
+
         // Since we would like to access its first element to get the low key
         assert(new_leaf_node_p->data_list.size() > 0UL);
-        
+
         // The split key must be a valid key
         // Note that the lowkey for leaf node is not defined, so in the
         // case that it is required we must manually goto its data list
@@ -4676,7 +4868,7 @@ before_switch:
         bwt_printf("Node size >= inner upper threshold. Split\n");
 
         const InnerNode *new_inner_node_p = inner_node_p->GetSplitSibling();
-        
+
         // Since this is a split sibling, the low key must be a valid key
         // NOTE: Only for InnerNodes could we call GetLowKey()
         const KeyType &split_key = new_inner_node_p->GetLowKey();
@@ -5152,15 +5344,15 @@ before_switch:
     //assert(merge_key_it != inner_node_p->sep_list.begin());
 
     // We know delete_item_it could not be the first element
-    auto prev_item_it = delete_item_it--;
-    
+    auto prev_item_it = delete_item_it - 1;
+
     // We know delete_item_it could not be end element so it is either end
     // element or a valid element
-    auto next_item_it = delete_item_it++;
-    
+    auto next_item_it = delete_item_it + 1;
+
     // Previous item is always inside the sep list of the parent inner node
     *prev_item_p_p = &(*prev_item_it);
-    
+
     // next item iterator could either be the high key, or
     // it could be the item inside sep list of the parent inner node
     if(next_item_it == inner_node_p->sep_list.end()) {
@@ -5168,7 +5360,7 @@ before_switch:
     } else {
       *next_item_p_p = &(*next_item_it);
     }
-    
+
     return true;
   }
 
@@ -5300,7 +5492,7 @@ before_switch:
    */
   bool ConditionalInsert(const KeyType &key,
                          const ValueType &value,
-                         std::function<bool(const ItemPointer &)> predicate,
+                         std::function<bool(const void *)> predicate,
                          bool *predicate_satisfied) {
     bwt_printf("Insert (cond.) called\n");
 
@@ -5310,7 +5502,7 @@ before_switch:
 
     while(1) {
       Context context{key};
-      
+
       std::vector<ValueType> existing_value_list{};
 
       // Collect values with node navigation
@@ -5329,7 +5521,7 @@ before_switch:
       for(auto &v : existing_value_list) {
         // Note that predicate tests ItemPointer which is the type of
         // dereferencing ValueType
-        if(predicate(*v) == true) {
+        if(predicate(v) == true) {
           // To notify the caller that predicate
           // has been satisfied and we cannot insert
           *predicate_satisfied = true;
@@ -5413,7 +5605,7 @@ before_switch:
       // Navigate leaf nodes to check whether the key-value
       // pair exists
       const KeyValuePair *item_p = Traverse(&context, &value);
-      
+
       if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
 
@@ -5466,11 +5658,11 @@ before_switch:
    * using the deleted value of value (key is unchanged; of course it
    * should not change since the key must be the same)
    */
-  bool DeleteExchange(KeyType &key, ValueType &value) {
+  bool DeleteExchange(KeyType &key, ValueType *value_p) {
     bwt_printf("DeleteExchange called\n");
 
     delete_op_count.fetch_add(1);
-    
+
     const KeyValuePair *item_p;
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
@@ -5480,12 +5672,12 @@ before_switch:
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      item_p = Traverse(&context, &value);
-      
+      item_p = Traverse(&context, value_p);
+
       // If value not found just return
       if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
-        
+
         return false;
       }
 
@@ -5496,7 +5688,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p};
+        new LeafDeleteNode{key, *value_p, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -5522,7 +5714,7 @@ before_switch:
     }
 
     // Assign the old deleted value to input parameter value
-    value = item_p->second;
+    *value_p = item_p->second;
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
@@ -5552,7 +5744,7 @@ before_switch:
 
     return;
   }
-  
+
   /*
    * GetValue() - Return value in a ValueSet object
    *
@@ -5629,7 +5821,7 @@ before_switch:
 
   // This value is non-atomic, but it remains constant after constructor
   NodeID first_leaf_id;
-  
+
   std::atomic<NodeID> next_unused_node_id;
   std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
 
@@ -6282,7 +6474,7 @@ try_join_again:
     }
 
   }; // Epoch manager
-  
+
   /*
    * Iterator Interface
    */
@@ -6311,6 +6503,19 @@ try_join_again:
   }
 
   /*
+   * NullIterator() - Returns an empty iterator that cannot do anything
+   *
+   * This is useful as a placeholder when we are not sure when an iterator
+   * is required but need to use a placeholder.
+   *
+   * NOTE: This iterator can be assigned and destructed (nullptr leaf node will
+   * tell the story) but cannot be moved
+   */
+  ForwardIterator NullIterator() {
+    return ForwardIterator{};
+  }
+
+  /*
    * Iterators
    */
 
@@ -6327,7 +6532,20 @@ try_join_again:
   class ForwardIterator {
    public:
     /*
-     * Default Constructor
+     * Default Constructor - This acts as a place holder for some functions
+     *                       that require a type and an object but we do not
+     *                       want to afford the overhead of loading a page into
+     *                       the iterator
+     *
+     * Only leaf_node_p is initialized to avoid destructor destructing the
+     * iterator, also to avoid assignment operator directly assign to it.
+     */
+    ForwardIterator() :
+      leaf_node_p{nullptr}
+    {}
+
+    /*
+     * Constructor
      *
      * NOTE: We try to load the first page using -Inf as the next key
      * during construction in order to correctly identify the case where
@@ -6338,20 +6556,20 @@ try_join_again:
       is_end{false} {
       // Load the first leaf page
       const BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
-      
+
       assert(node_p != nullptr);
       assert(node_p->IsOnLeafDeltaChain() == true);
-      
+
       // Use the high key of current node as the next key locking
       next_key_pair = node_p->GetHighKeyPair();
-      
+
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
-      
+
       // Consolidate the current node (this does not change high key)
       leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
-      
+
       it = leaf_node_p->data_list.begin();
-      
+
       // Corner case: if the vector is itself empty
       // then we should set the flag manually
       if(leaf_node_p->data_list.size() == 0UL) {
@@ -6371,12 +6589,14 @@ try_join_again:
     ForwardIterator(BwTree *p_tree_p,
                     const KeyType &start_key) :
       tree_p{p_tree_p},
+      leaf_node_p{nullptr}, // This is used to singal LowerBound() that
+                            // no memory should be freed
       is_end{false} {
-      
+
       // This sets all members, and might return with is_end == true
       // Also this function
       LowerBound(&start_key);
-      
+
       // After LowerBound(), either it points to KeyValuePair or
       // is_end is set to true
 
@@ -6396,7 +6616,7 @@ try_join_again:
       leaf_node_p{new LeafNode{*other.leaf_node_p}},
       next_key_pair{other.next_key_pair},
       is_end{other.is_end} {
-      
+
       // Move the iterator ahead
       it = leaf_node_p->data_list.begin() + \
            std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
@@ -6414,24 +6634,67 @@ try_join_again:
     ForwardIterator &operator=(const ForwardIterator &other) {
       // It is crucial to prevent self assignment since we do pointer
       // operation here
-      if(this == &it) {
+      if(this == &other) {
         return *this;
       }
 
-      // First copy the logical node into current instance
-      // DO NOT NEED delete; JUST DO A VALUE COPY
-      // since the storage has already been allocated during construction
-      *leaf_node_p = *other.leaf_node_p;
+      // For an empty iterator this branch is necessary
+      if(leaf_node_p == nullptr) {
+        leaf_node_p = new LeafNode{*other.leaf_node_p};
+      } else {
+        // First copy the logical node into current instance
+        // DO NOT NEED new and delete; JUST DO A VALUE COPY
+        // since the storage has already been allocated during construction
+        // and the old value with be automatically dealt with LeafNode
+        // and vector's assignment operation
+        *leaf_node_p = *other.leaf_node_p;
+      }
 
       // Copy everything that could be copied
       tree_p = other.tree_p;
       next_key_pair = other.next_key_pair;
-      
+
       is_end = other.is_end;
 
       // Move the iterator ahead
       it = leaf_node_p->data_list.begin() + \
-           std::distance(other.leaf_node_p->data_list, other.it);
+           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+
+      return *this;
+    }
+
+    /*
+     * Move Assignment - Assigns a temporary iterator object
+     *
+     * NOTE: In move assignment we do not need to move iterator; instead
+     * iterator could be directly copied since the leaf node does not change
+     * and such that the iterator is not invalidated
+     */
+    ForwardIterator &operator=(ForwardIterator &&other) {
+      if(this == &other) {
+        return *this;
+      }
+
+      // For an empty iterator this branch is necessary
+      if(leaf_node_p != nullptr) {
+        delete leaf_node_p;
+      }
+
+      // Direcrly moves the leaf node pointer without copying
+      leaf_node_p = other.leaf_node_p;
+
+      // Since the leaf node does not change, the constructor is not invalidated
+      // we could just copy it here
+      it = other.it;
+
+      tree_p = other.tree_p;
+      next_key_pair = other.next_key_pair;
+
+      is_end = other.is_end;
+
+      // This is necessary to avoid the leaf node pointer being
+      // deleted when the other is destructed
+      other.leaf_node_p = nullptr;
 
       return *this;
     }
@@ -6517,10 +6780,9 @@ try_join_again:
      * node, because its memory is not shared between iterators
      */
     ~ForwardIterator() {
-      // This holds even if the tree is empty
-      assert(leaf_node_p != nullptr);
-
-      delete leaf_node_p;
+      if(leaf_node_p != nullptr) {
+        delete leaf_node_p;
+      }
 
       return;
     }
@@ -6593,7 +6855,7 @@ try_join_again:
     // epoch. Therefore we need to copy the wrapped key from bwtree physical
     // node into the iterator
     KeyNodeIDPair next_key_pair;
-    
+
     // This is the actual iterator
     typename std::vector<KeyValuePair>::const_iterator it;
 
@@ -6626,7 +6888,7 @@ try_join_again:
       // Caller needs to guarantee this function not being called if
       // we have already reached the end
       assert(is_end == false);
-      
+
       while(1) {
         // If we use the nexy_key_pair
         if(start_key_p == nullptr) {
@@ -6648,9 +6910,23 @@ try_join_again:
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
 
+        #ifdef BWTREE_PELOTON
+
+        // This is used to avoid segmentation fault
+        ItemPointer dummy_ip{0, 0};
+        ItemPointer *ip_p = &dummy_ip;
+
+        // Traverse down the tree to get to leaf node
+        Context context{*start_key_p};
+        tree_p->Traverse(&context, &ip_p);
+
+        #else
+
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
         tree_p->Traverse(&context, nullptr);
+
+        #endif
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
@@ -6660,6 +6936,15 @@ try_join_again:
 
         // Set high key pair for next call of this function
         next_key_pair = node_p->GetHighKeyPair();
+
+        // If this is nullptr then we are calling it from the constructor
+        if(leaf_node_p != nullptr) {
+          // Only we call it from the constructor will the start key pointer
+          // be a null pointer
+          assert(start_key_p != nullptr);
+
+          delete leaf_node_p;
+        }
 
         // Consolidate the current node
         leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
@@ -6685,7 +6970,7 @@ try_join_again:
         if(it != leaf_node_p->data_list.end()) {
           return;
         }
-        
+
         // Need to set this to nullptr to let the function to use next key pair
         start_key_p = nullptr;
       } // while(1)
@@ -6701,6 +6986,9 @@ try_join_again:
      * its end. If iterator has reached end then assertion fails.
      */
     inline void MoveAheadByOne() {
+      // Could not do this on an empty iterator
+      assert(leaf_node_p != nullptr);
+
       // Move the iterator on leaf node data list
       it++;
 
@@ -6711,7 +6999,7 @@ try_join_again:
       if(it == leaf_node_p->data_list.end()) {
         LowerBound();
       }
-      
+
       return;
     }
   }; // ForwardIterator
