@@ -4617,6 +4617,50 @@ before_switch:
   }
 
   /*
+   * TryConsolidateInnerNode() - Tries to consolidate leaf node if the
+   *                             delta chain length exceeds threshold
+   *
+   * Please to its counterpart for inner node delta chain for more
+   * information
+   *
+   * NOTE: This function is usually called from those routines posting
+   * on leaf nodes, such as insert and delete
+   */
+  void TryConsolidateLeafNode(NodeSnapshot *snapshot_p) {
+    const BaseNode *node_p = snapshot_p->node_p;
+    assert(node_p->IsOnLeafDeltaChain() == true);
+
+    if(node_p->GetDepth() < LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) {
+      return;
+    }
+
+    bwt_printf("Leaf node delta chain length exceeds threshold\n");
+
+    // NOTE that the default inner node depth is 0 in this case
+    LeafNode *inner_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+    // CAS!
+    bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                    leaf_node_p,
+                                    snapshot_p->node_p);
+
+    // If consolidation succeeds then we need to update the snapshot
+    // and also to put the old delta chain into epoch manager for recycle
+    if(ret == true) {
+      snapshot_p->node_p = leaf_node_p;
+
+      epoch_manager.AddGarbageNode(node_p);
+    } else {
+      bwt_printf("Trying to consolidate InnerNode but CAS failed"
+                 "NO ABORT\n");
+
+      delete leaf_node_p;
+    }
+
+    return;
+  }
+
+  /*
    * TryConsolidateNode() - Consolidate current node if its length exceeds the
    *                        threshold value
    *
