@@ -2218,7 +2218,7 @@ retry_traverse:
 
       // This might load a leaf child
       // Also LoadNodeID() does not guarantee the node bound matches
-      // seatch key. Since we could readjust using the split side link
+      // search key. Since we could readjust using the split side link
       // during Navigate...Node()
       LoadNodeID(child_node_id, context_p);
 
@@ -3504,7 +3504,7 @@ abort_traverse:
    * NOTE: This function might abort. Please check context and make proper
    * decisions
    */
-  void JumpToLeftSibling(Context *context_p) {
+  bool JumpToLeftSibling(Context *context_p) {
     bwt_printf("Jumping to the left sibling\n");
 
     assert(context_p->HasParentNode());
@@ -3525,7 +3525,7 @@ abort_traverse:
 
       context_p->abort_flag = true;
 
-      return;
+      return false;
     }
 
     // After here we know we are not on a left most child of the parent
@@ -3586,7 +3586,7 @@ abort_traverse:
     if(it == inner_node_p->sep_list.end()) {
       context_p->abort_flag = true;
 
-      return;
+      return false;
     }
 
     // it points to the current node (must be an exact match),
@@ -3597,9 +3597,8 @@ abort_traverse:
     // we have iterator referring to the internal structure of the inner node
     // So we could not try CAS here
 
-    // This is our starting point to traverse right
+    // This will be current NodeID after jumping
     NodeID left_sibling_id = it->second;
-
 
     // This might incur recursive update
     // We need to pass in the low key of left sibling node
@@ -3608,29 +3607,40 @@ abort_traverse:
     if(context_p->abort_flag == true) {
       bwt_printf("JumpToLeftSibling()'s call to JumpToNodeID() ABORT\n")
 
-      return;
+      return false;
     }
 
-    // Read the potentially redirected snapshot
-    // (but do not pop it - so we directly return)
+    // Read the node snapshot for left sibling of the node
     snapshot_p = GetLatestNodeSnapshot(context_p);
 
-    // If the next node ID stored inside the "left sibling" does
-    // not equal the removed node, then we know we have got to the
-    // wrong left sibling, maybe because the parent node has changed
-    // or because its left sibling has splited
-    // In the latter case simply aborting seems to be a bad idea
-    // but if it is the second case then aborting is beneficial
-    if(removed_node_id != snapshot_p->node_p->GetNextNodeID()) {
-      bwt_printf("Left sibling's next node ID does not match removed NodeID."
-                 " ABORT\n");
+    // We use this to validate whether we have jumped to the right
+    // left sibling
+    const KeyNodeIDPair &high_key_pair = snapshot_p->node_p->GetHighKeyPair();
 
-      context_p->abort_flag = true;
-
-      return;
+    // This is the normal case: If we have found the left sibling and the
+    // left sibling's next node is the removed node
+    // then we return without aborting and need to post merge node on top
+    // of the left sibling
+    if(removed_node_id == high_key_pair.second) {
+      return true;
     }
 
-    return;
+    // After this point, either the left sibling has splited
+    // or it has merged with the removed branch
+    // For these two different scenarios we should do different things
+    // In either case, we do not need to post the merge delta
+    // since
+    // 1. if the left sibling has merged with the removed branch (and then splited, etc)
+    //    then the merge delta has been posted
+    // 2. If the left sibling has not been merged with the removed branch, but its
+    //    next node ID changes due to a split, then we should let the split SMO finish
+    //    first (it should finish it finite number of steps), and do not post
+    //    merge delta (the merge delta should be posted on the invisible split sibling
+    //    in parent node's point of view). The later traverse routine will ensure that
+    //    the search key is in a correct range, and if not the traverse routine will just
+    //    abort
+
+    return false;
   }
 
   /*
@@ -3824,12 +3834,19 @@ before_switch:
         // as the RemoveNode
         NodeID deleted_node_id = snapshot_p->node_id;
 
-        JumpToLeftSibling(context_p);
+        bool post_merge = JumpToLeftSibling(context_p);
 
         // If this aborts then we propagate this to the state machine driver
         if(context_p->abort_flag == true) {
           bwt_printf("Jump to left sibling in Remove help along ABORT\n");
 
+          return;
+        }
+
+        // If we do not need to post the merge node then just return
+        // note that the SMOs on the left sibling has already been finished by
+        // call to JumpToNodeID() inside JumpToLeftSibling()
+        if(post_merge == false) {
           return;
         }
 
@@ -4249,7 +4266,10 @@ before_switch:
         // as the RemoveNode
         NodeID deleted_node_id = snapshot_p->node_id;
 
-        JumpToLeftSibling(context_p);
+        // If jump to left sibling discovers that there is no need to merge
+        // (e.g. the left sibling has already merged with the current branch)
+        // then we just return
+        bool post_merge = JumpToLeftSibling(context_p);
 
         // If this aborts then we propagate this to the state machine driver
         if(context_p->abort_flag == true) {
@@ -4258,6 +4278,12 @@ before_switch:
           // Here we are uncertain about the current status (it might have
           // jumped and observed an inconsistent next node ID, or it has not
           // jumped because of an inconsistent left child status)
+          return false;
+        }
+
+        // The left sibling's next node ID does not match the removed node ID
+        // but search key is in the range of the left sibling
+        if(post_merge == false) {
           return false;
         }
 
