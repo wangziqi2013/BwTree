@@ -4637,7 +4637,7 @@ before_switch:
     bwt_printf("Leaf node delta chain length exceeds threshold\n");
 
     // NOTE that the default inner node depth is 0 in this case
-    LeafNode *inner_node_p = CollectAllValuesOnLeaf(snapshot_p);
+    LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
 
     // CAS!
     bool ret = InstallNodeToReplace(snapshot_p->node_id,
@@ -5554,6 +5554,14 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Insert delta CAS succeed\n");
 
+        // Need to update the snapshot before consolidating it
+        // otherwise consolidation fails every time
+        snapshot_p->node_p = insert_node_p;
+
+        // Need to do this since we have appended a new delta node on
+        // the leaf delta chain
+        TryConsolidateLeafNode(snapshot_p);
+
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5659,6 +5667,10 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Insert (cond.) delta CAS succeed\n");
 
+        snapshot_p->node_p = insert_node_p;
+
+        TryConsolidateLeafNode(snapshot_p);
+
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5733,6 +5745,10 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
 
+        snapshot_p->node_p = delete_node_p;
+
+        TryConsolidateLeafNode(snapshot_p);
+
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5801,6 +5817,10 @@ before_switch:
                                       node_p);
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
+
+        snapshot_p->node_p = delete_node_p;
+
+        TryConsolidateLeafNode(snapshot_p);
 
         // If install is a success then just break from the loop
         // and return
