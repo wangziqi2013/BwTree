@@ -5344,11 +5344,11 @@ before_switch:
     //assert(merge_key_it != inner_node_p->sep_list.begin());
 
     // We know delete_item_it could not be the first element
-    auto prev_item_it = delete_item_it--;
+    auto prev_item_it = delete_item_it - 1;
 
     // We know delete_item_it could not be end element so it is either end
     // element or a valid element
-    auto next_item_it = delete_item_it++;
+    auto next_item_it = delete_item_it + 1;
 
     // Previous item is always inside the sep list of the parent inner node
     *prev_item_p_p = &(*prev_item_it);
