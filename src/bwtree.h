@@ -2619,8 +2619,15 @@ abort_traverse:
                                  KeyNodeIDPairBloomFilter &present_set,
                                  KeyNodeIDPairBloomFilter &deleted_set,
                                  InnerNode *new_inner_node_p) const {
-    // These two are used to compute the low key and high key
-    const KeyNodeIDPair &high_key_pair = top_node_p->GetHighKeyPair();
+    // High key should be the high key of the branch (if there is a merge
+    // then the high key of the branch may not always equal the high key
+    // of the merged node)
+    // Even if there is no merge, we still need the high key to rule out
+    // keys that has already been splited
+    const KeyNodeIDPair &high_key_pair = node_p->GetHighKeyPair();
+
+    // The low key should be the global low key for the entire merged
+    // node since we would like to know which inner node is the node for
     const KeyNodeIDPair &low_key_pair = top_node_p->GetLowKeyPair();
 
     while(1) {
@@ -3310,7 +3317,7 @@ abort_traverse:
                                   LeafNode *new_leaf_node_p) const {
     // The top node is used to derive high key
     // NOTE: Low key for Leaf node and its delta chain is nullptr
-    const KeyNodeIDPair &high_key_pair = top_node_p->GetHighKeyPair();
+    const KeyNodeIDPair &high_key_pair = node_p->GetHighKeyPair();
 
     while(1) {
       NodeType type = node_p->GetType();
