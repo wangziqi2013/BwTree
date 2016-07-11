@@ -2725,9 +2725,11 @@ abort_traverse:
                  (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first)));
 
           if(present_set.Exists(delete_node_p->delete_item) == false) {
-            // We do not need to check in deleted_set since if the element
-            // does not exist, then it could not be in the deleted_set
-            deleted_set.Insert(delete_node_p->delete_item);
+            // Also need to check for deleted set to avoid adding the same
+            // value twice
+            if(deleted_set.Exists(delete_node_p->delete_item) == false) {
+              deleted_set.Insert(delete_node_p->delete_item);
+            }
           }
 
           node_p = delete_node_p->child_node_p;
@@ -3390,7 +3392,11 @@ abort_traverse:
             static_cast<const LeafDeleteNode *>(node_p);
 
           if(present_set.Exists(delete_node_p->delete_item) == false) {
-            deleted_set.Insert(delete_node_p->delete_item);
+            // Should also check for deleted set to avoid adding the same
+            // value twice
+            if(deleted_set.Exists(delete_node_p->delete_item) == false) {
+              deleted_set.Insert(delete_node_p->delete_item);
+            }
           }
 
           node_p = delete_node_p->child_node_p;
