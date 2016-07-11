@@ -4274,7 +4274,7 @@ before_switch:
 
         // This holds the merge node if installation is successful
         // Not changed (i.e.undefined) if CAS fails
-        const BaseNode *merge_node_p;
+        const BaseNode *merge_node_p = nullptr;
 
         bool ret;
 
@@ -4297,13 +4297,14 @@ before_switch:
 
         // If CAS fails just abort and return
         if(ret == true) {
-          bwt_printf("Merge delta CAS succeeds. ABORT\n");
+          bwt_printf("Merge delta CAS succeeds. "
+                     "Continue to finish merge SMO\n");
 
-          // TODO: Do not abort here and directly proceed to processing
-          // merge delta
-          context_p->abort_flag = true;
+          left_snapshot_p->node_p = merge_node_p;
 
-          return false;
+          // merge_node_p is set as the newest merge node above
+          // after this point
+          // Also snapshot_p has been to left_snapshot_p above
         } else {
           bwt_printf("Merge delta CAS fails. ABORT\n");
 
@@ -4312,7 +4313,10 @@ before_switch:
           return false;
         } // if ret == true
 
-        assert(false);
+        //
+        // FALL THROUGH IF POSTING MERGE DELTA SUCCEEDS
+        //
+
       } // case Inner/LeafRemoveType
       case NodeType::InnerMergeType:
       case NodeType::LeafMergeType: {
