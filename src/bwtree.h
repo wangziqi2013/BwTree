@@ -3734,13 +3734,13 @@ abort_traverse:
     // deal with (e.g. go to its parent and comsolidate parent first) then
     // we should aggressively comsolidate the SMO away to avoid further
     // access
-    bool recommend_consolidation = FinishPartialSMO(context_p);
+    FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
 
-    TryConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3767,13 +3767,13 @@ abort_traverse:
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p);
 
-    bool recommend_consolidation = FinishPartialSMO(context_p);
+    FinishPartialSMO(context_p);
 
     if(context_p->abort_flag == true) {
       return;
     }
 
-    TryConsolidateNode(context_p, recommend_consolidation);
+    TryConsolidateNode(context_p);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4225,7 +4225,7 @@ abort_traverse:
    * we need to read NodeID, always use the one stored in the NodeSnapshot
    * vector instead of using a previously passed one
    */
-  bool FinishPartialSMO(Context *context_p) {
+  void FinishPartialSMO(Context *context_p) {
     // Note: If the top of the path list changes then this pointer
     // must also be updated
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4266,7 +4266,7 @@ before_switch:
           // Here we are uncertain about the current status (it might have
           // jumped and observed an inconsistent next node ID, or it has not
           // jumped because of an inconsistent left child status)
-          return false;
+          return;
         }
 
         // That is the left sibling's snapshot
@@ -4318,7 +4318,7 @@ before_switch:
 
           context_p->abort_flag = true;
 
-          return false;
+          return;
         } // if ret == true
 
         //
@@ -4382,7 +4382,7 @@ before_switch:
           // get rid of the merge delta
           ConsolidateNode(snapshot_p);
 
-          return false;
+          return;
         }
 
         // It will post an InnerDeleteNode on the parent node
@@ -4394,7 +4394,7 @@ before_switch:
                             *prev_item_p,
                             *next_item_p);
 
-        return false;
+        return;
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
@@ -4482,7 +4482,7 @@ before_switch:
             // the new root
             context_p->abort_flag = true;
 
-            return false;
+            return;
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
 
@@ -4502,7 +4502,7 @@ before_switch:
 
             context_p->abort_flag = true;
 
-            return false;
+            return;
           } // if CAS succeeds/fails
         } else {
           /***********************************************************
@@ -4525,7 +4525,7 @@ before_switch:
                        "child node merged and splited\n");
 
             // Since it aborts, the return value does not matter
-            return false;
+            return;
           }
 
           if(split_key_absent == false) {
@@ -4536,7 +4536,7 @@ before_switch:
             // node to prevent further encountering the "false" split delta
             ConsolidateNode(snapshot_p);
 
-            return false;
+            return;
           }
 
           // Post InnerInsertNode on the parent node. If return value is true then
@@ -4548,18 +4548,18 @@ before_switch:
           // so do not have to test abort_flag here
           PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
 
-          return false;
+          return;
         } // if split root / else not split root
       } // case split node
       default: {
-        return false;
+        return;
         // By default we do not do anything special
         break;
       }
     } // switch
 
     assert(false);
-    return false;
+    return;
   }
 
   /*
@@ -4580,8 +4580,7 @@ before_switch:
    * always abort and start from the beginning, to keep delta chain length
    * upper bound intact
    */
-  bool TryConsolidateNode(Context *context_p,
-                          bool recommend_consolidation) {
+  bool TryConsolidateNode(Context *context_p) {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Do not overwrite this pointer since we will use this
@@ -4592,8 +4591,6 @@ before_switch:
     // We could only perform consolidation on delta node
     // because we want to see depth field
     if(node_p->IsDeltaNode() == false) {
-      assert(recommend_consolidation == false);
-
       // The depth of base node may not be 0
       // since if we consolidate parent node to finish the partial SMO,
       // then parent node will have non-0 depth in order to avoid being too
@@ -4617,13 +4614,7 @@ before_switch:
     }
 
     if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
-      // If there is not recommended consolidation just return
-      if(recommend_consolidation == false) {
-        return false;
-      } else {
-        bwt_printf("Delta chian length < threshold, "
-                   "but consolidation is recommended\n");
-      }
+      return false;
     }
 
     // After this point we decide to consolidate node
