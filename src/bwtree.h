@@ -2695,18 +2695,16 @@ abort_traverse:
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
 
-          // Only consider insertion if it is inside the range of
-          // current node
-          // Also if the high key is INVALID NODE ID then we know it must be
-          // applicable
-          if((high_key_pair.second == INVALID_NODE_ID) ||
-             (KeyCmpLess(insert_node_p->insert_item.first, high_key_pair.first))) {
-            if(deleted_set.Exists(insert_node_p->insert_item) == false) {
-              if(present_set.Exists(insert_node_p->insert_item) == false) {
-                present_set.Insert(insert_node_p->insert_item);
+          // delta nodes must be consistent with the most up-to-date
+          // node high key
+          assert((high_key_pair.second == INVALID_NODE_ID) ||
+                 (KeyCmpLess(insert_node_p->insert_item.first, high_key_pair.first)));
 
-                new_inner_node_p->sep_list.push_back(insert_node_p->insert_item);
-              }
+          if(deleted_set.Exists(insert_node_p->insert_item) == false) {
+            if(present_set.Exists(insert_node_p->insert_item) == false) {
+              present_set.Insert(insert_node_p->insert_item);
+
+              new_inner_node_p->sep_list.push_back(insert_node_p->insert_item);
             }
           }
 
@@ -2719,13 +2717,17 @@ abort_traverse:
           const InnerDeleteNode *delete_node_p = \
             static_cast<const InnerDeleteNode *>(node_p);
 
-          if((high_key_pair.second == INVALID_NODE_ID) ||
-             (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first))) {
-            if(present_set.Exists(delete_node_p->delete_item) == false) {
-              // We do not need to check in deleted_set since if the element
-              // does not exist, then it could not be in the deleted_set
-              deleted_set.Insert(delete_node_p->delete_item);
-            }
+          // Since we do not allow any delta node under split node
+          // this must be true
+          // i.e. delta nodes must be consistent with the most up-to-date
+          // node high key
+          assert((high_key_pair.second == INVALID_NODE_ID) ||
+                 (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first)));
+
+          if(present_set.Exists(delete_node_p->delete_item) == false) {
+            // We do not need to check in deleted_set since if the element
+            // does not exist, then it could not be in the deleted_set
+            deleted_set.Insert(delete_node_p->delete_item);
           }
 
           node_p = delete_node_p->child_node_p;
