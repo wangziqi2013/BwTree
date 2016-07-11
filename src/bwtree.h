@@ -344,11 +344,6 @@ class BwTree {
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
 
-  // These two specifies the delta chain length of inner node
-  // and on leaf node
-  constexpr static int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
-  constexpr static int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
-
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
   // So maximum delta chain length on leaf is 8
@@ -3739,7 +3734,13 @@ abort_traverse:
     // deal with (e.g. go to its parent and comsolidate parent first) then
     // we should aggressively comsolidate the SMO away to avoid further
     // access
-    FinishPartialSMO(context_p);
+    bool recommend_consolidation = FinishPartialSMO(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -3766,7 +3767,13 @@ abort_traverse:
     // This updates the current snapshot in the stack
     UpdateNodeSnapshot(node_id, context_p);
 
-    FinishPartialSMO(context_p);
+    bool recommend_consolidation = FinishPartialSMO(context_p);
+
+    if(context_p->abort_flag == true) {
+      return;
+    }
+
+    TryConsolidateNode(context_p, recommend_consolidation);
 
     if(context_p->abort_flag == true) {
       return;
@@ -4052,7 +4059,6 @@ abort_traverse:
       parent_snapshot_p->node_p = insert_node_p;
 
       ConsolidateNode(GetLatestNodeSnapshot(context_p));
-      TryConsolidateInnerNode(parent_snapshot_p);
 
       return true;
     } else {
@@ -4137,10 +4143,6 @@ abort_traverse:
 
       ConsolidateNode(GetLatestNodeSnapshot(context_p));
 
-      // Also try to consolidate the parent node since we have
-      // appended a new delta node onto it
-      TryConsolidateInnerNode(parent_snapshot_p);
-
       return true;
     } else {
       bwt_printf("Index term delete delta install failed. ABORT\n");
@@ -4157,6 +4159,51 @@ abort_traverse:
 
     assert(false);
     return false;
+  }
+
+  /*
+   * ConsolidateNode() - Consolidates current node unconditionally
+   *
+   * This function is called after finishing split/merge SMO, since we
+   * want to prevent other threads from seeing the finished SMO and
+   * do an useless consolidation on the parent node
+   *
+   * NOTE: This function does not return any value reflecting the status
+   * of CAS operation, since consolidation is an optional operation, and it
+   * would not have any effect even if it fails
+   */
+  void ConsolidateNode(NodeSnapshot *snapshot_p) {
+    if(snapshot_p->node_p->IsOnLeafDeltaChain() == true) {
+      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      leaf_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == true) {
+        epoch_manager.AddGarbageNode(snapshot_p->node_p);
+
+        snapshot_p->node_p = leaf_node_p;
+      } else {
+        delete leaf_node_p;
+      }
+    } else {
+      InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+
+      bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                      inner_node_p,
+                                      snapshot_p->node_p);
+
+      if(ret == true) {
+        epoch_manager.AddGarbageNode(snapshot_p->node_p);
+
+        snapshot_p->node_p = inner_node_p;
+      } else {
+        delete inner_node_p;
+      }
+    } // if on leaf/inner node
+
+    return;
   }
 
   /*
@@ -4516,136 +4563,121 @@ before_switch:
   }
 
   /*
-   * ConsolidateNode() - Consolidates current node unconditionally
+   * TryConsolidateNode() - Consolidate current node if its length exceeds the
+   *                        threshold value
    *
-   * This function is called after finishing split/merge SMO, since we
-   * want to prevent other threads from seeing the finished SMO and
-   * do an useless consolidation on the parent node
+   * If the length of delta chain does not exceed the threshold then this
+   * function does nothing
    *
-   * NOTE: This function does not return any value reflecting the status
-   * of CAS operation, since consolidation is an optional operation, and it
-   * would not have any effect even if it fails
+   * If function returns true then we have successfully consolidated a node
+   * Otherwise no consolidation happens. The return value might be used
+   * as a hint for deciding whether to adjust node size or not
+   *
+   * NOTE: If consolidation fails then this function does not do anything
+   * and will just continue with its own job. There is no chance of abort
+   *
+   * TODO: If strict mode is on, then whenever consolidation fails we should
+   * always abort and start from the beginning, to keep delta chain length
+   * upper bound intact
    */
-  void ConsolidateNode(NodeSnapshot *snapshot_p) {
-    if(snapshot_p->node_p->IsOnLeafDeltaChain() == true) {
-      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+  bool TryConsolidateNode(Context *context_p,
+                          bool recommend_consolidation) {
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      leaf_node_p,
-                                      snapshot_p->node_p);
+    // Do not overwrite this pointer since we will use this
+    // to locate garbage delta chain
+    const BaseNode *node_p = snapshot_p->node_p;
+    NodeID node_id = snapshot_p->node_id;
 
-      if(ret == true) {
-        epoch_manager.AddGarbageNode(snapshot_p->node_p);
+    // We could only perform consolidation on delta node
+    // because we want to see depth field
+    if(node_p->IsDeltaNode() == false) {
+      assert(recommend_consolidation == false);
 
-        snapshot_p->node_p = leaf_node_p;
+      // The depth of base node may not be 0
+      // since if we consolidate parent node to finish the partial SMO,
+      // then parent node will have non-0 depth in order to avoid being too
+      // large (see FindSplitNextKey() and FindMergePrevNextKey() and
+      // JumpToLeftSibling())
+      // assert(node_p->metadata.depth == 0);
+
+      return false;
+    }
+
+    // If depth does not exceeds threshold then we check recommendation flag
+    int depth = node_p->GetDepth();
+
+    if(snapshot_p->IsLeaf() == true) {
+      // Adjust the length a little bit using this variable
+      // NOTE: The length of the delta chain on leaf coule be a
+      // little bit longer than on inner
+      // so this is usually a negative value
+      // This improves performance
+      depth += DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF;
+    }
+
+    if(depth < DELTA_CHAIN_LENGTH_THRESHOLD) {
+      // If there is not recommended consolidation just return
+      if(recommend_consolidation == false) {
+        return false;
       } else {
-        delete leaf_node_p;
+        bwt_printf("Delta chian length < threshold, "
+                   "but consolidation is recommended\n");
       }
-    } else {
-      InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+    }
 
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      inner_node_p,
-                                      snapshot_p->node_p);
+    // After this point we decide to consolidate node
 
+    if(snapshot_p->IsLeaf()) {
+      // This function returns a leaf node object
+      const LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+      // CAS leaf node
+      bool ret = InstallNodeToReplace(node_id, leaf_node_p, node_p);
       if(ret == true) {
-        epoch_manager.AddGarbageNode(snapshot_p->node_p);
+        bwt_printf("Leaf node consolidation (ID %lu) CAS succeeds\n",
+                   node_id);
+
+        // Update current snapshot using our best knowledge
+        snapshot_p->node_p = leaf_node_p;
+
+        // Add the old delta chain to garbage list and its
+        // deallocation is delayed
+        epoch_manager.AddGarbageNode(node_p);
+      } else {
+        bwt_printf("Leaf node consolidation CAS failed. NO ABORT\n");
+
+        // TODO: If we want to keep delta chain length constant then it
+        // should abort here
+
+        delete leaf_node_p;
+
+        return false;
+      } // if CAS succeeds / fails
+    } else {
+      const InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+
+      bool ret = InstallNodeToReplace(node_id, inner_node_p, node_p);
+      if(ret == true) {
+        bwt_printf("Inner node consolidation (ID %lu) CAS succeeds\n",
+                   node_id);
 
         snapshot_p->node_p = inner_node_p;
+
+        // Add the old delta into garbage list
+        epoch_manager.AddGarbageNode(node_p);
       } else {
+        bwt_printf("Inner node consolidation CAS failed. NO ABORT\n");
+
+        context_p->abort_flag = true;
+
         delete inner_node_p;
-      }
-    } // if on leaf/inner node
 
-    return;
-  }
+        return false;
+      } // if CAS succeeds / fails
+    } // if it is leaf / is inner
 
-  /*
-   * TryConsolidateInnerNode() - Tries to consolidate inner node if the
-   *                             delta chain length exceeds threshold
-   *
-   * Node consolidation is totally optional and it only affects performance
-   * rather than correctness. Therefore this function will not abort on
-   * any condition, in including CAS failure
-   */
-  void TryConsolidateInnerNode(NodeSnapshot *snapshot_p) {
-    const BaseNode *node_p = snapshot_p->node_p;
-    assert(node_p->IsOnLeafDeltaChain() == false);
-
-    // If the length of the delta chain does not qualify a consolidation
-    // just return
-    if(node_p->GetDepth() < INNER_DELTA_CHAIN_LENGTH_THRESHOLD) {
-      return;
-    }
-
-    bwt_printf("Inner node delta chain length exceeds threshold\n");
-
-    // NOTE that the default inner node depth is 0 in this case
-    InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
-
-    // CAS!
-    bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                    inner_node_p,
-                                    snapshot_p->node_p);
-
-    // If consolidation succeeds then we need to update the snapshot
-    // and also to put the old delta chain into epoch manager for recycle
-    if(ret == true) {
-      snapshot_p->node_p = inner_node_p;
-
-      epoch_manager.AddGarbageNode(node_p);
-    } else {
-      bwt_printf("Trying to consolidate InnerNode but CAS failed"
-                 "NO ABORT\n");
-
-      delete inner_node_p;
-    }
-
-    return;
-  }
-
-  /*
-   * TryConsolidateInnerNode() - Tries to consolidate leaf node if the
-   *                             delta chain length exceeds threshold
-   *
-   * Please to its counterpart for inner node delta chain for more
-   * information
-   *
-   * NOTE: This function is usually called from those routines posting
-   * on leaf nodes, such as insert and delete
-   */
-  void TryConsolidateLeafNode(NodeSnapshot *snapshot_p) {
-    const BaseNode *node_p = snapshot_p->node_p;
-    assert(node_p->IsOnLeafDeltaChain() == true);
-
-    if(node_p->GetDepth() < LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) {
-      return;
-    }
-
-    bwt_printf("Leaf node delta chain length exceeds threshold\n");
-
-    // NOTE that the default inner node depth is 0 in this case
-    LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
-
-    // CAS!
-    bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                    leaf_node_p,
-                                    snapshot_p->node_p);
-
-    // If consolidation succeeds then we need to update the snapshot
-    // and also to put the old delta chain into epoch manager for recycle
-    if(ret == true) {
-      snapshot_p->node_p = leaf_node_p;
-
-      epoch_manager.AddGarbageNode(node_p);
-    } else {
-      bwt_printf("Trying to consolidate InnerNode but CAS failed"
-                 "NO ABORT\n");
-
-      delete leaf_node_p;
-    }
-
-    return;
+    return true;
   }
 
   /*
@@ -5424,14 +5456,6 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Insert delta CAS succeed\n");
 
-        // Need to update the snapshot before consolidating it
-        // otherwise consolidation fails every time
-        snapshot_p->node_p = insert_node_p;
-
-        // Need to do this since we have appended a new delta node on
-        // the leaf delta chain
-        TryConsolidateLeafNode(snapshot_p);
-
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5537,10 +5561,6 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Insert (cond.) delta CAS succeed\n");
 
-        snapshot_p->node_p = insert_node_p;
-
-        TryConsolidateLeafNode(snapshot_p);
-
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5615,10 +5635,6 @@ before_switch:
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
 
-        snapshot_p->node_p = delete_node_p;
-
-        TryConsolidateLeafNode(snapshot_p);
-
         // If install is a success then just break from the loop
         // and return
         break;
@@ -5687,10 +5703,6 @@ before_switch:
                                       node_p);
       if(ret == true) {
         bwt_printf("Leaf Delete delta CAS succeed\n");
-
-        snapshot_p->node_p = delete_node_p;
-
-        TryConsolidateLeafNode(snapshot_p);
 
         // If install is a success then just break from the loop
         // and return
