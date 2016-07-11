@@ -344,6 +344,11 @@ class BwTree {
   // The maximum number of nodes we could map in this index
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
 
+  // These two specifies the delta chain length of inner node
+  // and on leaf node
+  constexpr static int INNER_NODE_SIZE_LOWER_THRESHOLD = 8;
+  constexpr static int LEAF_NODE_SIZE_LOWER_THRESHOLD = 8;
+
   // If the length of delta chain exceeds this then we consolidate the node
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD = 8;
   // So maximum delta chain length on leaf is 8
@@ -4552,6 +4557,22 @@ before_switch:
 
     assert(false);
     return false;
+  }
+
+
+  /*
+   * TryConsolidateInnerNode() - Tries to consolidate inner node if the
+   *                             delta chain length exceeds threshold
+   *
+   * Node consolidation is totally optional and it only affects performance
+   * rather than correctness. Therefore this function will not abort on
+   * any condition, in including CAS failure
+   */
+  void TryConsolidateInnerNode(Snapshot *snapshot_p) {
+    const BaseNode *node_p = snapshot_p->node_p;
+    assert(node_p->IsOnLeafDeltaChain());
+
+    if(node_p->GetDepth() < INNER_DELTA_CHAIN_LENGTH_THRESHOLD)
   }
 
   /*
