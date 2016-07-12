@@ -8,6 +8,7 @@ all: $(SOURCE)
 	g++ bloom_filter.cpp -o ./bin/bloom_filter $(CXXFLAG)
 	g++ std_hash_speed.cpp -o ./bin/std_hash_speed $(CXXFLAG)
 	g++ dcas_test.cpp -o ./bin/dcas_test $(CXXFLAG) -mcx16
+	g++ std_sort_malloc.cpp -o ./bin/std_sort_malloc $(CXXFLAG)
 
 clean:
 	rm -f ./bin/*
