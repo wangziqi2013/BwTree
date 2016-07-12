@@ -3269,7 +3269,6 @@ abort_traverse:
     // We collect all valid values in present_set
     // and deleted_set is just for bookkeeping
     CollectAllValuesOnLeafRecursive(node_p,
-                                    node_p,
                                     present_set,
                                     deleted_set,
                                     leaf_node_p);
@@ -3315,7 +3314,6 @@ abort_traverse:
    */
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
-                                  const BaseNode *top_node_p,
                                   KeyValuePairBloomFilter &present_set,
                                   KeyValuePairBloomFilter &deleted_set,
                                   LeafNode *new_leaf_node_p) const {
@@ -3422,13 +3420,11 @@ abort_traverse:
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
-                                          top_node_p,
                                           present_set,
                                           deleted_set,
                                           new_leaf_node_p);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
-                                          top_node_p,
                                           present_set,
                                           deleted_set,
                                           new_leaf_node_p);
