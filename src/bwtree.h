@@ -2586,7 +2586,7 @@ abort_traverse:
     // This will fill in two sets with values present in the inner node
     // and values deleted
     CollectAllSepsOnInnerRecursive(node_p,
-                                   node_p,
+                                   node_p->GetLowKeyNodeID(),
                                    present_set,
                                    deleted_set,
                                    inner_node_p);
@@ -2615,7 +2615,7 @@ abort_traverse:
    */
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
-                                 const BaseNode *top_node_p,
+                                 NodeID low_key_node_id,
                                  KeyNodeIDPairBloomFilter &present_set,
                                  KeyNodeIDPairBloomFilter &deleted_set,
                                  InnerNode *new_inner_node_p) const {
@@ -2625,10 +2625,6 @@ abort_traverse:
     // Even if there is no merge, we still need the high key to rule out
     // keys that has already been splited
     const KeyNodeIDPair &high_key_pair = node_p->GetHighKeyPair();
-
-    // The low key should be the global low key for the entire merged
-    // node since we would like to know which inner node is the node for
-    const KeyNodeIDPair &low_key_pair = top_node_p->GetLowKeyPair();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2669,7 +2665,7 @@ abort_traverse:
           // and we ignore the leftmost sep (since it could be -Inf)
           // For other nodes, the leftmost item inside sep list has a valid
           // key and could thus be pushed directly
-          if(inner_node_p->sep_list[0].second == low_key_pair.second) {
+          if(inner_node_p->sep_list[0].second == low_key_node_id) {
             copy_start_it = inner_node_p->sep_list.begin() + 1;
           } else {
             copy_start_it = inner_node_p->sep_list.begin();
@@ -2751,13 +2747,13 @@ abort_traverse:
           // constant
 
           CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
-                                         top_node_p,
+                                         low_key_node_id,
                                          present_set,
                                          deleted_set,
                                          new_inner_node_p);
 
           CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
-                                         top_node_p,
+                                         low_key_node_id,
                                          present_set,
                                          deleted_set,
                                          new_inner_node_p);
