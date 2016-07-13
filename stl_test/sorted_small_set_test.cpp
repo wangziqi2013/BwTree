@@ -1,6 +1,6 @@
 
 #include <iostream>
-#include "../src/SortedSmallSet.h"
+#include "../src/sorted_small_set.h"
 
 using namespace std;
 
