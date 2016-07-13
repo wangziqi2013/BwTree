@@ -40,50 +40,23 @@ class SortedSmallSet {
     value_eq_obj{p_value_eq_obj}
   {}
 
-
-  /*
-   * LowerBoundBackward() - Returns a pointer to the lower bound
-   *
-   * This function searches from the backward to the begin of the array
-   * It stops at the first occurrence of element that < search key
-   * and then ++
-   *
-   * If there is not an upper bound then return end() pointer
-   *
-   * This function searches from the backward linearly based on several
-   * considerations:
-   *
-   * 1. Cache performance
-   * 2. The set is usually small
-   * 3. In normal cases when consolidating InnerNode delta chain the
-   *    high key is likely to exist at the end of the array
-   */
-  inline ValueType *LowerBoundBackward(ValueType &value) {
-    ValueType *current_p = end_p - 1;
-
-    // Corner case: If the first element is lower bound
-    // then current_p will move outside
-    // the valid range of the array but still we return
-    // the first element in the array
-    while(current_p >= start_p) {
-      if(key_cmp_obj(*current_p, value) == true) {
-        return current_p + 1;
-      }
-
-      current_p--;
-    }
-
-    return current_p + 1;
-  }
-
   /*
    * Insert() - Inserts a value into the set
    *
    * If the value already exists do nothing. Otherwise
    * it will be inserted before the first element that is larger
    */
-  inline void Insert(ValueType &value) {
+  inline void Insert(const ValueType &value) {
     auto it = std::lower_bound(start_p, end_p, value, value_cmp_obj);
+
+    // Fast path: If the lower bound does not exist (i.e. the current element)
+    // is the largest on the array, then just append and increase end pointer
+    if(it == end_p) {
+      *it = value;
+      end_p++;
+
+      return;
+    }
 
     if(value_eq_obj(*it, value) == true) {
       return;

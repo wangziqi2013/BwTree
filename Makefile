@@ -3,7 +3,7 @@ CXX = g++
 GMON_FLAG = 
 OPT_FLAG = -O3
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-SRC = ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h
+SRC = ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h
 OBJ = ./build/main.o ./build/bwtree.o
 
 all: main

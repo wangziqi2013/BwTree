@@ -2581,7 +2581,7 @@ abort_traverse:
 
     // This array will hold sorted InnerDataNode pointers in order to
     // perform a log merging
-    InnerDataNode *data_node_list[delta_record_num];
+    const InnerDataNode *data_node_list[delta_record_num];
 
     // These two are used to compare InnerDataNode for < and == relation
     auto f1 = [this](const InnerDataNode *idn_1, const InnerDataNode *idn_2) {
@@ -2592,7 +2592,7 @@ abort_traverse:
                       return this->key_eq_obj(idn_1->item.first, idn_2->item.first);
                     };
 
-    SortedSmallSet<InnerDataNode *, decltype(f1), decltype(f2)> \
+    SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
       sss{data_node_list, f1, f2};
 
     // The effect of this function is a consolidation into inner node
@@ -2627,10 +2627,12 @@ abort_traverse:
    * Please refer to the function on leaf node for details. These two have
    * almost the same logical flow
    */
+  template<typename T> // To make the f**king compiler
+                       // to deduce SortedSmallSet template type
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
                                  NodeID low_key_node_id,
-                                 SortedSmallSet &sss,
+                                 T &sss,
                                  InnerNode *new_inner_node_p) const {
     // High key should be the high key of the branch (if there is a merge
     // then the high key of the branch may not always equal the high key
@@ -2685,11 +2687,32 @@ abort_traverse:
           }
 
           // Find the end of copying
-          auto sss_end_it = sss.LowerBoundBackward(high_key_pair.first);
+          auto sss_end_it = sss.GetEnd() - 1;
+
+          // If the next key is +Inf then sss_end_it is the real end of the
+          // sorted array
+          if(high_key_pair.second != INVALID_NODE_ID) {
+            // Corner case: If the first element is lower bound
+            // then current_p will move outside
+            // the valid range of the array but still we return
+            // the first element in the array
+            while(sss_end_it >= sss.GetBegin()) {
+              if(key_cmp_obj((*sss_end_it)->item.first, high_key_pair.first) == true) {
+                break;
+              }
+
+              sss_end_it--;
+            }
+          }
+
+          // This points to the first element >= high key
+          sss_end_it++;
 
           while(1) {
             bool sss_end_flag = (sss.GetBegin() == sss_end_it);
             bool array_end_flag = (copy_start_it == copy_end_it);
+
+            //printf("sss_end_flag = %d; array_end_flag = %d\n", sss_end_flag, array_end_flag);
 
             if(sss_end_flag == true && array_end_flag == true) {
               // Both are drained
@@ -2712,7 +2735,7 @@ abort_traverse:
                 // Delta Chain:               Delete 6, Insert 6
                 // Only the first "Delete 6" will appear in the set
                 // and we just do not care
-                if(data_node_type == InnerInsertType) {
+                if(data_node_type == NodeType::InnerInsertType) {
                   // Pop the value here
                   new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
                 } else {
@@ -2737,7 +2760,7 @@ abort_traverse:
               NodeType data_node_type = (sss.GetFront())->GetType();
 
               // Delta Insert with array not having that element
-              if(data_node_type == InnerInsertType) {
+              if(data_node_type == NodeType::InnerInsertType) {
                 // Pop the value here
                 new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
               } else {
@@ -2753,7 +2776,7 @@ abort_traverse:
               NodeType data_node_type = (sss.GetFront())->GetType();
 
               // InsertDelta overrides InnerNode element
-              if(data_node_type == InnerInsertType) {
+              if(data_node_type == NodeType::InnerInsertType) {
                 new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
               } else {
                 // There is a value in InnerNode that does not exist
@@ -2782,7 +2805,7 @@ abort_traverse:
           assert((high_key_pair.second == INVALID_NODE_ID) ||
                  (KeyCmpLess(insert_node_p->item.first, high_key_pair.first)));
 
-          sss.Insert(insert_node_p);
+          sss.Insert(static_cast<const InnerDataNode *>(node_p));
 
           // Go to next node
           node_p = insert_node_p->child_node_p;
@@ -2800,7 +2823,7 @@ abort_traverse:
           assert((high_key_pair.second == INVALID_NODE_ID) ||
                  (KeyCmpLess(delete_node_p->item.first, high_key_pair.first)));
 
-          sss.Insert(delete_node_p);
+          sss.Insert(static_cast<const InnerDataNode *>(node_p));
 
           node_p = delete_node_p->child_node_p;
 
