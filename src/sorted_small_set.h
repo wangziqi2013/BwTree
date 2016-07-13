@@ -110,4 +110,11 @@ class SortedSmallSet {
   inline ValueType &GetFront() {
     return *start_p;
   }
+
+  /*
+   * GetSize() - Returns the size of the container, in element count
+   */
+  inline std::ptrdiff_t GetSize() const {
+    return end_p - start_p;
+  }
 };

@@ -2708,6 +2708,8 @@ abort_traverse:
           // This points to the first element >= high key
           sss_end_it++;
 
+          //printf("%ld\n", sss.GetSize());
+
           while(1) {
             bool sss_end_flag = (sss.GetBegin() == sss_end_it);
             bool array_end_flag = (copy_start_it == copy_end_it);
@@ -2721,7 +2723,9 @@ abort_traverse:
               // If the sss has drained we continue to drain the array
               // We use range insertion which inserts before the first argument
               // with the range specified by the last two arguments
-              new_inner_node_p->sep_list.insert(new_inner_node_p->sep_list.end(), copy_start_it, copy_end_it);
+              new_inner_node_p->sep_list.insert(new_inner_node_p->sep_list.end(),
+                                                copy_start_it,
+                                                copy_end_it);
 
               break;
             } else if(array_end_flag == true) {
