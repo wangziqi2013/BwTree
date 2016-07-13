@@ -71,6 +71,7 @@ class PointerComparator {
 // Used for debugging
 #include <mutex>
 
+#include "sorted_small_set.h"
 #include "bloom_filter.h"
 #include "atomic_stack.h"
 
@@ -84,15 +85,6 @@ class PointerComparator {
  */
 #define BWTREE_DEBUG
 #endif
-
-/*
- * INTERACTIVE_DEBUG - This flag enables interactive debugger
- *                     which serializes CAS operation using a
- *                     lock, halting all threads before starting
- *                     the interactive debugger when assertion fails
- *                     RECOMMEND DEACTIVATING WHEN RELASING
- */
-//#define INTERACTIVE_DEBUG
 
 /*
  * ALL_PUBLIC - This flag makes all private members become public
@@ -1010,6 +1002,33 @@ class BwTree {
   };
 
   /*
+   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
+   *
+   * We need this node since we want to sort pointers to such nodes using
+   * stable sorting algorithm
+   */
+  class InnerDataNode : public DeltaNode {
+   public:
+    KeyNodeIDPair item;
+
+    InnerDataNode(const KeyNodeIDPair &p_item,
+                  NodeType p_type,
+                  const BaseNode *p_child_node_p,
+                  const KeyNodeIDPair *p_low_key_p,
+                  const KeyNodeIDPair *p_high_key_p,
+                  int p_depth,
+                  int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item}
+    {}
+  };
+
+  /*
    * class LeafNode - Leaf node that holds data
    *
    * There are 5 types of delta nodes that could be appended
@@ -1445,11 +1464,8 @@ class BwTree {
    * If the search key lies in the range between sep_key and
    * next_key then we know we should go to new_node_id
    */
-  class InnerInsertNode : public DeltaNode {
+  class InnerInsertNode : public InnerDataNode {
    public:
-    // This is the item being inserted
-    KeyNodeIDPair insert_item;
-
     // This is the next right after the item being inserted
     // This could be set to the +Inf high key
     // in that case next_item.second == INVALID_NODE_ID
@@ -1461,13 +1477,13 @@ class BwTree {
     InnerInsertNode(const KeyNodeIDPair &p_insert_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerInsertType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth() + 1,
-                p_child_node_p->GetItemCount() + 1},
-      insert_item{p_insert_item},
+      InnerDataNode{p_insert_item,
+                    NodeType::InnerInsertType,
+                    p_child_node_p,
+                    &p_child_node_p->GetLowKeyPair(),
+                    &p_child_node_p->GetHighKeyPair(),
+                    p_child_node_p->GetDepth() + 1,
+                    p_child_node_p->GetItemCount() + 1},
       next_item{p_next_item}
     {}
   };
@@ -1483,7 +1499,7 @@ class BwTree {
    * tree destructor to avoid traversing NodeID that has already been
    * deleted and gatbage collected
    */
-  class InnerDeleteNode : public DeltaNode {
+  class InnerDeleteNode : public InnerDataNode {
    public:
     KeyNodeIDPair delete_item;
 
@@ -1514,13 +1530,13 @@ class BwTree {
                     const KeyNodeIDPair &p_prev_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerDeleteType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth() + 1,
-                p_child_node_p->GetItemCount() - 1},
-      delete_item{p_delete_item},
+      InnerDataNode{p_delete_item,
+                    NodeType::InnerDeleteType,
+                    p_child_node_p,
+                    &p_child_node_p->GetLowKeyPair(),
+                    &p_child_node_p->GetHighKeyPair(),
+                    p_child_node_p->GetDepth() + 1,
+                    p_child_node_p->GetItemCount() - 1},
       prev_item{p_prev_item},
       next_item{p_next_item}
     {}
@@ -1892,7 +1908,7 @@ class BwTree {
           next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
 
           freed_count += \
-            FreeNodeByNodeID(((InnerInsertNode *)node_p)->insert_item.second);
+            FreeNodeByNodeID(((InnerInsertNode *)node_p)->item.second);
 
           delete (InnerInsertNode *)node_p;
           freed_count++;
@@ -1906,7 +1922,7 @@ class BwTree {
           // or will be freed) epoch manager
           // NOTE: No need to call InvalidateNodeID since this function is
           // only called on destruction of the tree
-          mapping_table[((InnerDeleteNode *)node_p)->delete_item.second] = \
+          mapping_table[((InnerDeleteNode *)node_p)->item.second] = \
             nullptr;
 
           delete (InnerDeleteNode *)node_p;
@@ -2408,7 +2424,7 @@ abort_traverse:
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
 
-          const KeyNodeIDPair &insert_item = insert_node_p->insert_item;
+          const KeyNodeIDPair &insert_item = insert_node_p->item;
           const KeyNodeIDPair &next_item = insert_node_p->next_item;
 
           // If the next item has +Inf as its key (checking that using
@@ -2441,6 +2457,10 @@ abort_traverse:
           // compare since we know the search key is definitely greater than
           // or equal to the low key (this is necessary to prevent comparing
           // with -Inf)
+          // NOTE: Even if the inner node is merged into its left sibling
+          // this is still true since we compared prev_item.second
+          // with the low key of the current delete node which always
+          // reflects the low key of this branch
           if((delete_node_p->GetLowKeyNodeID() == prev_item.second) ||
              (KeyCmpGreaterEqual(search_key, prev_item.first))) {
             // If the next item is +Inf key then we also choose not to compare
@@ -2559,8 +2579,21 @@ abort_traverse:
     // to the size of the bloom filter
     int delta_record_num = node_p->GetDepth();
 
-    const KeyNodeIDPair *present_set_data_p[delta_record_num];
-    const KeyNodeIDPair *deleted_set_data_p[delta_record_num];
+    // This array will hold sorted InnerDataNode pointers in order to
+    // perform a log merging
+    InnerDataNode *data_node_list[delta_record_num];
+
+    // These two are used to compare InnerDataNode for < and == relation
+    auto f1 = [this](const InnerDataNode *idn_1, const InnerDataNode *idn_2) {
+                      return this->key_cmp_obj(idn_1->item.first, idn_2->item.first);
+                    };
+
+    auto f2 = [this](const InnerDataNode *idn_1, const InnerDataNode *idn_2) {
+                      return this->key_eq_obj(idn_1->item.first, idn_2->item.first);
+                    };
+
+    SortedSmallSet<InnerDataNode *, decltype(f1), decltype(f2)> \
+      sss{data_node_list, f1, f2};
 
     // The effect of this function is a consolidation into inner node
     InnerNode *inner_node_p = new InnerNode{node_p->GetHighKeyPair(),
@@ -2575,34 +2608,15 @@ abort_traverse:
     // key again (it is always the first element in data list)
     sep_list_p->push_back(node_p->GetLowKeyPair());
 
-    KeyNodeIDPairBloomFilter present_set{present_set_data_p,
-                                         key_node_id_pair_eq_obj,
-                                         key_node_id_pair_hash_obj};
-
-    KeyNodeIDPairBloomFilter deleted_set{deleted_set_data_p,
-                                         key_node_id_pair_eq_obj,
-                                         key_node_id_pair_hash_obj};
-
     // This will fill in two sets with values present in the inner node
     // and values deleted
     CollectAllSepsOnInnerRecursive(node_p,
                                    node_p->GetLowKeyNodeID(),
-                                   present_set,
-                                   deleted_set,
+                                   sss,
                                    inner_node_p);
 
     // Since consolidation would not change item count they must be equal
     assert(static_cast<int>(sep_list_p->size()) == node_p->GetItemCount());
-
-    // Sort the key-NodeId array using std::sort and the comparison object
-    // we defined
-    // NOTE: Since the low key might be -Inf, we do not have to
-    // sort the first element - just leave it there
-    std::sort(sep_list_p->begin() + 1,
-              sep_list_p->end(),
-              [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
-                return this->key_cmp_obj(knp1.first, knp2.first);
-              });
 
     return inner_node_p;
   }
@@ -2616,8 +2630,7 @@ abort_traverse:
   void
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
                                  NodeID low_key_node_id,
-                                 KeyNodeIDPairBloomFilter &present_set,
-                                 KeyNodeIDPairBloomFilter &deleted_set,
+                                 SortedSmallSet &sss,
                                  InnerNode *new_inner_node_p) const {
     // High key should be the high key of the branch (if there is a merge
     // then the high key of the branch may not always equal the high key
@@ -2671,13 +2684,86 @@ abort_traverse:
             copy_start_it = inner_node_p->sep_list.begin();
           }
 
-          for(auto it = copy_start_it;it != copy_end_it;it++) {
-            if(deleted_set.Exists(*it) == false) {
-              if(present_set.Exists(*it) == false) {
-                new_inner_node_p->sep_list.push_back(*it);
+          // Find the end of copying
+          auto sss_end_it = sss.LowerBoundBackward(high_key_pair.first);
+
+          while(1) {
+            bool sss_end_flag = (sss.GetBegin() == sss_end_it);
+            bool array_end_flag = (copy_start_it == copy_end_it);
+
+            if(sss_end_flag == true && array_end_flag == true) {
+              // Both are drained
+              break;
+            } else if(sss_end_flag == true) {
+              // If the sss has drained we continue to drain the array
+              // We use range insertion which inserts before the first argument
+              // with the range specified by the last two arguments
+              new_inner_node_p->sep_list.insert(new_inner_node_p->sep_list.end(), copy_start_it, copy_end_it);
+
+              break;
+            } else if(array_end_flag == true) {
+              // Then we drain all elements inside the delta chain
+              while(sss.GetBegin() != sss_end_it) {
+                // We could not pop here since we will use the value later
+                NodeType data_node_type = (sss.GetFront())->GetType();
+
+                // It is possible that there is an InnerDeleteNode:
+                // InnerNode: [1, 2, 3, 4, 5]
+                // Delta Chain:               Delete 6, Insert 6
+                // Only the first "Delete 6" will appear in the set
+                // and we just do not care
+                if(data_node_type == InnerInsertType) {
+                  // Pop the value here
+                  new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                } else {
+                  // And here (InnerDeleteNode after we have drained InnerNode
+                  // is useless so just ignore it)
+                  sss.PopFront();
+                }
               }
+
+              break;
             }
-          }
+
+            // Next is the normal case: Both are not drained
+            // we do a comparison of their leading elements
+
+            if(key_cmp_obj(copy_start_it->first, sss.GetFront()->item.first)) {
+              // If array element is less than data node list element
+              new_inner_node_p->sep_list.push_back(*copy_start_it);
+
+              copy_start_it++;
+            } else if(key_cmp_obj(sss.GetFront()->item.first, copy_start_it->first)) {
+              NodeType data_node_type = (sss.GetFront())->GetType();
+
+              // Delta Insert with array not having that element
+              if(data_node_type == InnerInsertType) {
+                // Pop the value here
+                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+              } else {
+                // This is possible
+                // InnerNode: [2, 3, 4, 5]
+                // Delta Chain: Delete 1, Insert 1
+                // So just ignore it
+                sss.PopFront();
+              }
+            } else {
+              // In this branch the values are equal
+
+              NodeType data_node_type = (sss.GetFront())->GetType();
+
+              // InsertDelta overrides InnerNode element
+              if(data_node_type == InnerInsertType) {
+                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+              } else {
+                // There is a value in InnerNode that does not exist
+                // in consolidated node. Just ignore
+                sss.PopFront();
+              }
+
+              copy_start_it++;
+            } // Compare leading elements
+          } // while(1)
 
           return;
         } // case InnerType
@@ -2694,15 +2780,9 @@ abort_traverse:
           // delta nodes must be consistent with the most up-to-date
           // node high key
           assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(insert_node_p->insert_item.first, high_key_pair.first)));
+                 (KeyCmpLess(insert_node_p->item.first, high_key_pair.first)));
 
-          if(deleted_set.Exists(insert_node_p->insert_item) == false) {
-            if(present_set.Exists(insert_node_p->insert_item) == false) {
-              present_set.Insert(insert_node_p->insert_item);
-
-              new_inner_node_p->sep_list.push_back(insert_node_p->insert_item);
-            }
-          }
+          sss.Insert(insert_node_p);
 
           // Go to next node
           node_p = insert_node_p->child_node_p;
@@ -2718,15 +2798,9 @@ abort_traverse:
           // i.e. delta nodes must be consistent with the most up-to-date
           // node high key
           assert((high_key_pair.second == INVALID_NODE_ID) ||
-                 (KeyCmpLess(delete_node_p->delete_item.first, high_key_pair.first)));
+                 (KeyCmpLess(delete_node_p->item.first, high_key_pair.first)));
 
-          if(present_set.Exists(delete_node_p->delete_item) == false) {
-            // Also need to check for deleted set to avoid adding the same
-            // value twice
-            if(deleted_set.Exists(delete_node_p->delete_item) == false) {
-              deleted_set.Insert(delete_node_p->delete_item);
-            }
-          }
+          sss.Insert(delete_node_p);
 
           node_p = delete_node_p->child_node_p;
 
@@ -2748,14 +2822,12 @@ abort_traverse:
 
           CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
                                          low_key_node_id,
-                                         present_set,
-                                         deleted_set,
+                                         sss,
                                          new_inner_node_p);
 
           CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
                                          low_key_node_id,
-                                         present_set,
-                                         deleted_set,
+                                         sss,
                                          new_inner_node_p);
 
           // There is no unvisited node

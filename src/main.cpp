@@ -56,13 +56,13 @@ class KeyEqualityChecker {
   inline bool operator()(const long int k1, const long int k2) const {
     return k1 == k2;
   }
-  
+
   KeyEqualityChecker(int dummy) {
     (void)dummy;
-    
+
     return;
   }
-  
+
   KeyEqualityChecker() = delete;
   //KeyEqualityChecker(const KeyEqualityChecker &p_key_eq_obj) = delete;
 };
@@ -559,7 +559,7 @@ void DeleteTest1(uint64_t thread_id, TreeType *t) {
 
 void InsertTest2(uint64_t thread_id, TreeType *t) {
   tree_size = 0UL;
-  
+
   for(int i = 0;i < key_num;i++) {
     int key = thread_num * i + thread_id;
 
@@ -657,31 +657,31 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
 
       if(t->Insert(key, key)) insert_success.fetch_add(1);
     }
-    
+
     printf("Finish inserting\n");
   } else {
     for(int i = 0;i < key_num;i++) {
       int key = thread_num * i + thread_id - 1;
 
       while(t->Delete(key, key) == false) ;
-      
+
       delete_success.fetch_add(1);
       delete_attempt.fetch_add(1UL);
     }
   }
-  
+
   return;
 }
 
 void MixedGetValueTest(TreeType *t) {
   size_t value_count = 0UL;
-  
+
   for(int i = 0;i < key_num * thread_num;i ++) {
     auto value_set = t->GetValue(i);
 
     value_count += value_set.size();
   }
-  
+
   printf("Finished counting values: %lu\n", value_count);
   printf("    insert success = %lu; delete success = %lu\n",
          insert_success.load(),
@@ -694,22 +694,22 @@ void MixedGetValueTest(TreeType *t) {
 /*
 void IteratorGetValueTest(TreeType *t) {
   auto it = t->Begin();
-  
+
   assert(*it++ == 0.0);
-  
+
   for(int i = 1;i < key_num * thread_num;i++) {
     std::set<double> value_set{};
-    
+
     // Sort the value
     value_set.insert(*it++);
     value_set.insert(*it++);
     value_set.insert(*it++);
     value_set.insert(*it++);
-    
+
     // Verify them one by one
     auto it2 = value_set.begin();
     //double temp;
-    
+
     //temp = i * 1.11;
     //printf("%lX %lX\n", *(uint64_t *)&*it2, *(uint64_t *)&temp);
     //temp = i * 1.111;
@@ -728,9 +728,9 @@ void IteratorGetValueTest(TreeType *t) {
     assert(*it2 == (double)(i * 1.11111L));
     it2++;
   }
-  
+
   assert(it.IsEnd() == true);
-  
+
   return;
 }
 */
@@ -742,24 +742,24 @@ void PinToCore(size_t core_id) {
   cpu_set_t cpu_set;
   CPU_ZERO(&cpu_set);
   CPU_SET(core_id, &cpu_set);
-  
+
   int ret = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
-  
+
   printf("pthread_setaffinity_np() returns %d\n", ret);
-  
+
   return;
 }
 
 void TestStdMapInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
-  
+
   // Insert 1 million keys into std::map
   std::map<long, long> test_map{};
   for(int i = 0;i < 1024 * 1024;i++) {
     test_map[i] = i;
   }
-  
+
   end = std::chrono::system_clock::now();
 
   std::chrono::duration<double> elapsed_seconds = end - start;
@@ -771,7 +771,7 @@ void TestStdMapInsertReadPerformance() {
   // Test read
   std::vector<long> v{};
   v.reserve(100);
-  
+
   start = std::chrono::system_clock::now();
 
   int iter = 10;
@@ -779,18 +779,18 @@ void TestStdMapInsertReadPerformance() {
     // Read 1 million keys from std::map
     for(int i = 0;i < 1024 * 1024;i++) {
       long t = test_map[i];
-      
+
       v.push_back(t);
       v.clear();
     }
   }
 
   end = std::chrono::system_clock::now();
-  
+
   elapsed_seconds = end - start;
   std::cout << "std::map: " << (1.0 * iter) / elapsed_seconds.count()
             << " million read/sec" << "\n";
-  
+
   return;
 }
 
@@ -815,7 +815,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
   // Test read
   std::vector<long> v{};
   v.reserve(100);
-  
+
   start = std::chrono::system_clock::now();
 
   int iter = 10;
@@ -823,7 +823,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
     // Read 1 million keys from std::map
     for(int i = 0;i < 1024 * 1024;i++) {
       long t = test_map[i];
-      
+
       v.push_back(t);
       v.clear();
     }
@@ -840,15 +840,15 @@ void TestStdUnorderedMapInsertReadPerformance() {
 
 void TestBTreeInsertReadPerformance() {
   std::chrono::time_point<std::chrono::system_clock> start, end;
-  
+
   // Insert 1 million keys into stx::btree
   btree<long,
         long,
         std::pair<long, long>,
         KeyComparator> test_map{KeyComparator{1}};
-  
+
   start = std::chrono::system_clock::now();
-  
+
   for(long i = 0;i < 1024 * 1024;i++) {
     test_map.insert(i, i);
   }
@@ -864,7 +864,7 @@ void TestBTreeInsertReadPerformance() {
   // Test read
   std::vector<long> v{};
   v.reserve(100);
-  
+
   start = std::chrono::system_clock::now();
 
   int iter = 10;
@@ -872,7 +872,7 @@ void TestBTreeInsertReadPerformance() {
     // Read 1 million keys from stx::btree
     for(int i = 0;i < 1024 * 1024;i++) {
       auto it = test_map.find(i);
-      
+
       v.push_back(it->second);
       v.clear();
     }
@@ -927,7 +927,7 @@ void TestBTreeMultimapInsertReadPerformance() {
       for(auto it = it_pair.first;it != it_pair.second;it++) {
         v.push_back(it->second);
       }
-      
+
       v.clear();
     }
   }
@@ -956,13 +956,13 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
 
   std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
-            
+
   // Then test read performance
   int iter = 10;
   std::vector<long> v{};
 
   v.reserve(100);
-  
+
   start = std::chrono::system_clock::now();
 
   for(int j = 0;j < iter;j++) {
@@ -978,7 +978,7 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
   elapsed_seconds = end - start;
   std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million read/sec" << "\n";
-            
+
   ///////////////////////////////////////////////////////////////////
   // Test Iterator (single value)
   ///////////////////////////////////////////////////////////////////
@@ -1000,7 +1000,7 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
     std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
               << " million iteration/sec" << "\n";
   }
-  
+
   // Insert again
   start = std::chrono::system_clock::now();
 
@@ -1014,9 +1014,9 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
 
   std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million insertion (reverse order)/sec" << "\n";
-            
+
   // Read again
-  
+
   start = std::chrono::system_clock::now();
 
   for(int j = 0;j < iter;j++) {
@@ -1032,9 +1032,9 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
   elapsed_seconds = end - start;
   std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
             << " million read (2 values)/sec" << "\n";
-            
+
   // Verify reads
-  
+
   for(int i = 0;i < key_num;i++) {
     t->GetValue(i, v);
 
@@ -1046,10 +1046,10 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
     } else {
       assert(false);
     }
-    
+
     v.clear();
   }
-  
+
   std::cout << "    All values are correct!\n";
 
   // Finally remove values
@@ -1059,11 +1059,11 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
   for(int i = 0;i < key_num;i++) {
     t->Delete(i, i);
   }
-  
+
   for(int i = key_num - 1;i >= 0;i--) {
     t->Delete(i, i + 1);
   }
-  
+
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
@@ -1072,10 +1072,10 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
 
   for(int i = 0;i < key_num;i++) {
     t->GetValue(i, v);
-    
+
     assert(v.size() == 0);
   }
-  
+
   std::cout << "    All values have been removed!\n";
 
   return;
@@ -1097,7 +1097,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
             << " million insertion/sec" << "\n";
 
   // Then test read performance
-  
+
   int iter = 10;
   std::vector<long> v{};
 
@@ -1125,39 +1125,39 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
   int iter = 10;
-  
+
   std::chrono::time_point<std::chrono::system_clock> start, end;
-  
+
   auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
     // First pin the thread to a core
     //PinToCore(thread_id);
-    
+
     std::vector<long> v{};
-    
+
     v.reserve(100);
-    
+
     std::chrono::time_point<std::chrono::system_clock> start, end;
 
     start = std::chrono::system_clock::now();
-    
+
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
         t->GetValue(i, v);
-        
+
         v.clear();
       }
     }
-    
+
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end - start;
-    
+
     std::cout << "[Thread " << thread_id << " Done] @ "
               << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
               << " million read/sec" << "\n";
-              
+
     return;
   };
-  
+
   start = std::chrono::system_clock::now();
   LaunchParallelTestID(num_thread, func, t);
   end = std::chrono::system_clock::now();
@@ -1166,7 +1166,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
-            
+
   return;
 }
 
@@ -1175,20 +1175,20 @@ void StressTest(uint64_t thread_id, TreeType *t) {
   static std::atomic<size_t> insert_success;
   static std::atomic<size_t> delete_success;
   static std::atomic<size_t> total_op;
-  
+
   const size_t thread_num = 8;
-  
+
   int max_key = 1024 * 1024;
-  
+
   std::random_device r;
 
   // Choose a random mean between 0 and max key value
   std::default_random_engine e1(r());
   std::uniform_int_distribution<int> uniform_dist(0, max_key - 1);
-  
+
   while(1) {
     int key = uniform_dist(e1);
-    
+
     if((thread_id % 2) == 0) {
       if(t->Insert(key, key)) {
         tree_size.fetch_add(1);
@@ -1212,9 +1212,9 @@ void StressTest(uint64_t thread_id, TreeType *t) {
              insert_success.load(),
              delete_success.load());
     }
-    
+
     size_t remainder = (op % (1024UL * 1024UL * 10UL));
-    
+
     if(remainder < thread_num) {
       std::vector<long> v{};
       int iter = 10;
@@ -1235,7 +1235,7 @@ void StressTest(uint64_t thread_id, TreeType *t) {
 
       end = std::chrono::system_clock::now();
       std::chrono::duration<double> elapsed_seconds = end - start;
-      
+
       std::cout << " Stress Test BwTree: "
                 << (iter * max_key / (1024.0 * 1024.0)) / elapsed_seconds.count()
                 << " million read/sec" << "\n";
@@ -1250,44 +1250,44 @@ void StressTest(uint64_t thread_id, TreeType *t) {
  */
 void IteratorTest(TreeType *t) {
   const long key_num = 1024 * 1024;
-  
+
   // First insert from 0 to 1 million
   for(long int i = 0;i < key_num;i++) {
     t->Insert(i, i);
   }
-  
+
   auto it = t->Begin();
-  
+
   long i = 0;
   while(it.IsEnd() == false) {
     assert(it->first == it->second);
     assert(it->first == i);
-    
+
     i++;
     it++;
   }
-  
+
   assert(i == (key_num));
-  
+
   auto it2 = t->Begin(key_num - 1);
   auto it3 = it2;
-  
+
   it2++;
   assert(it2.IsEnd() == true);
-  
+
   assert(it3->first == (key_num - 1));
-  
+
   auto it4 = t->Begin(key_num + 1);
   assert(it4.IsEnd() == true);
-  
+
   return;
 }
 
 void TestEpochManager(TreeType *t) {
   std::atomic<int> thread_finished;
-  
+
   thread_finished = 1;
-  
+
   auto func = [t, &thread_finished](uint64_t thread_id, int iter) {
     for(int i = 0;i < iter;i++) {
       auto node = t->epoch_manager.JoinEpoch();
@@ -1309,7 +1309,7 @@ void TestEpochManager(TreeType *t) {
   };
 
   LaunchParallelTestID(2, func, 10000);
-  
+
   putchar('\n');
 
   return;
@@ -1331,11 +1331,11 @@ int main(int argc, char **argv) {
   bool run_benchmark_bwtree_full = false;
   bool run_stress = false;
   bool run_epoch_test = false;
-  
+
   int opt_index = 1;
   while(opt_index < argc) {
     char *opt_p = argv[opt_index];
-    
+
     if(strcmp(opt_p, "--benchmark-all") == 0) {
       run_benchmark_all = true;
     } else if(strcmp(opt_p, "--test") == 0) {
@@ -1350,27 +1350,27 @@ int main(int argc, char **argv) {
       run_epoch_test = true;
     } else {
       printf("ERROR: Unknown option: %s\n", opt_p);
-      
+
       return 0;
     }
-    
+
     opt_index++;
   }
-  
+
   bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark_all);
   bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
   bwt_printf("======================================\n");
-  
+
   //////////////////////////////////////////////////////
   // Next start running test cases
   //////////////////////////////////////////////////////
-  
+
   TreeType *t1 = nullptr;
   tree_size = 0;
-  
+
   if(run_epoch_test == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
@@ -1383,29 +1383,29 @@ int main(int argc, char **argv) {
     delete t1;
     print_flag = false;
   }
-  
+
   if(run_benchmark_bwtree == true ||
      run_benchmark_bwtree_full == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
-    
+
     int key_num = 3 * 1024 * 1024;
-    
+
     if(run_benchmark_bwtree_full == true) {
       key_num *= 10;
     }
-    
+
     bwt_printf("Using key size = %d (%f million)\n",
                key_num,
                key_num / (1024.0 * 1024.0));
-               
+
     print_flag = false;
-    
+
     if(run_benchmark_bwtree_full == true) {
       // First we rely on this test to fill bwtree with 30 million keys
       TestBwTreeInsertReadPerformance(t1, key_num);
-      
+
       // And then do a multithreaded read
       TestBwTreeMultiThreadReadPerformance(t1, key_num);
     } else {
@@ -1413,12 +1413,12 @@ int main(int argc, char **argv) {
       // is empty after it returns
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
     }
-    
+
     print_flag = true;
     delete t1;
     print_flag = false;
   }
-  
+
   if(run_benchmark_all == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
@@ -1428,35 +1428,35 @@ int main(int argc, char **argv) {
     bwt_printf("Using key size = %d (%f million)\n",
                key_num,
                key_num / (1024.0 * 1024.0));
-                      
+
     print_flag = false;
-    
+
     TestStdMapInsertReadPerformance();
     TestStdUnorderedMapInsertReadPerformance();
     TestBTreeInsertReadPerformance();
     TestBTreeMultimapInsertReadPerformance();
     TestBwTreeInsertReadPerformance(t1, key_num);
-    
+
     print_flag = true;
     delete t1;
     print_flag = false;
   }
-  
+
   if(run_test == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
-    
+
     //////////////
     // Test iterator
     //////////////
-    
+
     printf("Testing iterator...\n");
-    
+
     IteratorTest(t1);
     PrintStat(t1);
-    
+
     printf("Finised tetsing iterator\n");
 
     // Do not print here otherwise we could not see result
@@ -1536,12 +1536,12 @@ int main(int argc, char **argv) {
 
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
-    
+
     print_flag = true;
     delete t1;
     print_flag = false;
   }
-  
+
   if(run_stress == true) {
     print_flag = true;
     t1 = new TreeType{KeyComparator{1},
@@ -1557,3 +1557,5 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+
+
