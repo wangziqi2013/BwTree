@@ -5,11 +5,11 @@
 using namespace std;
 
 int main() {
-  int a[100];
+  int a[100] = {};
 
   SortedSmallSet<int> sss{a};
 
-  int b[] = {3, 6, 0, 2, 0, 3, 1, 9, 9, 3, 0, 6, 0 ,1, 3, 5, 5, 3};
+  int b[] = {9, 8, 7, 6, 5, 4, 3, 2, 1};
 
   for(size_t i = 0;i < sizeof(b) / sizeof(int);i++) {
     sss.Insert(b[i]);
@@ -23,6 +23,8 @@ int main() {
 
     cout << endl;
   }
+
+  cout << "Final result: " << endl;
 
   while(sss.IsEmpty() == false) {
     cout << sss.PopFront() << " ";
