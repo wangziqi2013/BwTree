@@ -2376,33 +2376,41 @@ abort_traverse:
     bwt_printf("Navigating inner node delta chain...\n");
 
     while(1) {
+      // If we reach here, then either there is no split node
+      // in which case the high key does not change compares with the top
+      // node's high key
+      // or there is a split node, but the split key > search key
+      // so we know search key definitely < current top node high key
+      // NOTE: We need to check for next_node_id being INVALID_NODE_ID
+      // first, since in that case the high key is not defined and
+      // could be arbitraty value
+      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
+        bwt_printf("Bounds checking failed (id = %lu) - "
+                   "Go right.\n",
+                   snapshot_p->node_id);
+
+        JumpToNodeID(node_p->GetNextNodeID(), context_p);
+
+        if(context_p->abort_flag == true) {
+          bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+          return INVALID_NODE_ID;
+        }
+
+        snapshot_p = GetLatestNodeSnapshot(context_p);
+        node_p = snapshot_p->node_p;
+
+      } else {
+        break;
+      }
+    } // while(1)
+
+    while(1) {
       NodeType type = node_p->GetType();
 
       switch(type) {
         case NodeType::InnerType: {
-          // If we reach here, then either there is no split node
-          // in which case the high key does not change compares with the top
-          // node's high key
-          // or there is a split node, but the split key > search key
-          // so we know search key definitely < current top node high key
-          // NOTE: We need to check for next_node_id being INVALID_NODE_ID
-          // first, since in that case the high key is not defined and
-          // could be arbitraty value
-          if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
-             (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
-            bwt_printf("Bounds checking failed (id = %lu) - "
-                       "Must have missed an InnerSplitNode\n",
-                       snapshot_p->node_id);
-
-            // The node has splited but we did not see split node
-            // it must have been consolidated after partial split delta being
-            // finished. Abort here and go back one level to get the latest
-            // Key-NodeID pair
-            context_p->abort_flag = true;
-
-            return INVALID_NODE_ID;
-          }
-
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
 
@@ -2917,13 +2925,27 @@ abort_traverse:
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
 
-    // This is used to detect whether the high key is too low for
-    // the current search key
-    // This will happen if a node splits and we missed the split delta
-    // after InnerInsertNode has been posted
-    // NOTE: We should use pointer since it will be updated on presense
-    // of a JumpToNodeID()
-    const KeyNodeIDPair *high_key_pair_p = &node_p->GetHighKeyPair();
+    while(1) {
+      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
+        bwt_printf("Bounds checking failed on leaf node (id = %lu) - "
+                   "Go right.\n",
+                   snapshot_p->node_id);
+
+        JumpToNodeID(node_p->GetNextNodeID(), context_p);
+
+        if(context_p->abort_flag == true) {
+          bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+          return;
+        }
+
+        snapshot_p = GetLatestNodeSnapshot(context_p);
+        node_p = snapshot_p->node_p;
+      } else {
+        break;
+      }
+    } // while(1)
 
     // The maximum size of present set and deleted set is just
     // the length of the delta chain. Since when we reached the leaf node
@@ -2954,18 +2976,6 @@ abort_traverse:
 
       switch(type) {
         case NodeType::LeafType: {
-          // If the node has been splited but we did not see
-          // a split delta such that the search path was not directed
-          // to the new path
-          // NOTE: If high key has a NodeID = INVALID_NODE_ID then the
-          // the high key is +Inf
-          if((high_key_pair_p->second != INVALID_NODE_ID) &&
-             (KeyCmpGreaterEqual(search_key, high_key_pair_p->first))) {
-            context_p->abort_flag = true;
-
-            return;
-          }
-
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
@@ -3095,10 +3105,6 @@ abort_traverse:
             // These three needs to be refreshed after switching node
             snapshot_p = GetLatestNodeSnapshot(context_p);
             node_p = snapshot_p->node_p;
-
-            // Must update metadata here since we have changed to a different
-            // logical node
-            high_key_pair_p = &node_p->GetHighKeyPair();
           } else {
             node_p = split_node_p->child_node_p;
           }
@@ -3147,37 +3153,36 @@ abort_traverse:
 
     const BaseNode *node_p = snapshot_p->node_p;
 
-    // This is used to decide whether we have reached the incorrect
-    // leaf base node, by checking the high key against search key
-    // This could happen if there had been a split delta and was
-    // consolidated such that the current thread does not have a change
-    // to even jump to the left sibling
-    const KeyNodeIDPair *high_key_pair_p = &node_p->GetHighKeyPair();
-
     // Save some typing
     const KeyType &search_key = context_p->search_key;
+
+    while(1) {
+      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
+        bwt_printf("Bounds checking failed on leaf node (id = %lu) - "
+                   "Go right.\n",
+                   snapshot_p->node_id);
+
+        JumpToNodeID(node_p->GetNextNodeID(), context_p);
+
+        if(context_p->abort_flag == true) {
+          bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+          return nullptr;
+        }
+
+        snapshot_p = GetLatestNodeSnapshot(context_p);
+        node_p = snapshot_p->node_p;
+      } else {
+        break;
+      }
+    } // while(1)
 
     while(1) {
       NodeType type = node_p->GetType();
 
       switch(type) {
         case NodeType::LeafType: {
-          // If the node has been splited but we did not see
-          // a split delta such that the search path was not directed
-          // to the new path
-          // NOTE: If high key has a next node id == INVALID NODE ID
-          // then the high key is +Inf and we do not need to compare
-          if((high_key_pair_p->second != INVALID_NODE_ID) &&
-             KeyCmpGreaterEqual(search_key, high_key_pair_p->first)) {
-            bwt_printf("Bounds check on LeafNode (id = %lu) failed - "
-                       "must have ignored a split delta\n",
-                       snapshot_p->node_id);
-
-            context_p->abort_flag = true;
-
-            return nullptr;
-          }
-
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
@@ -3291,10 +3296,6 @@ abort_traverse:
             // These three needs to be refreshed after switching node
             snapshot_p = GetLatestNodeSnapshot(context_p);
             node_p = snapshot_p->node_p;
-
-            // Must update high key here since we have changed to a different
-            // logical node
-            high_key_pair_p = &node_p->GetHighKeyPair();
           } else {
             node_p = split_node_p->child_node_p;
           }
@@ -4467,6 +4468,9 @@ before_switch:
         // The insert item is just the split item inside InnerSplitNode
         // but next item needs to be read from the parent node
         const KeyNodeIDPair *insert_item_p;
+
+        // This is set to use the high key pair of the node under
+        // split delta
         const KeyNodeIDPair *next_item_p;
 
         NodeType type = snapshot_p->node_p->GetType();
@@ -4478,11 +4482,13 @@ before_switch:
             static_cast<const InnerSplitNode *>(snapshot_p->node_p);
 
           insert_item_p = &split_node_p->insert_item;
+          next_item_p = &split_node_p->child_node_p->GetHighKeyPair();
         } else {
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(snapshot_p->node_p);
 
           insert_item_p = &split_node_p->insert_item;
+          next_item_p = &split_node_p->child_node_p->GetHighKeyPair();
         }
 
         assert(context_p->current_level >= 0);
@@ -4578,26 +4584,19 @@ before_switch:
 
           // If this is false then we know the index term has already
           // been inserted
-          bool split_key_absent = FindSplitNextKey(context_p,
-                                                   parent_snapshot_p,
-                                                   insert_item_p,
-                                                   &next_item_p);
+          bool should_post = CheckSplitItem(parent_snapshot_p, *insert_item_p);
 
-          if(context_p->abort_flag == true) {
-            bwt_printf("Index term found but NodeID does not match - "
-                       "child node merged and splited\n");
+          // If the split key is out of range then we know the parent node has
+          // changed
+          if(should_post == false) {
+            bwt_printf("Check split item failed\n");
 
-            // Since it aborts, the return value does not matter
-            return;
-          }
-
-          if(split_key_absent == false) {
-            bwt_printf("Index term is present. No need to insert\n");
-
-            // We have seen a split, but the sep in parent node is already
-            // installed. In this case we propose a consolidation on current
-            // node to prevent further encountering the "false" split delta
+            // Consolidate out the split node
             ConsolidateNode(snapshot_p);
+
+            // Do not need to abort here, since though the parent node
+            // has changed, the range for the search key on the parent is
+            // still correct
 
             return;
           }
@@ -5173,29 +5172,28 @@ before_switch:
   }
 
   /*
-   * FindSplitNextKey() - Given a parent snapshot, find the next key of
-   *                      the current split key
+   * CheckSplitItem() - Given a parent snapshot, check whether the inner
+   *                    insert could be posted
    *
-   * This function will search for the next key of the current split key
-   * If the split key is found, it just return false. In that case
-   * the key has already been inserted, and we should not post duplicate
-   * record
-   *
-   * Returns true if split key is not found (i.e. we could insert index term)
-   *
-   * NOTE 2: This function checks whether the PID has already been inserted
-   * using both the sep key and NodeID. These two must match, otherwise we
-   * observed an inconsistent state
+   * This functions checks whether the split key is out of the range
+   * of the current parent node. This is possible as long as the split
+   * delta has been finished with InnerInsertNode posted, and then
+   * parent node splited and the insert sibling is the left most child
+   * in the parent split sibling. In this case the insert item is out of the
+   * range of the current parent node which should be prevented since
+   * we assume all delta nodes are within the valid range of the current node
+   * observed from the topmost node of the delta chain
    */
-  inline bool FindSplitNextKey(Context *context_p,
-                               NodeSnapshot *snapshot_p,
-                               const KeyNodeIDPair *insert_item_p,
-                               const KeyNodeIDPair **next_item_p_p) {
-    assert(snapshot_p->IsLeaf() == false);
+  inline bool CheckSplitItem(NodeSnapshot *snapshot_p,
+                             const KeyNodeIDPair &insert_item) {
+    // Save some keystrokes
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    const KeyType &search_key = insert_item.first;
 
     // If the split key is out of range then just ignore
     // we do not worry that through split sibling link
-    // we would traverse to the child of a differemt parent node
+    // we would traverse to the child of a different parent node
     // than the current one, since we always guarantee that after
     // NavigateInnerNode() returns if it does not abort, then we
     // are on the correct node for the current key
@@ -5206,101 +5204,99 @@ before_switch:
     // another parent node (the right sibling of the current parent node)
     // In this case we do not have to insert since we know the index term has
     // already been inserted
-    if((snapshot_p->node_p->GetNextNodeID() != INVALID_NODE_ID) &&
-       (KeyCmpGreaterEqual(insert_item_p->first,
-                           snapshot_p->node_p->GetHighKey()) == true)) {
-      return false;
-    }
-
-    const InnerNode *inner_node_p = \
-      static_cast<const InnerNode *>(snapshot_p->node_p);
-
-    if(snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = \
-        CollectAllSepsOnInner(snapshot_p, snapshot_p->node_p->GetDepth() + 1);
-
-      // We are going to garbage collect this node
-      const BaseNode *old_node_p = snapshot_p->node_p;
-
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      inner_node_p,
-                                      old_node_p);
-
-      if(ret == true) {
-        bwt_printf("Parent InnerNode optimization consolidation succeeds\n");
-
-        // This is important
-        snapshot_p->node_p = inner_node_p;
-
-        epoch_manager.AddGarbageNode(old_node_p);
-      } else {
-        bwt_printf("Parent InnerNode optimization consolidation fails"
-                   " - Put into garbage chain\n");
-
-        // Must delay deallocation since we return pointers pointing
-        // into this node's data
-        epoch_manager.AddGarbageNode(inner_node_p);
-      }
-    }
-
-    // Since we start searching from the 1st element
-    assert(inner_node_p->sep_list.size() > 0UL);
-
-    // This returns an it pointing to the pair whose key >= split key
-    // If it is not split key then the iterator exactly points
-    // to the key we are looking for
-    // If it is split key then we do not need to insert and return false
-    auto insert_item_it = \
-      std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                       inner_node_p->sep_list.end(),
-                       *insert_item_p,
-                       [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
-                         return this->key_cmp_obj(knp1.first, knp2.first);
-                       });
-
-    // This is special case: the split key is higher than all keys
-    // inside the inner node. We use the high key pair inside
-    // inner node as its next item
-    if(insert_item_it == inner_node_p->sep_list.end()) {
-      *next_item_p_p = &inner_node_p->GetHighKeyPair();
-
-      return true;
-    }
-
-    // If the split key already exists then just return false
-    if(KeyCmpEqual(insert_item_it->first, insert_item_p->first) == true) {
-      // NOTE: The following assertion might not be true
-      // Consider this scenario:
-      // 1. Thread A loads parent node, which has key entries 10->100, 20->200
-      // 2. It selects 10, and prepares to load NodeID = 100
-      // 3. Thread B removes and merges NodeID = 200 into its left sibling
-      //    which is node id = 100
-      // 4. Thread B removes 20->200 in the parent node
-      // 5. Thread C splits node id = 100 on split key = 20
-      // 6. Thread C posted a split delta on node id = 100
-      // 7. Thread C posted a index term insert 20->201 on the parent node
-      //    where 201 is the new NodeID for split sibling
-      // 8. Then thread A traverses down using NodeID = 100, and sees
-      //    the split delta
-      // 9. Thread A tries to find in tha parent key = 20, NodeID = 201 since
-      //    it sees the new split delta
-      // 10. Thread A finds key = 20 but NodeID = 200 since it only has the
-      //     old parent version
-      //
-      // So in this case we should abort and refresh the parent node
-      //assert(split_key_it->second == insert_pid);
-
-      if(insert_item_it->second != insert_item_p->second) {
-        context_p->abort_flag = true;
-      }
+    if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+       (KeyCmpGreaterEqual(search_key, node_p->GetHighKey()) == true)) {
+      bwt_printf("Bounds check failed on parent node"
+                 " - split key >= high key\n");
 
       return false;
     }
 
-    // Next item is the address of the key NodeID pair inside parent node
-    *next_item_p_p = &(*insert_item_it);
+    while(1) {
+      switch(node_p->GetType()) {
+      case NodeType::InnerInsertType: {
+        const KeyNodeIDPair &item = \
+          static_cast<const InnerInsertNode *>(node_p)->item;
 
-    return true;
+        if(KeyCmpEqual(item.first, search_key) == true) {
+          return false;
+        }
+
+        node_p = \
+          static_cast<const InnerInsertNode *>(node_p)->child_node_p;
+
+        break;
+      } // InnerInsertNode
+      case NodeType::InnerDeleteType: {
+        const KeyNodeIDPair &item = \
+          static_cast<const InnerDeleteNode *>(node_p)->item;
+
+        if(KeyCmpEqual(item.first, search_key) == true) {
+          return true;
+        }
+
+        node_p = \
+          static_cast<const InnerDeleteNode *>(node_p)->child_node_p;
+
+        break;
+      } // InnerDeleteNode
+      case NodeType::InnerType: {
+        auto sep_list_p = &static_cast<const InnerNode *>(node_p)->sep_list;
+
+        auto it = std::lower_bound(sep_list_p->begin() + 1,
+                                   sep_list_p->end(),
+                                   insert_item,
+                                   [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
+                                     return this->key_cmp_obj(knp1.first, knp2.first);
+                                   });
+        // This is special case since we could not compare the iterator
+        if(it == sep_list_p->end()) {
+          // If the key does not exist then return true and post node
+          return true;
+        } else if(KeyCmpEqual(it->first, insert_item.first) == false) {
+          // If found the lower bound but keys are different
+          // then also could post
+          return true;
+        } else {
+          return false;
+        }
+
+        assert(false);
+        return false;
+      } // InnerNode
+      case NodeType::InnerSplitType: {
+        // Since we already did bounds checking at the beginning of this
+        // function, the split key must be less than the split key
+        // here in this node
+        node_p = \
+          static_cast<const InnerSplitNode *>(node_p)->child_node_p;
+
+        break;
+      } // InnerSplitType
+      case NodeType::InnerMergeType: {
+        const KeyNodeIDPair &item = \
+          static_cast<const InnerMergeNode *>(node_p)->delete_item;
+
+        // If the split key >= merge key then just go to the right branch
+        if(KeyCmpGreaterEqual(insert_item.first, item.first) == true) {
+          node_p = static_cast<const InnerMergeNode *>(node_p)->right_merge_p;
+        } else {
+          node_p = static_cast<const InnerMergeNode *>(node_p)->child_node_p;
+        }
+
+        break;
+      } // InnerMergeNode
+      default: {
+        bwt_printf("Unknown InnerNode type: %d", (int)node_p->GetType());
+
+        assert(false);
+        return false;
+      } // default
+      } // switch
+    } // while(1)
+
+    assert(false);
+    return false;
   }
 
   /*
