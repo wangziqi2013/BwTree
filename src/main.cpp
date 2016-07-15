@@ -673,6 +673,79 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+/*
+ * RandomInsertSpeedTest() - Tests how fast it is to insert keys randomly
+ */
+void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  start = std::chrono::system_clock::now();
+
+  // We loop for keynum * 2 because in average half of the insertion
+  // will hit an empty slot
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    t->Insert(key, key);
+  }
+  
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random insertion/sec" << "\n";
+            
+
+
+  return;
+}
+
+/*
+ * RandomInsertTest() - Inserts in a 1M key space randomly until
+ *                      all keys has been inserted
+ */
+void RandomInsertTest(uint64_t thread_id, TreeType *t) {
+  // This defines the key space (0 ~ (1M - 1))
+  const size_t key_num = 1024 * 1024;
+  
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+  
+  static std::atomic<size_t> insert_success_counter;
+  
+  while(insert_success_counter.load() < key_num) {
+    int key = uniform_dist(e1);
+    
+    if(t->Insert(key, key)) insert_success_counter.fetch_add(1);
+  }
+  
+  printf("Random insert (%lu) finished\n", thread_id);
+
+  return;
+}
+
+/*
+ * RandomInsertVerify() - Veryfies whether random insert is correct
+ */
+void RandomInsertVerify(TreeType *t) {
+  for(int i = 0;i < 1024 * 1024;i++) {
+    auto s = t->GetValue(i);
+    
+    assert(s.size() == 1);
+    assert(*s.begin() == i);
+  }
+  
+  printf("Random insert test OK\n");
+  
+  return;
+}
+
 void MixedGetValueTest(TreeType *t) {
   size_t value_count = 0UL;
 
@@ -691,49 +764,6 @@ void MixedGetValueTest(TreeType *t) {
   return;
 }
 
-/*
-void IteratorGetValueTest(TreeType *t) {
-  auto it = t->Begin();
-
-  assert(*it++ == 0.0);
-
-  for(int i = 1;i < key_num * thread_num;i++) {
-    std::set<double> value_set{};
-
-    // Sort the value
-    value_set.insert(*it++);
-    value_set.insert(*it++);
-    value_set.insert(*it++);
-    value_set.insert(*it++);
-
-    // Verify them one by one
-    auto it2 = value_set.begin();
-    //double temp;
-
-    //temp = i * 1.11;
-    //printf("%lX %lX\n", *(uint64_t *)&*it2, *(uint64_t *)&temp);
-    //temp = i * 1.111;
-    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
-    //temp = i * 1.1111;
-    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
-    //temp = i * 1.11111;
-    //printf("%lX %lX\n", *(uint64_t *)&*it2++, *(uint64_t *)&temp);
-    //printf("%lf, %lf\n", *it2, i * 1.11);
-    assert((*it2) == (double)(i * 1.11L));
-    it2++;
-    assert(*it2 == (double)(i * 1.111L));
-    it2++;
-    assert(*it2 == (double)(i * 1.1111L));
-    it2++;
-    assert(*it2 == (double)(i * 1.11111L));
-    it2++;
-  }
-
-  assert(it.IsEnd() == true);
-
-  return;
-}
-*/
 
 /*
  * PinToCore() - Pin the current calling thread to a particular core
@@ -1412,6 +1442,13 @@ int main(int argc, char **argv) {
       // This function will delete all keys at the end, so the tree
       // is empty after it returns
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
+      
+      delete t1;
+      t1 = new TreeType{KeyComparator{1},
+                        KeyEqualityChecker{1}};
+      
+      // Tests random insert using one thread
+      RandomInsertSpeedTest(t1, key_num);
     }
 
     print_flag = true;
@@ -1459,12 +1496,29 @@ int main(int argc, char **argv) {
 
     printf("Finised tetsing iterator\n");
 
+    //////////////////////
+    // Test random insert
+    //////////////////////
+
+    printf("Testing random insert...\n");
+
     // Do not print here otherwise we could not see result
     delete t1;
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
 
-    //////////////
+    LaunchParallelTestID(8, RandomInsertTest, t1);
+    RandomInsertVerify(t1);
+    
+    printf("Finished random insert testing\n");
+    
+    delete t1;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+
+    ////////////////////////////
+    // Test mixed insert/delete
+    ////////////////////////////
 
     LaunchParallelTestID(thread_num, MixedTest1, t1);
     printf("Finished mixed testing\n");
