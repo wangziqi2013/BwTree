@@ -738,9 +738,16 @@ class BwTree {
    public:
     // For inner nodes, low key always points to the KeyNodeIDPair inside the
     // InnerNode
-    // For leaf nodes, this has no meaning and must be set to nullptr
-    // Low key does not change even on the presense of Split and merge nodes
-    const KeyNodeIDPair *low_key_p;
+    // For LeafInsert and LeafDelete nodes, this field is set to the next
+    // node that has the same key as the current one, and is used to
+    // facilitate node traversal (since leaf node traversal always use a
+    // key, so it benefits both read and modification)
+    // For other leaf nodes this field is set to nullptr and has no special
+    // meaning
+    union {
+      const KeyNodeIDPair *low_key_p;
+      const BaseNode *next_key_p;
+    } low_or_next_key;
 
     // For inner nodes, high key points to the first element inside its
     // separator list if there is neither InnerSplitNode nor InnerMergeNode
@@ -892,7 +899,7 @@ class BwTree {
       // Make sure this is not called on leaf nodes
       assert(IsOnLeafDeltaChain() == false);
 
-      return metadata.low_key_p->first;
+      return metadata.low_or_next_key.low_key_p->first;
     }
 
     /*
@@ -921,7 +928,23 @@ class BwTree {
       // Make sure this is not called on leaf nodes
       assert(IsOnLeafDeltaChain() == false);
 
-      return *metadata.low_key_p;
+      return *metadata.low_or_next_key.low_key_p;
+    }
+    
+    /*
+     * GetNextKeyNode() - Returns the pointer to the next node
+     *                    of the same key
+     *
+     * This allows us to make use of previous traverse history to
+     * speed up leaf node traversing
+     */
+    inline const BaseNode *GetNextKeyNode() const {
+      
+      // These two is only valid for leaf Insert and leaf delete node
+      assert(GetType() == NodeType::LeafInsertNode ||
+             GetType() == NodeType::LeafDeleteNode);
+      
+      return metadata.low_or_next_key.next_key_p;
     }
 
     /*
@@ -3005,9 +3028,14 @@ abort_traverse:
                 value_list.push_back(insert_node_p->insert_item.second);
               }
             }
+            
+            node_p = insert_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              return;
+            }
+          } else {
+            node_p = insert_node_p->child_node_p;
           }
-
-          node_p = insert_node_p->child_node_p;
 
           break;
         } // case LeafInsertType
@@ -3019,9 +3047,14 @@ abort_traverse:
             if(present_set.Exists(delete_node_p->delete_item.second) == false) {
               deleted_set.Insert(delete_node_p->delete_item.second);
             }
-          }
 
-          node_p = delete_node_p->child_node_p;
+            node_p = delete_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              return;
+            }
+          } else {
+            node_p = insert_node_p->child_node_p;
+          }
 
           break;
         } // case LeafDeleteType
@@ -3097,7 +3130,8 @@ abort_traverse:
    * function returns with value false.
    */
   const KeyValuePair *NavigateLeafNode(Context *context_p,
-                                       const ValueType &search_value) {
+                                       const ValueType &search_value,
+                                       const BaseNode **same_key_node_p) {
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -3107,6 +3141,10 @@ abort_traverse:
 
     // Save some typing
     const KeyType &search_key = context_p->search_key;
+    
+    // If we have seen a node of the same key (but is not the node we return on)
+    // then just link it in
+    *same_key_node_p = nullptr;
 
     while(1) {
       if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
@@ -3152,6 +3190,15 @@ abort_traverse:
           // Search all values with the search key
           while((scan_start_it != leaf_node_p->data_list.end()) && \
                 (KeyCmpEqual(scan_start_it->first, search_key))) {
+
+            // If we have observed a leaf node with the key then
+            // return the pointer to the leaf node to the caller
+            // to reflect the fact that later search with
+            // that key must also search the leaf node
+            if(*same_key_node_p == nullptr) {
+              *same_key_node_p = node_p;
+            }
+                  
             // If there is a value matching the search value then return true
             // We do not need to check any delete set here, since if the
             // value has been deleted earlier then this function would
@@ -3172,12 +3219,24 @@ abort_traverse:
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
+            
+            // Set to the first node we have ever seen
+            if(*same_key_node_p == nullptr) {
+              *same_key_node_p = node_p;
+            }
+            
             if(ValueCmpEqual(insert_node_p->insert_item.second, search_value)) {
               return &insert_node_p->insert_item;
             }
-          }
 
-          node_p = insert_node_p->child_node_p;
+            // Also make use of existing node pointer
+            node_p = insert_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              return nullptr;
+            }
+          } else {
+            node_p = insert_node_p->child_node_p;
+          }
 
           break;
         } // case LeafInsertType
@@ -3187,12 +3246,24 @@ abort_traverse:
 
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->delete_item.first)) {
+            
+            // Set to the first node we have ever seen
+            if(*same_key_node_p == nullptr) {
+              *same_key_node_p = node_p;
+            }
+            
             if(ValueCmpEqual(delete_node_p->delete_item.second, search_value)) {
               return nullptr;
             }
+            
+            // Also make use of existing node pointer
+            node_p = delete_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              return nullptr;
+            }
+          } else {
+            node_p = delete_node_p->child_node_p;
           }
-
-          node_p = delete_node_p->child_node_p;
 
           break;
         } // case LeafDeleteType
