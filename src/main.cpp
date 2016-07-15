@@ -673,6 +673,60 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
   return;
 }
 
+void RandomBtreeMultimapInsertSpeedTest(size_t key_num) {
+  btree_multimap<long, long, KeyComparator> test_map{KeyComparator{1}};
+  
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  start = std::chrono::system_clock::now();
+
+  // We loop for keynum * 2 because in average half of the insertion
+  // will hit an empty slot
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    test_map.insert((long)key, (long)key);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "stx::btree_multimap: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random insertion/sec" << "\n";
+
+  // Then test random read after random insert
+  std::vector<long int> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    auto it_pair = test_map.equal_range(key);
+
+    for(auto it = it_pair.first;it != it_pair.second;it++) {
+      v.push_back(it->second);
+    }
+    
+    v.clear();
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "stx::btree_multimap: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million read after random insert/sec" << "\n";
+
+  return;
+}
+
+
 /*
  * RandomInsertSpeedTest() - Tests how fast it is to insert keys randomly
  */
@@ -1485,6 +1539,9 @@ int main(int argc, char **argv) {
       
       // Tests random insert using one thread
       RandomInsertSpeedTest(t1, key_num);
+      
+      // Use stree_multimap as a reference
+      RandomBtreeMultimapInsertSpeedTest(key_num);
     }
 
     print_flag = true;
