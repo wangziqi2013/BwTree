@@ -2491,35 +2491,12 @@ abort_traverse:
           const InnerSplitNode *split_node_p = \
             static_cast<const InnerSplitNode *>(node_p);
 
-          // This is guaranteed to be neither -Inf nor +Inf
-          const KeyType &split_key = split_node_p->insert_item.first;
-
-          // If current key is on the new node side,
-          // we need to update tree snapshot to reflect the fact that we have
-          // traversed to a new NodeID
-          if(KeyCmpGreaterEqual(search_key, split_key)) {
-            bwt_printf("Going to inner split sibling node\n");
-
-            NodeID branch_id = split_node_p->insert_item.second;
-
-            // Try to jump to the right branch
-            // If jump fails just abort
-            JumpToNodeID(branch_id, context_p);
-
-            if(context_p->abort_flag == true) {
-              bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-              return INVALID_NODE_ID;
-            }
-
-            snapshot_p = GetLatestNodeSnapshot(context_p);
-            node_p = snapshot_p->node_p;
-
-            // Continue in the while loop to avoid setting first_time to false
-            continue;
-          } else {
-            node_p = split_node_p->child_node_p;
-          }
+          // Since we have already finished jumping to the right
+          // sibling on the top level, it is unnecessary to
+          // jump when seeing an InnerSplitNode
+          // (The split key information has been observed on top
+          // node's high key)
+          node_p = split_node_p->child_node_p;
 
           break;
         } // case InnerSplitType
@@ -3079,35 +3056,10 @@ abort_traverse:
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(node_p);
 
-          const KeyType &split_key = split_node_p->insert_item.first;
-
-          if(KeyCmpGreaterEqual(search_key, split_key)) {
-            bwt_printf("Take leaf split right (NodeID branch)\n");
-
-            // Since we are on the branch side of a split node
-            // there should not be any record with search key in
-            // the chain from where we come since otherwise these
-            // records are misplaced
-            assert(present_set.GetSize() == 0);
-            assert(deleted_set.GetSize() == 0);
-
-            NodeID split_sibling_id = split_node_p->insert_item.second;
-
-            // Jump to right sibling, with possibility that it aborts
-            JumpToNodeID(split_sibling_id, context_p);
-
-            if(context_p->abort_flag == true) {
-              bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-              return;
-            }
-
-            // These three needs to be refreshed after switching node
-            snapshot_p = GetLatestNodeSnapshot(context_p);
-            node_p = snapshot_p->node_p;
-          } else {
-            node_p = split_node_p->child_node_p;
-          }
+          // Do not need to go right here since we have already
+          // done that on the top level
+          // and the high key has been observed on the top level high key
+          node_p = split_node_p->child_node_p;
 
           break;
         } // case LeafSplitType
@@ -3275,30 +3227,7 @@ abort_traverse:
           const LeafSplitNode *split_node_p = \
             static_cast<const LeafSplitNode *>(node_p);
 
-          const KeyType &split_key = split_node_p->insert_item.first;
-
-          if(KeyCmpGreaterEqual(search_key, split_key)) {
-            bwt_printf("Take leaf split right (NodeID branch)\n");
-
-            NodeID split_sibling_id = split_node_p->insert_item.second;
-
-            // Jump to right sibling, with possibility that it aborts
-            JumpToNodeID(split_sibling_id,
-                         context_p);
-
-            if(context_p->abort_flag == true) {
-              bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-              // This valus does not matter
-              return nullptr;
-            }
-
-            // These three needs to be refreshed after switching node
-            snapshot_p = GetLatestNodeSnapshot(context_p);
-            node_p = snapshot_p->node_p;
-          } else {
-            node_p = split_node_p->child_node_p;
-          }
+          node_p = split_node_p->child_node_p;
 
           break;
         } // case LeafSplitType
