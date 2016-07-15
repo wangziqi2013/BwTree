@@ -699,8 +699,44 @@ void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
 
   std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
             << " million random insertion/sec" << "\n";
-            
 
+  // Then test random read after random insert
+  std::vector<long int> v{};
+  v.reserve(100);
+  
+  start = std::chrono::system_clock::now();
+            
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+    
+    t->GetValue(key, v);
+    
+    v.clear();
+  }
+  
+  end = std::chrono::system_clock::now();
+  
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million read after random insert/sec" << "\n";
+            
+  // Measure the overhead
+
+  start = std::chrono::system_clock::now();
+
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    v.push_back(key);
+
+    v.clear();
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> overhead = end - start;
+
+  std::cout << "    Overhead = " << overhead.count() << " seconds" << std::endl;
 
   return;
 }
