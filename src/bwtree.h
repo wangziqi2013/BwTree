@@ -337,17 +337,17 @@ class BwTree {
   constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
 
   // If the length of delta chain exceeds ( >= ) this then we consolidate the node
-  constexpr static int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+  constexpr static int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 10;
   constexpr static int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
 
   // So maximum delta chain length on leaf is 8
   constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
 
   // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 64;
+  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
 
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 16;
+  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 16;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
@@ -3832,8 +3832,7 @@ abort_traverse:
    *
    * (3) Check current_level == 0 to determine whether we are on a root node
    */
-  inline void LoadNodeID(NodeID node_id,
-                         Context *context_p) {
+  inline void LoadNodeID(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -3869,8 +3868,7 @@ abort_traverse:
    * NOTE: This function could also be called to traverse right, in which case
    * we need to check whether the target node is the left most child
    */
-  void JumpToNodeID(NodeID node_id,
-                    Context *context_p) {
+  void JumpToNodeID(NodeID node_id, Context *context_p) {
     bwt_printf("Jumping to node ID = %lu\n", node_id);
 
     // This updates the current snapshot in the stack
@@ -4403,7 +4401,10 @@ before_switch:
         const KeyNodeIDPair *delete_item_p = nullptr;
 
         // Type of the merge delta
+        // This is important since we might fall through
+        // from the LeafRemoveNode/InnerRemoveNode branch
         NodeType type = snapshot_p->node_p->GetType();
+        
         if(type == NodeType::InnerMergeType) {
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(snapshot_p->node_p);
@@ -4444,7 +4445,7 @@ before_switch:
           // corresponding sep in parent then it has already been removed
           // so we propose a consolidation on current node to
           // get rid of the merge delta
-          ConsolidateNode(snapshot_p);
+          //ConsolidateNode(snapshot_p);
 
           return;
         }
@@ -4592,7 +4593,7 @@ before_switch:
             bwt_printf("Check split item failed\n");
 
             // Consolidate out the split node
-            ConsolidateNode(snapshot_p);
+            //ConsolidateNode(snapshot_p);
 
             // Do not need to abort here, since though the parent node
             // has changed, the range for the search key on the parent is
@@ -5208,7 +5209,7 @@ before_switch:
        (KeyCmpGreaterEqual(search_key, node_p->GetHighKey()) == true)) {
       bwt_printf("Bounds check failed on parent node"
                  " - split key >= high key\n");
-
+                 
       return false;
     }
 
@@ -5219,6 +5220,10 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(item.first, search_key) == true) {
+          //if(item.second != insert_item.second) {
+          //  printf("****** NodeID does not match!\n");
+          //}
+          
           return false;
         }
 
@@ -5258,6 +5263,10 @@ before_switch:
           // then also could post
           return true;
         } else {
+          //if(it->second != insert_item.second) {
+          //  printf("****** NodeID does not match!\n");
+          //}
+          
           return false;
         }
 
