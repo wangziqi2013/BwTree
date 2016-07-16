@@ -4662,6 +4662,56 @@ before_switch:
     assert(false);
     return;
   }
+  
+  /*
+   * ConsolidateLeafNode() - Consolidates a leaf delta chian unconditionally
+   *
+   * This function does not check delta chain size
+   */
+  inline void ConsolidateLeafNode(NodeSnapshot *snapshot_p) {
+    assert(snapshot_p->node_p->IsOnLeafDeltaChain() == true);
+    
+    LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
+
+    bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                    leaf_node_p,
+                                    snapshot_p->node_p);
+
+    if(ret == true) {
+      epoch_manager.AddGarbageNode(snapshot_p->node_p);
+
+      snapshot_p->node_p = leaf_node_p;
+    } else {
+      delete leaf_node_p;
+    }
+    
+    return;
+  }
+  
+  /*
+   * ConsolidateInnerNode() - Consolidates inner node unconditionally
+   *
+   * This function does not check for inner delta chain length
+   */
+  inline void ConsolidateInnerNode(NodeSnapshot *snapshot_p) {
+    assert(snapshot_p->node_p->IsOnLeafDeltaChain() == false);
+    
+    InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
+
+    bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                    inner_node_p,
+                                    snapshot_p->node_p);
+
+    if(ret == true) {
+      epoch_manager.AddGarbageNode(snapshot_p->node_p);
+
+      snapshot_p->node_p = inner_node_p;
+    } else {
+      delete inner_node_p;
+    }
+    
+    return;
+  }
 
   /*
    * ConsolidateNode() - Consolidates current node unconditionally
@@ -4676,33 +4726,9 @@ before_switch:
    */
   void ConsolidateNode(NodeSnapshot *snapshot_p) {
     if(snapshot_p->node_p->IsOnLeafDeltaChain() == true) {
-      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
-
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      leaf_node_p,
-                                      snapshot_p->node_p);
-
-      if(ret == true) {
-        epoch_manager.AddGarbageNode(snapshot_p->node_p);
-
-        snapshot_p->node_p = leaf_node_p;
-      } else {
-        delete leaf_node_p;
-      }
+      ConsolidateLeafNode(snapshot_p);
     } else {
-      InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
-
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      inner_node_p,
-                                      snapshot_p->node_p);
-
-      if(ret == true) {
-        epoch_manager.AddGarbageNode(snapshot_p->node_p);
-
-        snapshot_p->node_p = inner_node_p;
-      } else {
-        delete inner_node_p;
-      }
+      ConsolidateInnerNode(snapshot_p);
     } // if on leaf/inner node
 
     return;
