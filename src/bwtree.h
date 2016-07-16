@@ -744,9 +744,17 @@ class BwTree {
     // key, so it benefits both read and modification)
     // For other leaf nodes this field is set to nullptr and has no special
     // meaning
-    union {
+    union LowOrNextKey{
       const KeyNodeIDPair *low_key_p;
       const BaseNode *next_key_p;
+      
+      /*
+       * Constructor - We always initialize the first element
+       *               even if it is a BaseNode *
+       */
+      LowOrNextKey(const KeyNodeIDPair *p_low_key_p) :
+        low_key_p{p_low_key_p}
+      {}
     } low_or_next_key;
 
     // For inner nodes, high key points to the first element inside its
@@ -770,12 +778,16 @@ class BwTree {
 
     /*
      * Constructor
+     *
+     * NOTE: This constructor uses template type auto deduction which
+     * allows us to assign to the union without having to write two
+     * different constructors (the compiler will synthesize for us)
      */
     NodeMetaData(const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
                  int p_depth,
                  int p_item_count) :
-      low_key_p{p_low_key_p},
+      low_or_next_key{p_low_key_p},
       high_key_p{p_high_key_p},
       depth{p_depth},
       item_count{p_item_count}
@@ -941,8 +953,8 @@ class BwTree {
     inline const BaseNode *GetNextKeyNode() const {
       
       // These two is only valid for leaf Insert and leaf delete node
-      assert(GetType() == NodeType::LeafInsertNode ||
-             GetType() == NodeType::LeafDeleteNode);
+      assert(GetType() == NodeType::LeafInsertType ||
+             GetType() == NodeType::LeafDeleteType);
       
       return metadata.low_or_next_key.next_key_p;
     }
@@ -963,7 +975,7 @@ class BwTree {
     inline NodeID GetLowKeyNodeID() const {
       assert(IsOnLeafDeltaChain() == false);
 
-      return metadata.low_key_p->second;
+      return metadata.low_or_next_key.low_key_p->second;
     }
 
     /*
@@ -990,7 +1002,7 @@ class BwTree {
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       assert(IsOnLeafDeltaChain() == false);
 
-      metadata.low_key_p = p_low_key_p;
+      metadata.low_or_next_key.low_key_p = p_low_key_p;
 
       return;
     }
@@ -1227,10 +1239,11 @@ class BwTree {
      */
     LeafInsertNode(const KeyType &p_insert_key,
                    const ValueType &p_value,
-                   const BaseNode *p_child_node_p) :
+                   const BaseNode *p_child_node_p,
+                   const BaseNode *p_next_key_node_p) :
       DeltaNode{NodeType::LeafInsertType,
                 p_child_node_p,
-                nullptr,
+                (KeyNodeIDPair *)p_next_key_node_p,
                 &p_child_node_p->GetHighKeyPair(),
                 p_child_node_p->GetDepth() + 1,
                 // For insert nodes, the item count is inheried from the child
@@ -1258,10 +1271,11 @@ class BwTree {
      */
     LeafDeleteNode(const KeyType &p_delete_key,
                    const ValueType &p_value,
-                   const BaseNode *p_child_node_p) :
+                   const BaseNode *p_child_node_p,
+                   const BaseNode *p_next_key_node_p) :
       DeltaNode{NodeType::LeafDeleteType,
                 p_child_node_p,
-                nullptr,
+                (KeyNodeIDPair *)p_next_key_node_p,
                 &p_child_node_p->GetHighKeyPair(),
                 p_child_node_p->GetDepth() + 1,
                 // For delete node it inherits item count from its child
@@ -2215,7 +2229,9 @@ class BwTree {
    * For value_p and value_list_p, at most one of them could be non-nullptr
    * If both are nullptr then we just traverse and do not do anything
    */
-  const KeyValuePair *Traverse(Context *context_p, const ValueType *value_p) {
+  const KeyValuePair *Traverse(Context *context_p,
+                               const ValueType *value_p,
+                               const BaseNode **next_key_node_p) {
 
     // For value collection it always returns nullptr
     const KeyValuePair *found_pair_p = nullptr;
@@ -2280,15 +2296,15 @@ retry_traverse:
     } //while(1)
 
     if(value_p == nullptr) {
-      // If both are nullptr then we just Traverse with a
-      // default constructed value which will lead us to the
-      // correct leaf page
-      // Do not overwrite ret here
-      NavigateLeafNode(context_p, ValueType{});
+      // If both are nullptr then we just navigate the sibling chain
+      // to find the correct node with the correct range
+      // And then the iterator will consolidate the node without actually
+      // going down with a specific key
+      NavigateSiblingChain(context_p);
     } else {
       // If a value is given then use this value to Traverse down leaf
       // page to find whether the value exists or not
-      found_pair_p = NavigateLeafNode(context_p, *value_p);
+      found_pair_p = NavigateLeafNode(context_p, *value_p, next_key_node_p);
     }
 
     if(context_p->abort_flag == true) {
@@ -2321,6 +2337,55 @@ abort_traverse:
   ///////////////////////////////////////////////////////////////////
   // Data Storage Core
   ///////////////////////////////////////////////////////////////////
+  
+  /*
+   * NavigateSiblingChain() - Traverse on sibling chain to adjust current
+   *                          position so that the range of the node matches
+   *                          the search key
+   *
+   * This function detects node range using the topmost node's high key
+   * since it is guaranteed that topmost high key is always the correct
+   * high key for us to use
+   *
+   * If the traverse aborts then this function returns with abort_flag
+   * setting to true.
+   */
+  void NavigateSiblingChain(Context *context_p) {
+    do {
+      // These two will be updated everytime we switch to
+      // a new node
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+      const BaseNode *node_p = snapshot_p->node_p;
+      
+      // If we reach here, then either there is no split node
+      // in which case the high key does not change compares with the top
+      // node's high key
+      // or there is a split node, but the split key > search key
+      // so we know search key definitely < current top node high key
+      // NOTE: We need to check for next_node_id being INVALID_NODE_ID
+      // first, since in that case the high key is not defined and
+      // could be arbitraty value
+      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
+        bwt_printf("Bounds checking failed (id = %lu) - "
+                   "Go right.\n",
+                   snapshot_p->node_id);
+
+        JumpToNodeID(node_p->GetNextNodeID(), context_p);
+
+        if(context_p->abort_flag == true) {
+          bwt_printf("JumpToNodeID aborts. ABORT\n");
+
+          return;
+        }
+
+      } else {
+        break;
+      }
+    } while(1);
+    
+    return;
+  }
 
   /*
    * LocateSeparatorByKey() - Locate the child node for a key
@@ -2396,38 +2461,16 @@ abort_traverse:
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
+    
+    // If navigating sibling chain aborts then abort here
+    if(context_p->abort_flag == true) {
+      return INVALID_NODE_ID;
+    }
+
     bwt_printf("Navigating inner node delta chain...\n");
-
-    while(1) {
-      // If we reach here, then either there is no split node
-      // in which case the high key does not change compares with the top
-      // node's high key
-      // or there is a split node, but the split key > search key
-      // so we know search key definitely < current top node high key
-      // NOTE: We need to check for next_node_id being INVALID_NODE_ID
-      // first, since in that case the high key is not defined and
-      // could be arbitraty value
-      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
-         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
-        bwt_printf("Bounds checking failed (id = %lu) - "
-                   "Go right.\n",
-                   snapshot_p->node_id);
-
-        JumpToNodeID(node_p->GetNextNodeID(), context_p);
-
-        if(context_p->abort_flag == true) {
-          bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-          return INVALID_NODE_ID;
-        }
-
-        snapshot_p = GetLatestNodeSnapshot(context_p);
-        node_p = snapshot_p->node_p;
-
-      } else {
-        break;
-      }
-    } // while(1)
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2925,27 +2968,14 @@ abort_traverse:
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
 
-    while(1) {
-      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
-         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
-        bwt_printf("Bounds checking failed on leaf node (id = %lu) - "
-                   "Go right.\n",
-                   snapshot_p->node_id);
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
 
-        JumpToNodeID(node_p->GetNextNodeID(), context_p);
-
-        if(context_p->abort_flag == true) {
-          bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-          return;
-        }
-
-        snapshot_p = GetLatestNodeSnapshot(context_p);
-        node_p = snapshot_p->node_p;
-      } else {
-        break;
-      }
-    } // while(1)
+    // If navigating sibling chain aborts then abort here
+    if(context_p->abort_flag == true) {
+      return;
+    }
 
     // The maximum size of present set and deleted set is just
     // the length of the delta chain. Since when we reached the leaf node
@@ -3053,7 +3083,7 @@ abort_traverse:
               return;
             }
           } else {
-            node_p = insert_node_p->child_node_p;
+            node_p = delete_node_p->child_node_p;
           }
 
           break;
@@ -3144,29 +3174,18 @@ abort_traverse:
     
     // If we have seen a node of the same key (but is not the node we return on)
     // then just link it in
+    // NOTE: Must set this variable here; otherwise if there is abort then
+    // the value will not remain nullptr in the following attempt
     *same_key_node_p = nullptr;
 
-    while(1) {
-      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
-         (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
-        bwt_printf("Bounds checking failed on leaf node (id = %lu) - "
-                   "Go right.\n",
-                   snapshot_p->node_id);
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
 
-        JumpToNodeID(node_p->GetNextNodeID(), context_p);
-
-        if(context_p->abort_flag == true) {
-          bwt_printf("JumpToNodeID aborts. ABORT\n");
-
-          return nullptr;
-        }
-
-        snapshot_p = GetLatestNodeSnapshot(context_p);
-        node_p = snapshot_p->node_p;
-      } else {
-        break;
-      }
-    } // while(1)
+    // If navigating sibling chain aborts then abort here
+    if(context_p->abort_flag == true) {
+      return nullptr;
+    }
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3213,14 +3232,14 @@ abort_traverse:
           }
 
           return nullptr;
-        }
+        } // case LeafType
         case NodeType::LeafInsertType: {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
             
-            // Set to the first node we have ever seen
+            // Set to the first node of the same key we have ever seen
             if(*same_key_node_p == nullptr) {
               *same_key_node_p = node_p;
             }
@@ -3230,13 +3249,14 @@ abort_traverse:
             }
 
             // Also make use of existing node pointer
-            node_p = insert_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              return nullptr;
-            }
-          } else {
+            //node_p = insert_node_p->GetNextKeyNode();
+            //if(node_p == nullptr) {
+              // This key has no more values in current delta chain
+            //  return nullptr;
+            //}
+          } //else {
             node_p = insert_node_p->child_node_p;
-          }
+          //}
 
           break;
         } // case LeafInsertType
@@ -3257,13 +3277,15 @@ abort_traverse:
             }
             
             // Also make use of existing node pointer
-            node_p = delete_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              return nullptr;
-            }
-          } else {
+            //node_p = delete_node_p->GetNextKeyNode();
+            //if(node_p == nullptr) {
+              // This key has no more elements in the delta chain
+              // so return nullptr
+            //  return nullptr;
+            //}
+          } //else {
             node_p = delete_node_p->child_node_p;
-          }
+          //}
 
           break;
         } // case LeafDeleteType
@@ -5483,9 +5505,13 @@ before_switch:
 
     while(1) {
       Context context{key};
+      const BaseNode *next_key_p;
 
       // Check whether the key-value pair exists
-      const KeyValuePair *item_p = Traverse(&context, &value);
+      // Also if the key previously exists in the delta chain
+      // then return the position of the node using next_key_p
+      // if there is none then return nullptr
+      const KeyValuePair *item_p = Traverse(&context, &value, &next_key_p);
 
       // If the key-value pair already exists then return false
       if(item_p != nullptr) {
@@ -5501,7 +5527,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p};
+        new LeafInsertNode{key, value, node_p, next_key_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -5605,8 +5631,10 @@ before_switch:
       const BaseNode *node_p = snapshot_p->node_p;
       NodeID node_id = snapshot_p->node_id;
 
+      // Here since we could not know which is the next key node
+      // just use child node as a cpnservative way of inserting
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p};
+        new LeafInsertNode{key, value, node_p, node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -5662,10 +5690,11 @@ before_switch:
 
     while(1) {
       Context context{key};
+      const BaseNode *next_node_p;
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      const KeyValuePair *item_p = Traverse(&context, &value);
+      const KeyValuePair *item_p = Traverse(&context, &value, &next_node_p);
 
       if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
@@ -5680,7 +5709,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p};
+        new LeafDeleteNode{key, value, node_p, next_node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -5730,10 +5759,11 @@ before_switch:
 
     while(1) {
       Context context{key};
+      const BaseNode *next_node_p;
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      item_p = Traverse(&context, value_p);
+      item_p = Traverse(&context, value_p, &next_node_p);
 
       // If value not found just return
       if(item_p == nullptr) {
@@ -5749,7 +5779,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, *value_p, node_p};
+        new LeafDeleteNode{key, *value_p, node_p, next_node_p};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -6985,7 +7015,7 @@ try_join_again:
 
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
-        tree_p->Traverse(&context, nullptr);
+        tree_p->Traverse(&context, nullptr, nullptr);
 
         #endif
 
