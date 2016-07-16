@@ -38,35 +38,35 @@ class BloomFilter {
 
   // The number of individual arrays inside the filter
   static constexpr int FILTER_NUM = 8;
-  
+
   static constexpr int RIGHT_SHIFT_BIT = 8;
-  
+
   // The size of a single array
   static constexpr int FILTER_SIZE = ARRAY_SIZE / FILTER_NUM;
-  
+
   // 0000 0000 0000 0000 0000 0000 0000 0111
   // This is the mask for extracting offset inside a byte
   static constexpr size_t BIT_OFFSET_MASK = 0x0000000000000007;
-  
+
   // 0000 0000 0000 0000 0000 0000 1111 1000
   // This is the mask for extracting byte offset inside the array
   static constexpr size_t BYTE_OFFSET_MASK = 0x00000000000000F8;
-  
+
  private:
   #ifdef BLOOM_FILTER_ENABLED
   unsigned char bit_array_0[FILTER_SIZE];
   #endif
-  
+
   const ValueType **data_p;
   int value_count;
-  
+
   // This is used to compare values
   ValueEqualityChecker value_eq_obj;
-  
+
   // This is the object used to hash values into a
   // size_t
   ValueHashFunc value_hash_obj;
-  
+
  public:
   /*
    * Default Constructor - deleted
@@ -76,7 +76,7 @@ class BloomFilter {
   BloomFilter() = delete;
   BloomFilter(const BloomFilter &) = delete;
   BloomFilter &operator=(const BloomFilter &) = delete;
-  
+
   /*
    * Constructor - Initialize value hash function
    *
@@ -96,17 +96,31 @@ class BloomFilter {
     #ifdef BLOOM_FILTER_ENABLED
     memset(bit_array_0, 0, sizeof(bit_array_0));
     #endif
-    
+
     return;
   }
-  
+
   /*
    * GetSize() - Returns the number of elements stored inside the BloomFilter
    */
   inline int GetSize() const {
     return value_count;
   }
-  
+
+  /*
+   * Begin() - Returns a pointer to its internal array
+   */
+  inline const ValueType **Begin() {
+    return data_p;
+  }
+
+  /*
+   * End() - Returns a pointer to the end of the array
+   */
+  inline const ValueType **End() {
+    return data_p + value_count;
+  }
+
   /*
    * __InsertScalar() - Insert into the bloom filter using scalar instructions
    *
@@ -122,7 +136,7 @@ class BloomFilter {
    */
   inline void __InsertScalar(const ValueType &value) {
     register size_t hash_value = value_hash_obj(value);
-    
+
     // Copy the pointer into the array
     // We do not do any bounds checking here, and assume there is always
     // sufficient space holding all values
@@ -133,16 +147,16 @@ class BloomFilter {
     bit_array_0[(hash_value & BYTE_OFFSET_MASK) >> 3] |= \
       (0x1 << (hash_value & BIT_OFFSET_MASK));
     #endif
-    
+
     return;
   }
-  
+
   inline void Insert(const ValueType &value) {
     __InsertScalar(value);
-    
+
     return;
   }
-  
+
   /*
    * __ExistsScalar() - Test whether a value exists with scalar instructions
    *
@@ -154,7 +168,7 @@ class BloomFilter {
    * data structure (e.g. simple linear array)
    */
   inline bool __ExistsScalar(const ValueType &value) {
-    
+
     #ifdef BLOOM_FILTER_ENABLED
     register size_t hash_value = value_hash_obj(value);
 
@@ -163,21 +177,21 @@ class BloomFilter {
       return false;
     }
     #endif
-    
+
     // We are still not sure whether the element exists or not
     // even if we reach here - though it should be a rare event
     // Maybe try searching in a probablistic data structure
-    
+
     for(int i = 0;i < value_count;i++) {
       if(value_eq_obj(value, *(data_p[i])) == true) {
         return true;
       }
     }
-    
+
     // Bloom filter says the value exists but actually it does not
     return false;
   }
-  
+
   inline bool Exists(const ValueType &value) {
     return __ExistsScalar(value);
   }
