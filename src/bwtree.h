@@ -2447,6 +2447,19 @@ abort_traverse:
    * do not make any assumption about how jump is performed)
    */
   inline NodeID NavigateInnerNode(Context *context_p) {
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
+
+    // If navigating sibling chain aborts then abort here
+    if(context_p->abort_flag == true) {
+      return INVALID_NODE_ID;
+    }
+    
+    /////////////////////////////////////////////////////////////////
+    // Only after this point could we get snapshot and node_p
+    /////////////////////////////////////////////////////////////////
+    
     // This search key will not be changed during navigation
     const KeyType &search_key = context_p->search_key;
 
@@ -2461,14 +2474,7 @@ abort_traverse:
     assert(snapshot_p->node_p != nullptr);
     assert(snapshot_p->node_id != INVALID_NODE_ID);
 
-    // This will go to the right sibling until we have seen
-    // a node whose range match the search key
-    NavigateSiblingChain(context_p);
     
-    // If navigating sibling chain aborts then abort here
-    if(context_p->abort_flag == true) {
-      return INVALID_NODE_ID;
-    }
 
     bwt_printf("Navigating inner node delta chain...\n");
 
@@ -2959,15 +2965,7 @@ abort_traverse:
    */
   void NavigateLeafNode(Context *context_p,
                         std::vector<ValueType> &value_list) {
-    // This contains information for current node
-    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    const BaseNode *node_p = snapshot_p->node_p;
-
-    assert(snapshot_p->IsLeaf() == true);
-
-    // We only collect values for this key
-    const KeyType &search_key = context_p->search_key;
-
+                          
     // This will go to the right sibling until we have seen
     // a node whose range match the search key
     NavigateSiblingChain(context_p);
@@ -2976,6 +2974,19 @@ abort_traverse:
     if(context_p->abort_flag == true) {
       return;
     }
+    
+    /////////////////////////////////////////////////////////////////
+    // Only after this point could we get snapshot and node_p
+    /////////////////////////////////////////////////////////////////
+    
+    // This contains information for current node
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    assert(snapshot_p->IsLeaf() == true);
+
+    // We only collect values for this key
+    const KeyType &search_key = context_p->search_key;
 
     // The maximum size of present set and deleted set is just
     // the length of the delta chain. Since when we reached the leaf node
@@ -3162,6 +3173,20 @@ abort_traverse:
   const KeyValuePair *NavigateLeafNode(Context *context_p,
                                        const ValueType &search_value,
                                        const BaseNode **same_key_node_p) {
+    
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
+
+    // If navigating sibling chain aborts then abort here
+    if(context_p->abort_flag == true) {
+      return nullptr;
+    }
+    
+    /////////////////////////////////////////////////////////////////
+    // Only after this point could we get snapshot and node_p
+    /////////////////////////////////////////////////////////////////
+    
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -3177,15 +3202,6 @@ abort_traverse:
     // NOTE: Must set this variable here; otherwise if there is abort then
     // the value will not remain nullptr in the following attempt
     *same_key_node_p = nullptr;
-
-    // This will go to the right sibling until we have seen
-    // a node whose range match the search key
-    NavigateSiblingChain(context_p);
-
-    // If navigating sibling chain aborts then abort here
-    if(context_p->abort_flag == true) {
-      return nullptr;
-    }
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3249,14 +3265,14 @@ abort_traverse:
             }
 
             // Also make use of existing node pointer
-            //node_p = insert_node_p->GetNextKeyNode();
-            //if(node_p == nullptr) {
-              // This key has no more values in current delta chain
-            //  return nullptr;
-            //}
-          } //else {
+            node_p = insert_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              //This key has no more values in current delta chain
+              return nullptr;
+            }
+          } else {
             node_p = insert_node_p->child_node_p;
-          //}
+          }
 
           break;
         } // case LeafInsertType
@@ -3277,15 +3293,15 @@ abort_traverse:
             }
             
             // Also make use of existing node pointer
-            //node_p = delete_node_p->GetNextKeyNode();
-            //if(node_p == nullptr) {
-              // This key has no more elements in the delta chain
+            node_p = delete_node_p->GetNextKeyNode();
+            if(node_p == nullptr) {
+              //This key has no more elements in the delta chain
               // so return nullptr
-            //  return nullptr;
-            //}
-          } //else {
+              return nullptr;
+            }
+          } else {
             node_p = delete_node_p->child_node_p;
-          //}
+          }
 
           break;
         } // case LeafDeleteType
