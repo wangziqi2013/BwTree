@@ -1059,6 +1059,40 @@ class BwTree {
       item{p_item}
     {}
   };
+  
+  /*
+   * class LeafDataNode - Holds LeafInsertNode and LeafDeleteNode's data
+   *
+   * This class is used in node consolidation to provide a uniform
+   * interface for the log-structured merge process
+   */
+  class LeafDataNode : public DeltaNode {
+   public:
+    KeyValuePair item;
+    
+    // The index in base node array where the change should take place
+    short base_node_index;
+    
+    // Whether the key-value pair involved in the LeafDataNode is currently
+    // in the base node
+    bool exists;
+
+    LeafDataNode(const KeyValuePair &p_item,
+                 NodeType p_type,
+                 const BaseNode *p_child_node_p,
+                 const KeyNodeIDPair *p_low_key_p,
+                 const KeyNodeIDPair *p_high_key_p,
+                 int p_depth,
+                 int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item}
+    {}
+  };
 
   /*
    * class LeafNode - Leaf node that holds data
@@ -1225,7 +1259,7 @@ class BwTree {
   /*
    * class LeafInsertNode - Insert record into a leaf node
    */
-  class LeafInsertNode : public DeltaNode {
+  class LeafInsertNode : public LeafDataNode {
    public:
     // Use an item to store key-value internally
     // to make leaf consolidation faster
@@ -1238,15 +1272,15 @@ class BwTree {
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p,
                    const BaseNode *p_next_key_node_p) :
-      DeltaNode{NodeType::LeafInsertType,
-                p_child_node_p,
-                (KeyNodeIDPair *)p_next_key_node_p,
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth() + 1,
-                // For insert nodes, the item count is inheried from the child
-                // node + 1 since it inserts new item
-                p_child_node_p->GetItemCount() + 1},
-      insert_item{p_insert_key, p_value}
+      LeafDataNode{std::make_pair(p_insert_key, p_value),
+                   NodeType::LeafInsertType,
+                   p_child_node_p,
+                   (KeyNodeIDPair *)p_next_key_node_p,
+                   &p_child_node_p->GetHighKeyPair(),
+                   p_child_node_p->GetDepth() + 1,
+                   // For insert nodes, the item count is inheried from the child
+                   // node + 1 since it inserts new item
+                   p_child_node_p->GetItemCount() + 1}
     {}
   };
 
@@ -1257,7 +1291,7 @@ class BwTree {
    * to delete. In single value mode, value is redundant but what we
    * could use for sanity check
    */
-  class LeafDeleteNode : public DeltaNode {
+  class LeafDeleteNode : public LeafDataNode {
    public:
     // Use an deleted item to store deleted key and value
     // to make leaf consolidation faster
@@ -1270,16 +1304,16 @@ class BwTree {
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p,
                    const BaseNode *p_next_key_node_p) :
-      DeltaNode{NodeType::LeafDeleteType,
-                p_child_node_p,
-                (KeyNodeIDPair *)p_next_key_node_p,
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth() + 1,
-                // For delete node it inherits item count from its child
-                // and - 1 from it since one element was deleted
-                p_child_node_p->GetItemCount() - 1},
-      delete_item{p_delete_key, p_value}
-    {}
+      LeafDataNode{std::make_pair(p_delete_key, p_value),
+                   NodeType::LeafDeleteType,
+                   p_child_node_p,
+                   (KeyNodeIDPair *)p_next_key_node_p,
+                   &p_child_node_p->GetHighKeyPair(),
+                   p_child_node_p->GetDepth() + 1,
+                   // For delete node it inherits item count from its child
+                   // and - 1 from it since one element was deleted
+                   p_child_node_p->GetItemCount() - 1}
+     {}
   };
 
   /*
@@ -3060,15 +3094,15 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
-            if(deleted_set.Exists(insert_node_p->insert_item.second) == false) {
+          if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
+            if(deleted_set.Exists(insert_node_p->item.second) == false) {
               // We must do this, since inserted set does not detect for
               // duplication, and if the value has already been in present set
               // then we inserted the same value twice
-              if(present_set.Exists(insert_node_p->insert_item.second) == false) {
-                present_set.Insert(insert_node_p->insert_item.second);
+              if(present_set.Exists(insert_node_p->item.second) == false) {
+                present_set.Insert(insert_node_p->item.second);
 
-                value_list.push_back(insert_node_p->insert_item.second);
+                value_list.push_back(insert_node_p->item.second);
               }
             }
             
@@ -3086,9 +3120,9 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, delete_node_p->delete_item.first)) {
-            if(present_set.Exists(delete_node_p->delete_item.second) == false) {
-              deleted_set.Insert(delete_node_p->delete_item.second);
+          if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
+            if(present_set.Exists(delete_node_p->item.second) == false) {
+              deleted_set.Insert(delete_node_p->item.second);
             }
 
             node_p = delete_node_p->GetNextKeyNode();
@@ -3255,15 +3289,15 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(KeyCmpEqual(search_key, insert_node_p->insert_item.first)) {
+          if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
             
             // Set to the first node of the same key we have ever seen
             if(*same_key_node_p == nullptr) {
               *same_key_node_p = node_p;
             }
             
-            if(ValueCmpEqual(insert_node_p->insert_item.second, search_value)) {
-              return &insert_node_p->insert_item;
+            if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
+              return &insert_node_p->item;
             }
 
             // Also make use of existing node pointer
@@ -3283,14 +3317,14 @@ abort_traverse:
             static_cast<const LeafDeleteNode *>(node_p);
 
           // If the value was deleted then return false
-          if(KeyCmpEqual(search_key, delete_node_p->delete_item.first)) {
+          if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
             
             // Set to the first node we have ever seen
             if(*same_key_node_p == nullptr) {
               *same_key_node_p = node_p;
             }
             
-            if(ValueCmpEqual(delete_node_p->delete_item.second, search_value)) {
+            if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
               return nullptr;
             }
             
@@ -3509,11 +3543,11 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(deleted_set.Exists(insert_node_p->insert_item) == false) {
-            if(present_set.Exists(insert_node_p->insert_item) == false) {
-              present_set.Insert(insert_node_p->insert_item);
+          if(deleted_set.Exists(insert_node_p->item) == false) {
+            if(present_set.Exists(insert_node_p->item) == false) {
+              present_set.Insert(insert_node_p->item);
 
-              new_leaf_node_p->data_list.push_back(insert_node_p->insert_item);
+              new_leaf_node_p->data_list.push_back(insert_node_p->item);
             }
           }
 
@@ -3525,11 +3559,11 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(present_set.Exists(delete_node_p->delete_item) == false) {
+          if(present_set.Exists(delete_node_p->item) == false) {
             // Should also check for deleted set to avoid adding the same
             // value twice
-            if(deleted_set.Exists(delete_node_p->delete_item) == false) {
-              deleted_set.Insert(delete_node_p->delete_item);
+            if(deleted_set.Exists(delete_node_p->item) == false) {
+              deleted_set.Insert(delete_node_p->item);
             }
           }
 
