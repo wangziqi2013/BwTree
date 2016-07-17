@@ -340,14 +340,11 @@ class BwTree {
   constexpr static int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 10;
   constexpr static int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
 
-  // So maximum delta chain length on leaf is 8
-  constexpr static int DELTA_CHAIN_LENGTH_THRESHOLD_LEAF_DIFF = 0;
-
   // If node size goes above this then we split it
   constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
-  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
-
   constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
+  
+  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 16;
 
   constexpr static int max_thread_count = 0x7FFFFFFF;
@@ -2347,6 +2344,13 @@ abort_traverse:
    * since it is guaranteed that topmost high key is always the correct
    * high key for us to use
    *
+   * NOTE: This function cannot traverse to a sibling node of a different
+   * parent node than the current parent node, because we also do
+   * a key range validation on the parent node, it is impossible that the
+   * parent node contains a child node whose range is outside the parent
+   * node's range. Therefore when posting on the parent node there is no need
+   * for us to validate key range.
+   *
    * If the traverse aborts then this function returns with abort_flag
    * setting to true.
    */
@@ -2357,14 +2361,14 @@ abort_traverse:
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
       const BaseNode *node_p = snapshot_p->node_p;
       
-      // If we reach here, then either there is no split node
-      // in which case the high key does not change compares with the top
-      // node's high key
-      // or there is a split node, but the split key > search key
-      // so we know search key definitely < current top node high key
-      // NOTE: We need to check for next_node_id being INVALID_NODE_ID
-      // first, since in that case the high key is not defined and
-      // could be arbitraty value
+      // Before node navigation, the first thing to do is to verify
+      // that we are on the correct node according to the current
+      // search key
+      // This procedure does not necessarily need a split node to do right
+      // traversal (but it needs to complete any SMO if there is one, so
+      // it must be called after FinishPartialSMO() returns), because
+      // the high key of split node will be inherited by all nodes
+      // posted later and by the consolidated version of the node
       if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
          (KeyCmpGreaterEqual(context_p->search_key, node_p->GetHighKey()))) {
         bwt_printf("Bounds checking failed (id = %lu) - "
@@ -2415,9 +2419,7 @@ abort_traverse:
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
     // which is out separator key
-    it--;
-
-    return it->second;
+    return (it - 1)->second;
   }
 
   /*
