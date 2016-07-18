@@ -3366,16 +3366,10 @@ abort_traverse:
     assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
-
-    // This is the number of delta records inside the logical node
-    // including merged delta chains
-    int delta_change_num = node_p->GetDepth();
-
-    // We only need to keep those on the delta chian into a set
-    // and those in the data list of leaf page do not need to be
-    // put in the set
-    const KeyValuePair *present_set_data_p[delta_change_num];
-    const KeyValuePair *deleted_set_data_p[delta_change_num];
+    
+    /////////////////////////////////////////////////////////////////
+    // Prepare new node
+    /////////////////////////////////////////////////////////////////
 
     LeafNode *leaf_node_p = new LeafNode{node_p->GetHighKeyPair(),
                                          // The item count of the consolidated
@@ -3389,40 +3383,71 @@ abort_traverse:
     // Since the iterator from unordered_set is not a RamdomAccessIterator
     // std::vector could not decide the size from these two iterators
     data_list_p->reserve(node_p->GetItemCount());
+    
+    /////////////////////////////////////////////////////////////////
+    // Prepare Delta Set
+    /////////////////////////////////////////////////////////////////
+    
+    // This is the number of delta records inside the logical node
+    // including merged delta chains
+    int delta_change_num = node_p->GetDepth();
 
-    // These two are used to replay the log
-    // NOTE: We use the threshold for splitting leaf node
-    // as the number of bucket
-    KeyValuePairBloomFilter present_set{present_set_data_p,
-                                        key_value_pair_eq_obj,
-                                        key_value_pair_hash_obj};
-    KeyValuePairBloomFilter deleted_set{deleted_set_data_p,
-                                        key_value_pair_eq_obj,
-                                        key_value_pair_hash_obj};
+    // We only need to keep those on the delta chian into a set
+    // and those in the data list of leaf page do not need to be
+    // put in the set
+    // This is used to dedup already seen key-value pairs
+    const KeyValuePair *delta_set_data_p[delta_change_num];
+
+    // This set is used as the set for deduplicating already seen
+    // key value pairs
+    KeyValuePairBloomFilter delta_set{delta_set_data_p,
+                                      key_value_pair_eq_obj,
+                                      key_value_pair_hash_obj};
+                                        
+    /////////////////////////////////////////////////////////////////
+    // Prepare Small Sorted Set
+    /////////////////////////////////////////////////////////////////
+    
+    const LeafDataNode *sss_data_p[delta_change_num];
+    
+    auto f1 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
+      // Compare using index first; if indices are equal then compare using
+      // key (since we must pop those nodes in a key-order given the index)
+      if(ldn1->GetIndexPair().first < ldn2->GetIndexPair().first) {
+        return true;
+      } else if(ldn1->GetIndexPair().first == ldn2->GetIndexPair().first) {
+        return this->key_cmp_obj(ldn1->item.first, ldn2->item.first);
+      } else {
+        return false;
+      }
+    };
+    
+    // This is not used since in this case we do not need to compare
+    // for equal relation
+    auto f2 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
+      assert(false);
+      return false;
+    };
+    
+    // Declare an sss object with the previously declared comparators and
+    // null equality checkers (not used)
+    SortedSmallSet<const LeafDataNode *, decltype(f1), decltype(f2)> \
+      sss{sss_data_p, f1, f2};
+    
+    /////////////////////////////////////////////////////////////////
+    // Start collecting values!
+    /////////////////////////////////////////////////////////////////
 
     // We collect all valid values in present_set
     // and deleted_set is just for bookkeeping
     CollectAllValuesOnLeafRecursive(node_p,
-                                    present_set,
-                                    deleted_set,
+                                    sss,
+                                    delta_set,
                                     leaf_node_p);
 
     // Item count would not change during consolidation
     assert(static_cast<int>(leaf_node_p->data_list.size()) == \
            node_p->GetItemCount());
-
-    // This is the key value pair comparator object
-    auto key_value_pair_cmp_obj = \
-      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-        return this->key_cmp_obj(kvp1.first, kvp2.first);
-      };
-
-    // Sort using only key value
-    // All items with the same key are grouped together, and their
-    // orderes are not defined (we do not use unstable sort)
-    std::sort(data_list_p->begin(),
-              data_list_p->end(),
-              key_value_pair_cmp_obj);
 
     return leaf_node_p;
   }
@@ -3446,10 +3471,11 @@ abort_traverse:
    * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
    * "Recursive" suffix)
    */
+  template <typename T>
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
-                                  KeyValuePairBloomFilter &present_set,
-                                  KeyValuePairBloomFilter &deleted_set,
+                                  T &sss,
+                                  KeyValuePairBloomFilter &delta_set,
                                   LeafNode *new_leaf_node_p) const {
     // The top node is used to derive high key
     // NOTE: Low key for Leaf node and its delta chain is nullptr
@@ -3485,21 +3511,85 @@ abort_traverse:
                                              return this->key_cmp_obj(kvp1.first, kvp2.first);
                                            });
           }
+          
+          // This is the index of the copy end it
+          int copy_end_index = \
+            static_cast<int>(copy_end_it - leaf_node_p->data_list.begin());
+          int copy_start_index = 0;
 
-          // If data list is empty then copy_end_it == begin() iterator
-          // And this happens if the leaf page was initially empty
-          // (i.e. the first leaf page created by constructor)
-          //assert(copy_end_it != leaf_node_p->data_list.begin());
+          ///////////////////////////////////////////////////////////
+          // Find the end index for sss
+          ///////////////////////////////////////////////////////////
 
-          for(auto it = leaf_node_p->data_list.begin();
-              it != copy_end_it;
-              it++) {
-            if(deleted_set.Exists(*it) == false) {
-              if(present_set.Exists(*it) == false) {
-                new_leaf_node_p->data_list.push_back(*it);
+          // Find the end of copying
+          auto sss_end_it = sss.GetEnd() - 1;
+
+          // If the next key is +Inf then sss_end_it is the real end of the
+          // sorted array
+          if(high_key_pair.second != INVALID_NODE_ID) {
+            // Corner case: If the first element is lower bound
+            // then current_p will move outside
+            // the valid range of the array but still we return
+            // the first element in the array
+            while(sss_end_it >= sss.GetBegin()) {
+              if(key_cmp_obj((*sss_end_it)->item.first, high_key_pair.first) == true) {
+                break;
               }
+
+              sss_end_it--;
             }
           }
+
+          // This points to the first element >= high key
+          sss_end_it++;
+          
+          ///////////////////////////////////////////////////////////
+          // Start merge loop
+          ///////////////////////////////////////////////////////////
+
+          // While the sss has not reached the end for this node
+          while(sss.GetBegin() != sss_end_it) {
+            int current_index = sss.GetFront()->GetIndexPair().first;
+            bool item_valid = true;
+            
+            assert(copy_start_index <= current_index);
+            assert(current_index <= copy_end_index);
+            
+            // First copy all items before the current index
+            new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
+                                              leaf_node_p->data_list.begin() + copy_start_index,
+                                              leaf_node_p->data_list.begin() + current_index);
+
+            // Update copy start index for next copy
+            copy_start_index = current_index;
+            
+            // Drain delta records on the same index
+            while(sss.GetFront()->GetIndexPair().first == current_index) {
+              // Update current status of the item on leaf base node
+              item_valid = item_valid && sss.GetFront()->GetIndexPair().second;
+              
+              // We only insert those in LeafInsertNode
+              // and ignore all LeafDeleteNode
+              if(sss.GetFront()->GetType() == NodeType::LeafInsertType) {
+                // We remove the element from sss here
+                new_leaf_node_p->data_list.push_back(sss.PopFront()->item);
+              } else {
+                // ... and here
+                sss.PopFront();
+              }
+            }
+            
+            // If the element has been overwritten by some of the deltas
+            // just advance the pointer
+            if(item_valid == false) {
+              copy_start_index++;
+            }
+          } // while sss has not reached the copy end
+          
+          // Also need to insert all other elements if there are some
+          new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
+                                            leaf_node_p->data_list.begin() + copy_start_index,
+                                            leaf_node_p->data_list.begin() + copy_end_index);
 
           return;
         } // case LeafType
@@ -3507,12 +3597,10 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(deleted_set.Exists(insert_node_p->item) == false) {
-            if(present_set.Exists(insert_node_p->item) == false) {
-              present_set.Insert(insert_node_p->item);
+          if(delta_set.Exists(insert_node_p->item) == false) {
+            delta_set.Insert(insert_node_p->item);
 
-              new_leaf_node_p->data_list.push_back(insert_node_p->item);
-            }
+            sss.InsertNoDedup(insert_node_p);
           }
 
           node_p = insert_node_p->child_node_p;
@@ -3523,12 +3611,10 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(present_set.Exists(delete_node_p->item) == false) {
-            // Should also check for deleted set to avoid adding the same
-            // value twice
-            if(deleted_set.Exists(delete_node_p->item) == false) {
-              deleted_set.Insert(delete_node_p->item);
-            }
+          if(delta_set.Exists(delete_node_p->item) == false) {
+            delta_set.Insert(delete_node_p->item);
+
+            sss.InsertNoDedup(delete_node_p);
           }
 
           node_p = delete_node_p->child_node_p;
@@ -3554,13 +3640,13 @@ abort_traverse:
 
           /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
           CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
-                                          present_set,
-                                          deleted_set,
+                                          sss,
+                                          delta_set,
                                           new_leaf_node_p);
 
           CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
-                                          present_set,
-                                          deleted_set,
+                                          sss,
+                                          delta_set,
                                           new_leaf_node_p);
 
           return;
