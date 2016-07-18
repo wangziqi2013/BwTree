@@ -182,6 +182,11 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
 void StressTest(uint64_t thread_id, TreeType *t);
 
 /*
+ * Iterator test suite
+ */
+void IteratorTest(TreeType *t);
+
+/*
  * Random test suite
  */
 void RandomBtreeMultimapInsertSpeedTest(size_t key_num);
@@ -190,5 +195,8 @@ void InfiniteRandomInsertTest(uint64_t thread_id, TreeType *t);
 void RandomInsertTest(uint64_t thread_id, TreeType *t);
 void RandomInsertVerify(TreeType *t);
 
-
+/*
+ * Misc test suite
+ */
+void TestEpochManager(TreeType *t);
 
