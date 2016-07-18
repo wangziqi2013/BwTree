@@ -1603,7 +1603,7 @@ int main(int argc, char **argv) {
     LaunchParallelTestID(8, RandomInsertTest, t1);
     RandomInsertVerify(t1);
     
-    printf("Finished random insert testing\n");
+    printf("Finished random insert testing. Delete the tree.\n");
     
     delete t1;
     t1 = new TreeType{KeyComparator{1},
