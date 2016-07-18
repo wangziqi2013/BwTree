@@ -3,8 +3,8 @@ CXX = g++
 GMON_FLAG = 
 OPT_FLAG = -O3
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-SRC = ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./src/test_suite.h ./src/test_suite.cpp ./src/random_pattern_test.cpp ./src/basic_test.cpp ./src/mixed_test.cpp ./src/performance_test.cpp
-OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o
+SRC = ./src/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./src/test_suite.h ./src/test_suite.cpp ./src/random_pattern_test.cpp ./src/basic_test.cpp ./src/mixed_test.cpp ./src/performance_test.cpp ./src/stress_test.cpp
+OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o ./build/stress_test.o
 
 all: main
 
@@ -31,6 +31,9 @@ main: $(OBJ)
 
 ./build/performance_test.o: ./src/performance_test.cpp
 	$(CXX) ./src/performance_test.cpp -c -std=c++11 -o ./build/performance_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
+	
+./build/stress_test.o: ./src/stress_test.cpp
+	$(CXX) ./src/stress_test.cpp -c -std=c++11 -o ./build/stress_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
 gprof:
 	make clean

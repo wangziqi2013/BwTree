@@ -170,6 +170,11 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
 
 /*
+ * Stress test suite
+ */
+void StressTest(uint64_t thread_id, TreeType *t);
+
+/*
  * Random test suite
  */
 void RandomBtreeMultimapInsertSpeedTest(size_t key_num);
