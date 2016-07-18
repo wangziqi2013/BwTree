@@ -72,14 +72,6 @@ void TestEpochManager(TreeType *t) {
   return;
 }
 
-#define END_TEST do{ \
-                  print_flag = true; \
-                  delete t1; \
-                  \
-                  return 0; \
-                 }while(0);
-
-
 
 int main(int argc, char **argv) {
   bool run_benchmark_all = false;
@@ -114,8 +106,9 @@ int main(int argc, char **argv) {
     opt_index++;
   }
 
-  bwt_printf("RUN_BENCHMARK = %d\n", run_benchmark_all);
+  bwt_printf("RUN_BENCHMARK_ALL = %d\n", run_benchmark_all);
   bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
+  bwt_printf("RUN_BENCHMARK_BWTREE_FULL = %d\n", run_benchmark_bwtree_full);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);

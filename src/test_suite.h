@@ -106,6 +106,13 @@ using Context = typename TreeType::Context;
  * Common Infrastructure
  */
  
+#define END_TEST do{ \
+                print_flag = true; \
+                delete t1; \
+                \
+                return 0; \
+               }while(0);
+ 
 /*
  * LaunchParallelTestID() - Starts threads on a common procedure
  *
