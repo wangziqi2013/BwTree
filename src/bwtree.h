@@ -3550,7 +3550,10 @@ abort_traverse:
           // While the sss has not reached the end for this node
           while(sss.GetBegin() != sss_end_it) {
             int current_index = sss.GetFront()->GetIndexPair().first;
-            bool item_valid = true;
+            
+            // If we did not see any overwriting delta then
+            // we also copy the old item in leaf node
+            bool item_overwritten = false;
             
             assert(copy_start_index <= current_index);
             assert(current_index <= copy_end_index);
@@ -3566,7 +3569,8 @@ abort_traverse:
             // Drain delta records on the same index
             while(sss.GetFront()->GetIndexPair().first == current_index) {
               // Update current status of the item on leaf base node
-              item_valid = item_valid && sss.GetFront()->GetIndexPair().second;
+              // IndexPair.second == true if the value has been overwritten
+              item_overwritten = item_overwritten || sss.GetFront()->GetIndexPair().second;
               
               // We only insert those in LeafInsertNode
               // and ignore all LeafDeleteNode
@@ -3577,11 +3581,16 @@ abort_traverse:
                 // ... and here
                 sss.PopFront();
               }
+              
+              // If we have drained sss
+              if(sss.GetBegin() == sss_end_it) {
+                break;
+              }
             }
             
             // If the element has been overwritten by some of the deltas
             // just advance the pointer
-            if(item_valid == false) {
+            if(item_overwritten == true) {
               copy_start_index++;
             }
           } // while sss has not reached the copy end
