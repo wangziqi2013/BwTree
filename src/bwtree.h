@@ -3244,6 +3244,13 @@ abort_traverse:
             // value has been deleted earlier then this function would
             // already have returned
             if(ValueCmpEqual(scan_start_it->second, search_value)) {
+              // Since only Delete() will use this piece of information
+              // we set exist flag to false to indicate that the value
+              // has been invalidated
+              index_pair_p->first = \
+                scan_start_it - leaf_node_p->data_list.begin();
+              index_pair_p->second = true;
+              
               // Return a pointer to the item inside LeafNode;
               // This pointer should remain valid until epoch is exited
               return &(*scan_start_it);
@@ -3251,6 +3258,13 @@ abort_traverse:
 
             scan_start_it++;
           }
+          
+          // Either key does not exist or key exists but value does not
+          // exist will reach here
+          // Since only Insert() will use the index we set exist flag to false
+          index_pair_p->first = \
+                scan_start_it - leaf_node_p->data_list.begin();
+          index_pair_p->second = false;
 
           return nullptr;
         } // case LeafType
@@ -3260,6 +3274,10 @@ abort_traverse:
 
           if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
             if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
+              // Only Delete() will use this
+              // We just simply inherit from the first node
+              *index_pair_p = node_p->GetIndexPair();
+              
               return &insert_node_p->item;
             }
           }
@@ -3275,6 +3293,10 @@ abort_traverse:
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
             if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
+              // Only Insert() will use this
+              // We just simply inherit from the first node
+              *index_pair_p = node_p->GetIndexPair();
+              
               return nullptr;
             }
           }
