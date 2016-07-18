@@ -3411,8 +3411,10 @@ abort_traverse:
     const LeafDataNode *sss_data_p[delta_change_num];
     
     auto f1 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
-      // Compare using index first; if indices are equal then compare using
-      // key (since we must pop those nodes in a key-order given the index)
+      // Compare using key first; if keys are equal then compare using
+      // index (since we must pop those nodes in a key-order given the index)
+      // NOTE: Since in leaf node keys are sorted, if keys are sorted then
+      // indices only needs sorting inside the range of the key
       if(this->key_cmp_obj(ldn1->item.first, ldn2->item.first)) {
         return true;
       } else if(this->key_eq_obj(ldn1->item.first, ldn2->item.first)) {
@@ -3471,7 +3473,7 @@ abort_traverse:
    * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
    * "Recursive" suffix)
    */
-  template <typename T>
+  template <typename T>  // To let the compiler deduce type of sss
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
                                   T &sss,
