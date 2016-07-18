@@ -3411,8 +3411,10 @@ abort_traverse:
     const LeafDataNode *sss_data_p[delta_change_num];
     
     auto f1 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
-      // Compare using index first; if indices are equal then compare using
-      // key (since we must pop those nodes in a key-order given the index)
+      // Compare using key first; if keys are equal then compare using
+      // index (since we must pop those nodes in a key-order given the index)
+      // NOTE: Since in leaf node keys are sorted, if keys are sorted then
+      // indices only needs sorting inside the range of the key
       if(this->key_cmp_obj(ldn1->item.first, ldn2->item.first)) {
         return true;
       } else if(this->key_eq_obj(ldn1->item.first, ldn2->item.first)) {
@@ -3471,7 +3473,7 @@ abort_traverse:
    * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
    * "Recursive" suffix)
    */
-  template <typename T>
+  template <typename T>  // To let the compiler deduce type of sss
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
                                   T &sss,
@@ -5763,7 +5765,25 @@ before_switch:
           return false;
         }
       }
+      
+      // This is used to hold the index for which this delta will
+      // be applied to
+      std::pair<int, bool> index_pair;
+      
+      // Manually navigate through leaf node to catch the index_pair
+      // Since the current node is the correct node for the search key
+      // it is OK for us to call this function manually
+      const KeyValuePair *item_p = \
+        NavigateLeafNode(&context, &value, &index_pair);
 
+      // Since we have already tested above the item must not exist
+      assert(item_p != nullptr);
+      
+      // Since the previous traversal has already traversed right
+      // this should not abort
+      assert(context_p->abort_flag == false);
+
+      // This retrieves the most up-to-date snapshot (which does not change)
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
 
       // We will CAS on top of this
@@ -5773,7 +5793,7 @@ before_switch:
       // Here since we could not know which is the next key node
       // just use child node as a cpnservative way of inserting
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p, {0, false}};
+        new LeafInsertNode{key, value, node_p, index_pair};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
