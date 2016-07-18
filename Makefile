@@ -67,6 +67,9 @@ stress-test: main
 
 epoch-test: main
 	$(PRELOAD_LIB) ./main --epoch-test
+	
+infinite-insert-test: main
+	$(PRELOAD_LIB) ./main --infinite-insert-test
 
 prepare:
 	mkdir -p build

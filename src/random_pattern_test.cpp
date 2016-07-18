@@ -148,10 +148,23 @@ void InfiniteRandomInsertTest(TreeType *t) {
   std::default_random_engine e1(r());
   std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
 
+  size_t count = 0;
+  size_t success = 0;
+
   while(1) {
     int key = uniform_dist(e1);
 
-    t->Insert(key, key);
+    success += t->Insert(key, key);
+    
+    count++;
+    
+    if((count % (1024 * 50)) == 0) {
+      printf("%lu (%f M) Iterations; %lu (%f M) success \r",
+             count,
+             (float)count / (1024.0 * 1024.0),
+             success,
+             (float)success / (1024.0 * 1024.0));
+    }
   }
 
   return;

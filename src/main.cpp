@@ -9,6 +9,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_bwtree_full = false;
   bool run_stress = false;
   bool run_epoch_test = false;
+  bool run_infinite_insert_test = false;
 
   int opt_index = 1;
   while(opt_index < argc) {
@@ -26,6 +27,8 @@ int main(int argc, char **argv) {
       run_stress = true;
     } else if(strcmp(opt_p, "--epoch-test") == 0) {
       run_epoch_test = true;
+    } else if(strcmp(opt_p, "--infinite-insert-test") == 0) {
+      run_infinite_insert_test = true;
     } else {
       printf("ERROR: Unknown option: %s\n", opt_p);
 
@@ -48,6 +51,19 @@ int main(int argc, char **argv) {
   //////////////////////////////////////////////////////
 
   TreeType *t1 = nullptr;
+  
+  if(run_infinite_insert_test == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+
+    InfiniteRandomInsertTest(t1);
+
+    print_flag = true;
+    delete t1;
+    print_flag = false;
+  }
 
   if(run_epoch_test == true) {
     print_flag = true;
