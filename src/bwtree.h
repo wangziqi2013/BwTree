@@ -3413,10 +3413,10 @@ abort_traverse:
     auto f1 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
       // Compare using index first; if indices are equal then compare using
       // key (since we must pop those nodes in a key-order given the index)
-      if(ldn1->GetIndexPair().first < ldn2->GetIndexPair().first) {
+      if(this->key_cmp_obj(ldn1->item.first, ldn2->item.first)) {
         return true;
-      } else if(ldn1->GetIndexPair().first == ldn2->GetIndexPair().first) {
-        return this->key_cmp_obj(ldn1->item.first, ldn2->item.first);
+      } else if(this->key_eq_obj(ldn1->item.first, ldn2->item.first)) {
+        return ldn1->GetIndexPair().first < ldn2->GetIndexPair().first;
       } else {
         return false;
       }
@@ -3578,6 +3578,8 @@ abort_traverse:
                 // We remove the element from sss here
                 new_leaf_node_p->data_list.push_back(sss.PopFront()->item);
               } else {
+                assert(sss.GetFront()->GetType() == NodeType::LeafDeleteType);
+
                 // ... and here
                 sss.PopFront();
               }
