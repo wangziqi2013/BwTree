@@ -735,24 +735,27 @@ class BwTree {
    public:
     // For inner nodes, low key always points to the KeyNodeIDPair inside the
     // InnerNode
-    // For LeafInsert and LeafDelete nodes, this field is set to the next
-    // node that has the same key as the current one, and is used to
-    // facilitate node traversal (since leaf node traversal always use a
-    // key, so it benefits both read and modification)
+    // For LeafInsert and LeafDelete nodes, this field is set to the index for
+    // the change that will be applied to on LeafNode data_list
     // For other leaf nodes this field is set to nullptr and has no special
     // meaning
-    union LowOrNextKey{
+    union LowKeyOrIndex{
       const KeyNodeIDPair *low_key_p;
-      const BaseNode *next_key_p;
+      
+      std::pair<int, bool> index_pair;
       
       /*
        * Constructor - We always initialize the first element
        *               even if it is a BaseNode *
        */
-      LowOrNextKey(const KeyNodeIDPair *p_low_key_p) :
+      LowKeyOrIndex(const KeyNodeIDPair *p_low_key_p) :
         low_key_p{p_low_key_p}
       {}
-    } low_or_next_key;
+      
+      LowKeyOrIndex(std::pair<int, bool> p_index_pair) :
+        index_pair{p_index_pair}
+      {}
+    } low_key_or_index;
 
     // For inner nodes, high key points to the first element inside its
     // separator list if there is neither InnerSplitNode nor InnerMergeNode
@@ -780,11 +783,12 @@ class BwTree {
      * allows us to assign to the union without having to write two
      * different constructors (the compiler will synthesize for us)
      */
-    NodeMetaData(const KeyNodeIDPair *p_low_key_p,
+    template <typename T>
+    NodeMetaData(T p_low_key_or_index,
                  const KeyNodeIDPair *p_high_key_p,
                  int p_depth,
                  int p_item_count) :
-      low_or_next_key{p_low_key_p},
+      low_key_or_index{p_low_key_or_index},
       high_key_p{p_high_key_p},
       depth{p_depth},
       item_count{p_item_count}
@@ -808,13 +812,14 @@ class BwTree {
     /*
      * Constructor - Initialize type and metadata
      */
+    template <typename T>
     BaseNode(NodeType p_type,
-             const KeyNodeIDPair *p_low_key_p,
+             T p_low_key_or_index,
              const KeyNodeIDPair *p_high_key_p,
              int p_depth,
              int p_item_count) :
       type{p_type},
-      metadata{p_low_key_p, p_high_key_p, p_depth, p_item_count}
+      metadata{p_low_key_or_index, p_high_key_p, p_depth, p_item_count}
     {}
 
     /*
@@ -908,7 +913,7 @@ class BwTree {
       // Make sure this is not called on leaf nodes
       assert(IsOnLeafDeltaChain() == false);
 
-      return metadata.low_or_next_key.low_key_p->first;
+      return metadata.low_key_or_index.low_key_p->first;
     }
 
     /*
@@ -937,24 +942,10 @@ class BwTree {
       // Make sure this is not called on leaf nodes
       assert(IsOnLeafDeltaChain() == false);
 
-      return *metadata.low_or_next_key.low_key_p;
+      return *metadata.low_key_or_index.low_key_p;
     }
     
-    /*
-     * GetNextKeyNode() - Returns the pointer to the next node
-     *                    of the same key
-     *
-     * This allows us to make use of previous traverse history to
-     * speed up leaf node traversing
-     */
-    inline const BaseNode *GetNextKeyNode() const {
-      
-      // These two is only valid for leaf Insert and leaf delete node
-      assert(GetType() == NodeType::LeafInsertType ||
-             GetType() == NodeType::LeafDeleteType);
-      
-      return metadata.low_or_next_key.next_key_p;
-    }
+    
 
     /*
      * GetNextNodeID() - Returns the next NodeID of the current node
@@ -972,7 +963,7 @@ class BwTree {
     inline NodeID GetLowKeyNodeID() const {
       assert(IsOnLeafDeltaChain() == false);
 
-      return metadata.low_or_next_key.low_key_p->second;
+      return metadata.low_key_or_index.low_key_p->second;
     }
 
     /*
@@ -999,9 +990,22 @@ class BwTree {
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       assert(IsOnLeafDeltaChain() == false);
 
-      metadata.low_or_next_key.low_key_p = p_low_key_p;
+      metadata.low_key_or_index.low_key_p = p_low_key_p;
 
       return;
+    }
+    
+    /*
+     * GetIndexPair() - Returns the index-flag pair inside metadata
+     *
+     * This function must be called only on LeafInsertNode or LeafDeleteNode
+     * On other node types it would fail
+     */
+    inline std::pair<int, bool> GetIndexPair() const {
+      assert(GetType() == NodeType::LeafInsertType ||
+             GetType() == NodeType::LeafDeleteType);
+             
+      return metadata.low_key_or_index.index_pair;
     }
   };
 
@@ -1018,14 +1022,15 @@ class BwTree {
     /*
      * Constructor
      */
+    template <typename T>
     DeltaNode(NodeType p_type,
               const BaseNode *p_child_node_p,
-              const KeyNodeIDPair *p_low_key_p,
+              T p_low_key_or_index,
               const KeyNodeIDPair *p_high_key_p,
               int p_depth,
               int p_item_count) :
       BaseNode{p_type,
-               p_low_key_p,
+               p_low_key_or_index,
                p_high_key_p,
                p_depth,
                p_item_count},
@@ -1069,24 +1074,18 @@ class BwTree {
   class LeafDataNode : public DeltaNode {
    public:
     KeyValuePair item;
-    
-    // The index in base node array where the change should take place
-    short base_node_index;
-    
-    // Whether the key-value pair involved in the LeafDataNode is currently
-    // in the base node
-    bool exists;
 
+    template <typename T>
     LeafDataNode(const KeyValuePair &p_item,
                  NodeType p_type,
                  const BaseNode *p_child_node_p,
-                 const KeyNodeIDPair *p_low_key_p,
+                 T p_low_key_or_index,
                  const KeyNodeIDPair *p_high_key_p,
                  int p_depth,
                  int p_item_count) :
       DeltaNode{p_type,
                 p_child_node_p,
-                p_low_key_p,
+                p_low_key_or_index,
                 p_high_key_p,
                 p_depth,
                 p_item_count},
@@ -1261,9 +1260,6 @@ class BwTree {
    */
   class LeafInsertNode : public LeafDataNode {
    public:
-    // Use an item to store key-value internally
-    // to make leaf consolidation faster
-    KeyValuePair insert_item;
 
     /*
      * Constructor
@@ -1271,11 +1267,11 @@ class BwTree {
     LeafInsertNode(const KeyType &p_insert_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p,
-                   const BaseNode *p_next_key_node_p) :
+                   std::pair<int, bool> p_index_pair) :
       LeafDataNode{std::make_pair(p_insert_key, p_value),
                    NodeType::LeafInsertType,
                    p_child_node_p,
-                   (KeyNodeIDPair *)p_next_key_node_p,
+                   p_index_pair,
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
                    // For insert nodes, the item count is inheried from the child
@@ -1293,9 +1289,6 @@ class BwTree {
    */
   class LeafDeleteNode : public LeafDataNode {
    public:
-    // Use an deleted item to store deleted key and value
-    // to make leaf consolidation faster
-    KeyValuePair delete_item;
 
     /*
      * Constructor
@@ -1303,11 +1296,11 @@ class BwTree {
     LeafDeleteNode(const KeyType &p_delete_key,
                    const ValueType &p_value,
                    const BaseNode *p_child_node_p,
-                   const BaseNode *p_next_key_node_p) :
+                   std::pair<int, bool> p_index_pair) :
       LeafDataNode{std::make_pair(p_delete_key, p_value),
                    NodeType::LeafDeleteType,
                    p_child_node_p,
-                   (KeyNodeIDPair *)p_next_key_node_p,
+                   p_index_pair,
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
                    // For delete node it inherits item count from its child
@@ -2262,7 +2255,7 @@ class BwTree {
    */
   const KeyValuePair *Traverse(Context *context_p,
                                const ValueType *value_p,
-                               const BaseNode **next_key_node_p) {
+                               std::pair<int, bool> *index_pair_p) {
 
     // For value collection it always returns nullptr
     const KeyValuePair *found_pair_p = nullptr;
@@ -2335,7 +2328,7 @@ retry_traverse:
     } else {
       // If a value is given then use this value to Traverse down leaf
       // page to find whether the value exists or not
-      found_pair_p = NavigateLeafNode(context_p, *value_p, next_key_node_p);
+      found_pair_p = NavigateLeafNode(context_p, *value_p, index_pair_p);
     }
 
     if(context_p->abort_flag == true) {
@@ -3105,14 +3098,9 @@ abort_traverse:
                 value_list.push_back(insert_node_p->item.second);
               }
             }
-            
-            node_p = insert_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              return;
-            }
-          } else {
-            node_p = insert_node_p->child_node_p;
           }
+
+          node_p = insert_node_p->child_node_p;
 
           break;
         } // case LeafInsertType
@@ -3124,14 +3112,9 @@ abort_traverse:
             if(present_set.Exists(delete_node_p->item.second) == false) {
               deleted_set.Insert(delete_node_p->item.second);
             }
-
-            node_p = delete_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              return;
-            }
-          } else {
-            node_p = delete_node_p->child_node_p;
-          }
+          } 
+          
+          node_p = delete_node_p->child_node_p;
 
           break;
         } // case LeafDeleteType
@@ -3208,7 +3191,7 @@ abort_traverse:
    */
   const KeyValuePair *NavigateLeafNode(Context *context_p,
                                        const ValueType &search_value,
-                                       const BaseNode **same_key_node_p) {
+                                       std::pair<int, bool> *index_pair_p) {
     
     // This will go to the right sibling until we have seen
     // a node whose range match the search key
@@ -3232,12 +3215,6 @@ abort_traverse:
 
     // Save some typing
     const KeyType &search_key = context_p->search_key;
-    
-    // If we have seen a node of the same key (but is not the node we return on)
-    // then just link it in
-    // NOTE: Must set this variable here; otherwise if there is abort then
-    // the value will not remain nullptr in the following attempt
-    *same_key_node_p = nullptr;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3261,14 +3238,6 @@ abort_traverse:
           // Search all values with the search key
           while((scan_start_it != leaf_node_p->data_list.end()) && \
                 (KeyCmpEqual(scan_start_it->first, search_key))) {
-
-            // If we have observed a leaf node with the key then
-            // return the pointer to the leaf node to the caller
-            // to reflect the fact that later search with
-            // that key must also search the leaf node
-            if(*same_key_node_p == nullptr) {
-              *same_key_node_p = node_p;
-            }
                   
             // If there is a value matching the search value then return true
             // We do not need to check any delete set here, since if the
@@ -3290,25 +3259,12 @@ abort_traverse:
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
-            
-            // Set to the first node of the same key we have ever seen
-            if(*same_key_node_p == nullptr) {
-              *same_key_node_p = node_p;
-            }
-            
             if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
               return &insert_node_p->item;
             }
-
-            // Also make use of existing node pointer
-            node_p = insert_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              //This key has no more values in current delta chain
-              return nullptr;
-            }
-          } else {
-            node_p = insert_node_p->child_node_p;
           }
+
+          node_p = insert_node_p->child_node_p;
 
           break;
         } // case LeafInsertType
@@ -3318,26 +3274,12 @@ abort_traverse:
 
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
-            
-            // Set to the first node we have ever seen
-            if(*same_key_node_p == nullptr) {
-              *same_key_node_p = node_p;
-            }
-            
             if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
               return nullptr;
             }
-            
-            // Also make use of existing node pointer
-            node_p = delete_node_p->GetNextKeyNode();
-            if(node_p == nullptr) {
-              //This key has no more elements in the delta chain
-              // so return nullptr
-              return nullptr;
-            }
-          } else {
-            node_p = delete_node_p->child_node_p;
           }
+          
+          node_p = delete_node_p->child_node_p;
 
           break;
         } // case LeafDeleteType
@@ -5583,13 +5525,13 @@ before_switch:
 
     while(1) {
       Context context{key};
-      const BaseNode *next_key_p;
+      std::pair<int, bool> index_pair;
 
       // Check whether the key-value pair exists
       // Also if the key previously exists in the delta chain
       // then return the position of the node using next_key_p
       // if there is none then return nullptr
-      const KeyValuePair *item_p = Traverse(&context, &value, &next_key_p);
+      const KeyValuePair *item_p = Traverse(&context, &value, &index_pair);
 
       // If the key-value pair already exists then return false
       if(item_p != nullptr) {
@@ -5605,7 +5547,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p, next_key_p};
+        new LeafInsertNode{key, value, node_p, index_pair};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -5712,7 +5654,7 @@ before_switch:
       // Here since we could not know which is the next key node
       // just use child node as a cpnservative way of inserting
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p, node_p};
+        new LeafInsertNode{key, value, node_p, {0, false}};
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -5768,11 +5710,11 @@ before_switch:
 
     while(1) {
       Context context{key};
-      const BaseNode *next_node_p;
+      std::pair<int, bool> index_pair;
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      const KeyValuePair *item_p = Traverse(&context, &value, &next_node_p);
+      const KeyValuePair *item_p = Traverse(&context, &value, &index_pair);
 
       if(item_p == nullptr) {
         epoch_manager.LeaveEpoch(epoch_node_p);
@@ -5787,7 +5729,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p, next_node_p};
+        new LeafDeleteNode{key, value, node_p, index_pair};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -5837,11 +5779,11 @@ before_switch:
 
     while(1) {
       Context context{key};
-      const BaseNode *next_node_p;
+      std::pair<int, bool> index_pair;
 
       // Navigate leaf nodes to check whether the key-value
       // pair exists
-      item_p = Traverse(&context, value_p, &next_node_p);
+      item_p = Traverse(&context, value_p, &index_pair);
 
       // If value not found just return
       if(item_p == nullptr) {
@@ -5857,7 +5799,7 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, *value_p, node_p, next_node_p};
+        new LeafDeleteNode{key, *value_p, node_p, index_pair};
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
