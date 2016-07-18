@@ -47,6 +47,9 @@ class SortedSmallSet {
    * it will be inserted before the first element that is larger
    */
   inline void Insert(const ValueType &value) {
+    // Could not use upper bound here since if there are duplications
+    // we want to catch the duplication by lower bound
+    // But if we are OK with duplications then use upper bound here
     auto it = std::lower_bound(start_p, end_p, value, value_cmp_obj);
 
     // Fast path: If the lower bound does not exist (i.e. the current element)
@@ -59,6 +62,34 @@ class SortedSmallSet {
     }
 
     if(value_eq_obj(*it, value) == true) {
+      return;
+    }
+
+    // It is like backward shift operation
+    std::copy_backward(it, end_p, end_p + 1);
+    *it = value;
+
+    end_p++;
+
+    return;
+  }
+  
+  /*
+   * InsertNoDedup() - Insert a value without removing duplications
+   *
+   * This function tries to find the upperbound of the inserted value,
+   * and shifts them backward by 1 to make space for the current inserted
+   * item
+   */
+  inline void InsertNoDedup(const ValueType &value) {
+    auto it = std::upper_bound(start_p, end_p, value, value_cmp_obj);
+
+    // Fast path: If the upper bound does not exist (i.e. the current element)
+    // is the largest on the array, then just append and increase end pointer
+    if(it == end_p) {
+      *it = value;
+      end_p++;
+
       return;
     }
 
