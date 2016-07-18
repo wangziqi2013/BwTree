@@ -2,7 +2,7 @@
 /*
  * random_pattern_test.cpp
  *
- * This files includes test cases that test index performance/correctness
+ * This file includes test cases that test index performance/correctness
  * with a totally random access pattern
  *
  * by Ziqi Wang
@@ -153,8 +153,6 @@ void InfiniteRandomInsertTest(TreeType *t) {
 
     t->Insert(key, key);
   }
-
-  printf("Random insert (%lu) finished\n", thread_id);
 
   return;
 }

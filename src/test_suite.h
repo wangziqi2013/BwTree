@@ -129,6 +129,45 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
 }
 
 void PrintStat(TreeType *t);
+void PinToCore(size_t core_id);
+
+/*
+ * Basic test suite
+ */
+void InsertTest1(uint64_t thread_id, TreeType *t);
+void InsertTest2(uint64_t thread_id, TreeType *t);
+void DeleteTest1(uint64_t thread_id, TreeType *t);
+void DeleteTest2(uint64_t thread_id, TreeType *t);
+
+void InsertGetValueTest(TreeType *t);
+void DeleteGetValueTest(TreeType *t);
+
+extern int basic_test_key_num;
+extern int basic_test_thread_num;
+
+/*
+ * Mixed test suite
+ */
+void MixedTest1(uint64_t thread_id, TreeType *t);
+void MixedGetValueTest(TreeType *t);
+
+extern std::atomic<size_t> mixed_insert_success;
+extern std::atomic<size_t> mixed_delete_success;
+extern std::atomic<size_t> mixed_delete_attempt;
+
+extern int mixed_thread_num;
+extern int mixed_key_num;
+
+/*
+ * Performance test suite
+ */
+void TestStdMapInsertReadPerformance();
+void TestStdUnorderedMapInsertReadPerformance();
+void TestBTreeInsertReadPerformance();
+void TestBTreeMultimapInsertReadPerformance();
+void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
+void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
+void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
 
 /*
  * Random test suite
