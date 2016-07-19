@@ -4,21 +4,13 @@ This is a street strength implementation of Bw-Tree, the Microsoft's implementat
 Benchmark
 =========
 
-1 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
+3 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
 
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-17.jpg)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19.jpg)
 
-30 Million Key; 1 thread inserting; 1 thread reading for 10 times; 8 thread reading for 10 times
+1 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
 
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-18.jpg)
-
-Same as above, but with Bloom Filter
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-19.jpg)
-
-After removing std::vector from the traversal stack
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-06-22.jpg)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19-2.jpg)
 
 Stress test with key space = 60M (expected tree size = 30M); random insert/delete; 8 worker threads
 
