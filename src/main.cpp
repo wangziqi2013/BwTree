@@ -44,6 +44,7 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
+  bwt_printf("RUN_INFINITE_INSERT_TEST = %d\n", run_infinite_insert_test);
   bwt_printf("======================================\n");
 
   //////////////////////////////////////////////////////
