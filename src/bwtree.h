@@ -201,7 +201,6 @@ static DummyOutObject dummy_out;
 
 using NodeID = uint64_t;
 
-// This is only defined is BWTREE_DEBUG is defined
 extern bool print_flag;
 
 /*
