@@ -191,6 +191,8 @@ void IteratorTest(TreeType *t);
  */
 void RandomBtreeMultimapInsertSpeedTest(size_t key_num);
 void RandomInsertSpeedTest(TreeType *t, size_t key_num);
+void RandomInsertSeqReadSpeedTest(TreeType *t, size_t key_num);
+void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num);
 void InfiniteRandomInsertTest(TreeType *t);
 void RandomInsertTest(uint64_t thread_id, TreeType *t);
 void RandomInsertVerify(TreeType *t);

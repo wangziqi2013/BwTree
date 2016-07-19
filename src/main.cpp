@@ -114,6 +114,20 @@ int main(int argc, char **argv) {
       // Tests random insert using one thread
       RandomInsertSpeedTest(t1, key_num);
       
+      delete t1;
+      t1 = new TreeType{KeyComparator{1},
+                        KeyEqualityChecker{1}};
+      
+      // Test random insert seq read
+      RandomInsertSeqReadSpeedTest(t1, key_num);
+      
+      delete t1;
+      t1 = new TreeType{KeyComparator{1},
+                        KeyEqualityChecker{1}};
+      
+      // Test seq insert random read
+      SeqInsertRandomReadSpeedTest(t1, key_num);
+      
       // Use stree_multimap as a reference
       RandomBtreeMultimapInsertSpeedTest(key_num);
     }

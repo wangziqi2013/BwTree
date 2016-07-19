@@ -113,7 +113,7 @@ void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
 
   elapsed_seconds = end - start;
   std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
-            << " million read after random insert/sec" << "\n";
+            << " million random read after random insert/sec" << "\n";
 
   // Measure the overhead
 
@@ -135,6 +135,105 @@ void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
 
   return;
 }
+
+/*
+ * RandomInsertSeqReadSpeedTest() - Tests how fast it is to insert keys randomly
+ *                                  and reads then sequentially
+ */
+void RandomInsertSeqReadSpeedTest(TreeType *t, size_t key_num) {
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  start = std::chrono::system_clock::now();
+
+  // We loop for keynum * 2 because in average half of the insertion
+  // will hit an empty slot
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    t->Insert(key, key);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random insertion/sec" << "\n";
+
+  // Then test random read after random insert
+  std::vector<long int> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  for(size_t i = 0;i < key_num * 2;i++) {
+    t->GetValue(i, v);
+
+    v.clear();
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million seq read after random insert/sec" << "\n";
+
+  return;
+}
+
+/*
+ * SeqInsertRandomReadSpeedTest() - Tests how fast it is to insert keys 
+ *                                  sequentially and read them randomly
+ */
+void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num) {
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  start = std::chrono::system_clock::now();
+
+  // We loop for keynum * 2 because in average half of the insertion
+  // will hit an empty slot
+  for(size_t i = 0;i < key_num * 2;i++) {
+    t->Insert(i, i);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random insertion/sec" << "\n";
+
+  // Then test random read after random insert
+  std::vector<long int> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    t->GetValue(key, v);
+
+    v.clear();
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random read after random insert/sec" << "\n";
+
+  return;
+}
+
 
 /*
  * InfiniteRandomInsertTest() - Inserts in a 10M key space randomly

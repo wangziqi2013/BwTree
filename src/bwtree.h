@@ -20,6 +20,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef _BWTREE_H
+#define _BWTREE_H
+
 #pragma once
 
 // We use this to avoid allocating temporary STL variable
@@ -62,14 +65,17 @@ class PointerComparator {
  */
 //#define BWTREE_PELOTON
 
+/*
+ * BWTREE_NODEBUG - This flag disables usage of print_flag, which greatly
+ *                  reduces performance
+ */
+//#define BWTREE_NODEBUG
+
 #ifdef BWTREE_PELOTON
 
 #include "backend/index/index.h"
 
 #endif
-
-// Used for debugging
-#include <mutex>
 
 #include "sorted_small_set.h"
 #include "bloom_filter.h"
@@ -103,6 +109,19 @@ class PointerComparator {
                                             typename ValueEqualityChecker, \
                                             typename ValueHashFunc>
 
+// These two are used to verify whether to use certain flags
+#ifdef BWTREE_PELOTON
+  #pragma message("BWTREE_PELOTON = On")
+#else
+  #pragma message("BWTREE_PELOTON = Off")
+#endif
+
+#ifdef BWTREE_DEBUG
+  #pragma message("BWTREE_DEBUG = On")
+#else
+  #pragma message("BWTREE_DEBUG = Off")
+#endif
+
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
@@ -110,45 +129,6 @@ namespace index {
 
 // This needs to be always here
 static void dummy(const char*, ...) {}
-
-#ifdef INTERACTIVE_DEBUG
-
-#define idb_assert(cond)                                                \
-  do {                                                                  \
-    if (!(cond)) {                                                      \
-      debug_stop_mutex.lock();                                          \
-      fprintf(stderr, "assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
-      idb.Start();                                                      \
-      debug_stop_mutex.unlock();                                        \
-    }                                                                   \
-  } while (0);
-
-#define idb_assert_key(node_id, key, context_p, cond)                   \
-  do {                                                                  \
-    if (!(cond)) {                                                      \
-      debug_stop_mutex.lock();                                          \
-      fprintf(stderr, "assert, %-24s, line %d\n", __FUNCTION__, __LINE__); \
-      idb.key_list.push_back(key);                                      \
-      idb.node_id_list.push_back(node_id);                              \
-      idb.context_p = context_p;                                        \
-      idb.Start();                                                      \
-      debug_stop_mutex.unlock();                                        \
-    }                                                                   \
-  } while (0);
-
-#else
-
-#define idb_assert(cond) \
-  do {                   \
-    assert(cond);        \
-  } while (0);
-
-#define idb_assert_key(key, id, context_p, cond) \
-  do {                                           \
-    assert(cond);                                \
-  } while (0);
-
-#endif
 
 #ifdef BWTREE_DEBUG
 
@@ -166,15 +146,6 @@ static void dummy(const char*, ...) {}
     dummy(fmt, ##__VA_ARGS__); \
   } while (0);
 
-#endif
-
-#ifdef INTERACTIVE_DEBUG
-// In multi-threaded testing, if we want to halt all threads when an error
-// happens
-// then we lock this mutex
-// Since every other thread will try to lock this before SMO
-// it guarantees no SMO would happen before everybody stops
-static std::mutex debug_stop_mutex;
 #endif
 
 /*
@@ -238,12 +209,12 @@ extern bool print_flag;
  * Template Arguments:
  *
  * template <typename KeyType,
- *          typename ValueType,
- *          typename KeyComparator = std::less<KeyType>,
- *          typename KeyEqualityChecker = std::equal_to<KeyType>,
- *          typename KeyHashFunc = std::hash<KeyType>,
- *          typename ValueEqualityChecker = std::equal_to<ValueType>,
- *          typename ValueHashFunc = std::hash<ValueType>>
+ *           typename ValueType,
+ *           typename KeyComparator = std::less<KeyType>,
+ *           typename KeyEqualityChecker = std::equal_to<KeyType>,
+ *           typename KeyHashFunc = std::hash<KeyType>,
+ *           typename ValueEqualityChecker = std::equal_to<ValueType>,
+ *           typename ValueHashFunc = std::hash<ValueType>>
  *
  * Explanation:
  *
@@ -1819,7 +1790,7 @@ class BwTree {
     epoch_manager.StartThread();
 
     dummy("Call it here to avoid compiler warning\n");
-
+    
     return;
   }
 
@@ -2320,6 +2291,9 @@ retry_traverse:
     } //while(1)
 
     if(value_p == nullptr) {
+      // We are using an iterator just to get a leaf page
+      assert(index_pair_p == nullptr);
+      
       // If both are nullptr then we just navigate the sibling chain
       // to find the correct node with the correct range
       // And then the iterator will consolidate the node without actually
@@ -3185,7 +3159,7 @@ abort_traverse:
    * values with those in delta nodes and in the base node. No special data
    * structure is required
    *
-   * This function calls JumoToNodeID() to switch to a split sibling node
+   * This function calls JumpToNodeID() to switch to a split sibling node
    * There are possibility that the switch aborts, and in this case this
    * function returns with value false.
    */
@@ -3353,6 +3327,206 @@ abort_traverse:
     assert(false);
     return nullptr;
   }
+  
+  /*
+   * NavigateLeafNode() - Apply predicate to all values, and detect for existing
+   *                      value for insert
+   *
+   * This function cooperates with ConditionalInsert() which requires applying
+   * a predicate to all existing values, and insert the value if and only if:
+   *
+   * 1. The predicate is not satisfied on all existing values
+   * 2. The value does not yet exists in the leaf delta chain
+   *
+   * If any of the above two are true, then we should not insert:
+   *
+   * 1. If predicate is satisfied by an existing value, return nullptr and
+   *    argument predicate_satisfied is set to true
+   * 2. If predicate is not satisfied, but the value already exists, then
+   *    return nullptr but argument predicate_satisfied is unchanged
+   *
+   * If both conditions are true then we always test predicate first
+   * and then test for existence
+   *
+   * If only one condition are true then it depends on the order we
+   * traverse the delta chain and leaf data node, and could not be
+   * guaranteed a specific order
+   */
+  inline const KeyValuePair *
+  NavigateLeafNode(Context *context_p,
+                   const ValueType &value,
+                   std::pair<int, bool> *index_pair_p,
+                   std::function<bool(const void *)> predicate,
+                   bool *predicate_satisfied) {
+
+
+    // NOTE: We do not have to traverse to the right sibling here
+    // since Traverse() already traverses to the right sibling
+    // if value pointer given to it is nullptr
+    // So we are guaranteed that we are always on the correct leaf
+    // page delta chain on entry of this function
+
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    assert(snapshot_p->IsLeaf() == true);
+
+    const KeyType &search_key = context_p->search_key;
+
+    const int set_max_size = node_p->GetDepth();
+
+    const ValueType *present_set_data_p[set_max_size];
+    const ValueType *deleted_set_data_p[set_max_size];
+
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      present_set{present_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
+
+    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
+      deleted_set{deleted_set_data_p,
+                  value_eq_obj,
+                  value_hash_obj};
+
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::LeafType: {
+          const LeafNode *leaf_node_p = \
+            static_cast<const LeafNode *>(node_p);
+
+          auto copy_start_it = \
+            std::lower_bound(leaf_node_p->data_list.begin(),
+                             leaf_node_p->data_list.end(),
+                             std::make_pair(search_key, ValueType{}),
+                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+                                return this->key_cmp_obj(kvp1.first, kvp2.first);
+                             });
+
+          while((copy_start_it != leaf_node_p->data_list.end()) && \
+                (KeyCmpEqual(search_key, copy_start_it->first))) {
+            if(deleted_set.Exists(copy_start_it->second) == false) {
+              if(present_set.Exists(copy_start_it->second) == false) {
+                
+                // If the predicate is satified by the value
+                // then return with predicate flag set to true
+                // Otherwise test for duplication
+                if(predicate(copy_start_it->second) == true) {
+                  *predicate_satisfied = true;
+                  
+                  return nullptr;
+                } else if(value_eq_obj(value, copy_start_it->second) == true) {
+                  // We will not insert anyway....
+                  return &(*copy_start_it);
+                }
+              }
+            }
+
+            copy_start_it++;
+          }
+          
+          // The index is the last element (this is true even if we have seen a
+          // leaf delete node, since the delete node must have deleted a
+          // value that does not exist in leaf base node, so that inserted value
+          // must have the same index)
+          index_pair_p->first = copy_start_it - leaf_node_p->data_list.begin();
+          // Value does not exist
+          index_pair_p->second = false;
+
+          // Only if we return here could we insert
+          return nullptr;
+        }
+        case NodeType::LeafInsertType: {
+          const LeafInsertNode *insert_node_p = \
+            static_cast<const LeafInsertNode *>(node_p);
+
+          if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
+            if(deleted_set.Exists(insert_node_p->item.second) == false) {
+              if(present_set.Exists(insert_node_p->item.second) == false) {
+                present_set.Insert(insert_node_p->item.second);
+
+                // LeafInsertNode means this value exists
+                if(predicate(insert_node_p->item.second) == true) {
+                  *predicate_satisfied = true;
+
+                  // Could return here since we know the predicate is satisfied
+                  return nullptr;
+                } else if(value_eq_obj(value, insert_node_p->item.second) == true) {
+                  // Could also return here since we know the value exists
+                  // and we could not insert anyway
+                  return &insert_node_p->item;
+                } // test predicate and duplicates
+              } // if value not seen
+            } // if value not deleted
+          } // if key equal
+
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // case LeafInsertType
+        case NodeType::LeafDeleteType: {
+          const LeafDeleteNode *delete_node_p = \
+            static_cast<const LeafDeleteNode *>(node_p);
+
+          if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
+            if(present_set.Exists(delete_node_p->item.second) == false) {
+              // Even if we know the value does not exist, we still need
+              // to test all predicates to the leaf base node
+              deleted_set.Insert(delete_node_p->item.second);
+            }
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // case LeafDeleteType
+        case NodeType::LeafRemoveType: {
+          bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
+
+          assert(false);
+        } // case LeafRemoveType
+        case NodeType::LeafMergeType: {
+          bwt_printf("Observed a merge node on leaf delta chain\n");
+
+          const LeafMergeNode *merge_node_p = \
+            static_cast<const LeafMergeNode *>(node_p);
+
+          if(KeyCmpGreaterEqual(search_key, merge_node_p->delete_item.first)) {
+            bwt_printf("Take leaf merge right branch\n");
+
+            node_p = merge_node_p->right_merge_p;
+          } else {
+            bwt_printf("Take leaf merge left branch\n");
+
+            node_p = merge_node_p->child_node_p;
+          }
+
+          break;
+        } // case LeafMergeType
+        case NodeType::LeafSplitType: {
+          bwt_printf("Observed a split node on leaf delta chain\n");
+
+          const LeafSplitNode *split_node_p = \
+            static_cast<const LeafSplitNode *>(node_p);
+
+          node_p = split_node_p->child_node_p;
+
+          break;
+        } // case LeafSplitType
+        default: {
+          bwt_printf("ERROR: Unknown leaf delta node type: %d\n",
+                     static_cast<int>(node_p->GetType()));
+
+          assert(false);
+        } // default
+      } // switch
+    } // while
+
+    // We cannot reach here
+    assert(false);
+    return false;
+  }
 
   /*
    * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
@@ -3427,6 +3601,9 @@ abort_traverse:
     // This is not used since in this case we do not need to compare
     // for equal relation
     auto f2 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
+      (void)ldn1;
+      (void)ldn2;
+      
       assert(false);
       return false;
     };
@@ -4178,38 +4355,11 @@ retry_traverse:
     assert(context_p->current_level == -1);
 
     // This is the serialization point for reading/writing root node
-    NodeID start_node_id = root_id.load();
-
-    // We need to call this even for root node since there could
-    // be split delta posted on to root node
-    LoadNodeIDReadOptimized(start_node_id, context_p);
-
-    // There could be an abort here, and we could not directly jump
-    // to Init state since we would like to do some clean up or
-    // statistics after aborting
-    if(context_p->abort_flag == true) {
-      goto abort_traverse;
-    }
+    NodeID child_node_id = root_id.load();
 
     bwt_printf("Successfully loading root node ID (RO)\n");
 
     while(1) {
-      NodeID child_node_id = NavigateInnerNode(context_p);
-
-      // Navigate could abort since it might go to another NodeID
-      // if there is a split delta and the key is >= split key
-      if(context_p->abort_flag == true) {
-        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
-
-        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-        // as a double check
-        // This is the only situation that this function returns
-        // INVALID_NODE_ID
-        assert(child_node_id == INVALID_NODE_ID);
-
-        goto abort_traverse;
-      }
-
       // This might load a leaf child
       // Also LoadNodeID() does not guarantee the node bound matches
       // search key. Since we could readjust using the split side link
@@ -4244,6 +4394,22 @@ retry_traverse:
 
         // If there is no abort then we could safely return
         return;
+      }
+      
+      child_node_id = NavigateInnerNode(context_p);
+
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
+
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
+
+        goto abort_traverse;
       }
     } // while(1)
 
@@ -5383,9 +5549,9 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(item.first, search_key) == true) {
-          //if(item.second != insert_item.second) {
-          //  printf("****** NodeID does not match!\n");
-          //}
+          if(item.second != insert_item.second) {
+            printf("****** NodeID does not match!\n");
+          }
           
           return false;
         }
@@ -5426,9 +5592,9 @@ before_switch:
           // then also could post
           return true;
         } else {
-          //if(it->second != insert_item.second) {
-          //  printf("****** NodeID does not match!\n");
-          //}
+          if(it->second != insert_item.second) {
+            printf("****** NodeID does not match!\n");
+          }
           
           return false;
         }
@@ -5640,7 +5806,9 @@ before_switch:
   bool Insert(const KeyType &key, const ValueType &value) {
     bwt_printf("Insert called\n");
 
+    #ifdef BWTREE_DEBUG
     insert_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5724,64 +5892,43 @@ before_switch:
                          bool *predicate_satisfied) {
     bwt_printf("Insert (cond.) called\n");
 
+    #ifdef BWTREE_DEBUG
     insert_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     while(1) {
       Context context{key};
 
-      std::vector<ValueType> existing_value_list{};
+      // This will just stop on the correct leaf page
+      // without traversing into it. Next we manually traverse
+      Traverse(&context, nullptr, nullptr);
 
-      // Collect values with node navigation
-      TraverseReadOptimized(&context, &existing_value_list);
-
-      // At the beginning of each iteration we just set the value pointer
-      // to be empty
-      // Note that in Peloton we always store value as ItemPointer * so
-      // in order for simplicity we just assume the value itself
-      // is a pointer type
       *predicate_satisfied = false;
-
-      // For every existing element in the value vector, test predicate on that
-      // and if the predicate is satisfied then just return without
-      // any insertion happening
-      for(auto &v : existing_value_list) {
-        // Note that predicate tests ItemPointer which is the type of
-        // dereferencing ValueType
-        if(predicate(v) == true) {
-          // To notify the caller that predicate
-          // has been satisfied and we cannot insert
-          *predicate_satisfied = true;
-
-          // Do not forget this!
-          epoch_manager.LeaveEpoch(epoch_node_p);
-
-          return false;
-        } else if(value_eq_obj(v, value)) {
-          // If the value does not pass predicate testing but it already exists
-          // in the index, we just return with predicate_satisfied setting to
-          // false and return value being false
-          return false;
-        }
-      }
       
       // This is used to hold the index for which this delta will
       // be applied to
       std::pair<int, bool> index_pair;
-      
-      // Manually navigate through leaf node to catch the index_pair
-      // Since the current node is the correct node for the search key
-      // it is OK for us to call this function manually
-      const KeyValuePair *item_p = \
-        NavigateLeafNode(&context, &value, &index_pair);
 
-      // Since we have already tested above the item must not exist
-      assert(item_p != nullptr);
+      // Call navigate leaf node to test predicate and to test duplicates
+      const KeyValuePair *item_p = \
+        NavigateLeafNode(&context,
+                         value,
+                         &index_pair,
+                         predicate,
+                         predicate_satisfied);
       
-      // Since the previous traversal has already traversed right
-      // this should not abort
-      assert(context_p->abort_flag == false);
+      // We do not insert anything if predicate is satisfied
+      if(*predicate_satisfied == true) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        return false;
+      } else if(item_p != nullptr) {
+        epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        return false;
+      }
 
       // This retrieves the most up-to-date snapshot (which does not change)
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
@@ -5812,15 +5959,8 @@ before_switch:
         delete insert_node_p;
       }
 
-      // Update abort counter
-      // NOTW 1: We could not do this before return since the context
-      // object is cleared at the end of loop
-      // NOTE 2: Since Traverse() might abort due to other CAS failures
-      // context.abort_counter might be larger than 1 when
-      // LeafInsertNode installation fails
       insert_abort_count.fetch_add(context.abort_counter);
 
-      // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert (cond.) delta from the root\n");
     }
 
@@ -5843,7 +5983,9 @@ before_switch:
   bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
 
+    #ifdef BWTREE_DEBUG
     delete_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5910,7 +6052,9 @@ before_switch:
   bool DeleteExchange(KeyType &key, ValueType *value_p) {
     bwt_printf("DeleteExchange called\n");
 
+    #ifdef BWTREE_DEBUG
     delete_op_count.fetch_add(1);
+    #endif
 
     const KeyValuePair *item_p;
 
@@ -7160,23 +7304,13 @@ try_join_again:
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
 
-        #ifdef BWTREE_PELOTON
-
-        // This is used to avoid segmentation fault
-        ItemPointer dummy_ip{0, 0};
-        ItemPointer *ip_p = &dummy_ip;
-
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
-        tree_p->Traverse(&context, &ip_p);
-
-        #else
-
-        // Traverse down the tree to get to leaf node
-        Context context{*start_key_p};
+        
+        // NOTE: Even if ValueType is a value we will not test it here
+        // since Traverse() will not pass the pointer into NavigateLeafNode
+        // but rather just stop on the correct leaf node
         tree_p->Traverse(&context, nullptr, nullptr);
-
-        #endif
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
@@ -7261,4 +7395,4 @@ try_join_again:
 }  // End peloton namespace
 #endif
 
-
+#endif
