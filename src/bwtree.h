@@ -209,12 +209,12 @@ extern bool print_flag;
  * Template Arguments:
  *
  * template <typename KeyType,
- *          typename ValueType,
- *          typename KeyComparator = std::less<KeyType>,
- *          typename KeyEqualityChecker = std::equal_to<KeyType>,
- *          typename KeyHashFunc = std::hash<KeyType>,
- *          typename ValueEqualityChecker = std::equal_to<ValueType>,
- *          typename ValueHashFunc = std::hash<ValueType>>
+ *           typename ValueType,
+ *           typename KeyComparator = std::less<KeyType>,
+ *           typename KeyEqualityChecker = std::equal_to<KeyType>,
+ *           typename KeyHashFunc = std::hash<KeyType>,
+ *           typename ValueEqualityChecker = std::equal_to<ValueType>,
+ *           typename ValueHashFunc = std::hash<ValueType>>
  *
  * Explanation:
  *
@@ -4355,38 +4355,11 @@ retry_traverse:
     assert(context_p->current_level == -1);
 
     // This is the serialization point for reading/writing root node
-    NodeID start_node_id = root_id.load();
-
-    // We need to call this even for root node since there could
-    // be split delta posted on to root node
-    LoadNodeIDReadOptimized(start_node_id, context_p);
-
-    // There could be an abort here, and we could not directly jump
-    // to Init state since we would like to do some clean up or
-    // statistics after aborting
-    if(context_p->abort_flag == true) {
-      goto abort_traverse;
-    }
+    NodeID child_node_id = root_id.load();
 
     bwt_printf("Successfully loading root node ID (RO)\n");
 
     while(1) {
-      NodeID child_node_id = NavigateInnerNode(context_p);
-
-      // Navigate could abort since it might go to another NodeID
-      // if there is a split delta and the key is >= split key
-      if(context_p->abort_flag == true) {
-        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
-
-        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-        // as a double check
-        // This is the only situation that this function returns
-        // INVALID_NODE_ID
-        assert(child_node_id == INVALID_NODE_ID);
-
-        goto abort_traverse;
-      }
-
       // This might load a leaf child
       // Also LoadNodeID() does not guarantee the node bound matches
       // search key. Since we could readjust using the split side link
@@ -4421,6 +4394,22 @@ retry_traverse:
 
         // If there is no abort then we could safely return
         return;
+      }
+      
+      child_node_id = NavigateInnerNode(context_p);
+
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
+
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
+
+        goto abort_traverse;
       }
     } // while(1)
 
@@ -5560,9 +5549,9 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(item.first, search_key) == true) {
-          //if(item.second != insert_item.second) {
-          //  printf("****** NodeID does not match!\n");
-          //}
+          if(item.second != insert_item.second) {
+            printf("****** NodeID does not match!\n");
+          }
           
           return false;
         }
@@ -5603,9 +5592,9 @@ before_switch:
           // then also could post
           return true;
         } else {
-          //if(it->second != insert_item.second) {
-          //  printf("****** NodeID does not match!\n");
-          //}
+          if(it->second != insert_item.second) {
+            printf("****** NodeID does not match!\n");
+          }
           
           return false;
         }
