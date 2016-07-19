@@ -38,19 +38,17 @@ Our approach to avoid this problem is to post a special ABORT node on the parent
 
 Compile and Run
 ===============
-make prepare -> This prepares build directory
-
-make         -> This only compiles and links
-
-make benchmark-bwtree -> This compiles and runs benchmark for bwtree only
-
-make benchmark-all    -> This compiles and runs benchmark for bwtree, std::map, std::unordered_map and std::btree
-
-make stress-test      -> Runs stress test on BwTree until NodeID runs out and assertion fails
-
-make test             -> Runs insert-read-delete test for multiple times with different patterns
-
-make epoch-test       -> Runs epoch manager test
+| Command | Description |
+|---------|-------------|
+|make prepare | Prepares build directory. Must be called after each new clone|
+|make | Compiles and links, with debugging flag|
+|make full-speed | Compiles without debugging flag. Better performance|
+|make benchmark-bwtree | Compiles and runs benchmark (seq. and random) for bwtree|
+|make benchmark-all | This compiles and runs benchmark for bwtree, std::map, std::unordered_map, stx::btree and stx::bwtree_multimap|
+|make stress-test | Runs stress test on BwTree|
+|make test        | Runs insert-read-delete test for multiple times with different patterns|
+|make epoch-test  | Runs epoch manager test|
+|make infinite-insert-test | Runs random insert test on a random pattern|
 
 Misc
 ====
