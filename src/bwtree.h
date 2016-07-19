@@ -2320,6 +2320,9 @@ retry_traverse:
     } //while(1)
 
     if(value_p == nullptr) {
+      // We are using an iterator just to get a leaf page
+      assert(index_pair_p == nullptr);
+      
       // If both are nullptr then we just navigate the sibling chain
       // to find the correct node with the correct range
       // And then the iterator will consolidate the node without actually
@@ -5640,7 +5643,9 @@ before_switch:
   bool Insert(const KeyType &key, const ValueType &value) {
     bwt_printf("Insert called\n");
 
+    #ifdef BWTREE_DEBUG
     insert_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5724,7 +5729,9 @@ before_switch:
                          bool *predicate_satisfied) {
     bwt_printf("Insert (cond.) called\n");
 
+    #ifdef BWTREE_DEBUG
     insert_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5843,7 +5850,9 @@ before_switch:
   bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
 
+    #ifdef BWTREE_DEBUG
     delete_op_count.fetch_add(1);
+    #endif
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -5910,7 +5919,9 @@ before_switch:
   bool DeleteExchange(KeyType &key, ValueType *value_p) {
     bwt_printf("DeleteExchange called\n");
 
+    #ifdef BWTREE_DEBUG
     delete_op_count.fetch_add(1);
+    #endif
 
     const KeyValuePair *item_p;
 
