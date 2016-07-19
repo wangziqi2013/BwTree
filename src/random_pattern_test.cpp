@@ -209,7 +209,7 @@ void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num) {
   std::chrono::duration<double> elapsed_seconds = end - start;
 
   std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
-            << " million random insertion/sec" << "\n";
+            << " million seq insertion/sec" << "\n";
 
   // Then test random read after random insert
   std::vector<long int> v{};
@@ -229,7 +229,7 @@ void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num) {
 
   elapsed_seconds = end - start;
   std::cout << "BwTree: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
-            << " million random read after random insert/sec" << "\n";
+            << " million random read after seq insert/sec" << "\n";
 
   return;
 }
