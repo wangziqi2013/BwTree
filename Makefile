@@ -11,34 +11,34 @@ all: main
 main: $(OBJ)
 	$(CXX) $(OBJ) -o ./main -pthread -std=c++11 -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/main.o: $(SRC)
+./build/main.o: $(SRC) ./src/bwtree.h
 	$(CXX) ./src/main.cpp -c -pthread -std=c++11 -o ./build/main.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/bwtree.o: ./src/bwtree.cpp
+./build/bwtree.o: ./src/bwtree.cpp ./src/bwtree.h
 	$(CXX) ./src/bwtree.cpp -c -std=c++11 -o ./build/bwtree.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/test_suite.o: ./src/test_suite.cpp
+./build/test_suite.o: ./src/test_suite.cpp ./src/bwtree.h
 	$(CXX) ./src/test_suite.cpp -c -std=c++11 -o ./build/test_suite.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/random_pattern_test.o: ./src/random_pattern_test.cpp
+./build/random_pattern_test.o: ./src/random_pattern_test.cpp ./src/bwtree.h
 	$(CXX) ./src/random_pattern_test.cpp -c -std=c++11 -o ./build/random_pattern_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 	
-./build/basic_test.o: ./src/basic_test.cpp
+./build/basic_test.o: ./src/basic_test.cpp ./src/bwtree.h
 	$(CXX) ./src/basic_test.cpp -c -std=c++11 -o ./build/basic_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 	
-./build/mixed_test.o: ./src/mixed_test.cpp
+./build/mixed_test.o: ./src/mixed_test.cpp ./src/bwtree.h
 	$(CXX) ./src/mixed_test.cpp -c -std=c++11 -o ./build/mixed_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/performance_test.o: ./src/performance_test.cpp
+./build/performance_test.o: ./src/performance_test.cpp ./src/bwtree.h
 	$(CXX) ./src/performance_test.cpp -c -std=c++11 -o ./build/performance_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 	
-./build/stress_test.o: ./src/stress_test.cpp
+./build/stress_test.o: ./src/stress_test.cpp ./src/bwtree.h
 	$(CXX) ./src/stress_test.cpp -c -std=c++11 -o ./build/stress_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 	
-./build/iterator_test.o: ./src/iterator_test.cpp
+./build/iterator_test.o: ./src/iterator_test.cpp ./src/bwtree.h
 	$(CXX) ./src/iterator_test.cpp -c -std=c++11 -o ./build/iterator_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
-./build/misc_test.o: ./src/misc_test.cpp
+./build/misc_test.o: ./src/misc_test.cpp ./src/bwtree.h
 	$(CXX) ./src/misc_test.cpp -c -std=c++11 -o ./build/misc_test.o -g -Wall -Winline -mcx16 $(OPT_FLAG) $(GMON_FLAG)
 
 
