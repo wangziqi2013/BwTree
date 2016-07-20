@@ -464,3 +464,75 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
 
   return;
 }
+
+
+void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t,
+                                      std::string filename) {
+  std::ifstream email_file{filename};
+  
+  std::vector<std::string> string_list{};
+  
+  // If unable to open file
+  if(email_file.good() == false) {
+    std::cout << "Unable to open file: " << filename << std::endl;
+    
+    return;
+  }
+  
+  int counter = 0;
+  std::string s{};
+  
+  // Then load the line until reaches EOF
+  while(std::getline(email_file, s).good() == true) {
+    string_list.push_back(s);
+    
+    counter++;
+  }
+    
+  printf("Successfully loaded %d entries\n", counter);
+  
+  ///////////////////////////////////////////////////////////////////
+  // After this point we continue with insertion
+  ///////////////////////////////////////////////////////////////////
+  
+  int key_num = counter;
+  
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+  start = std::chrono::system_clock::now();
+
+  for(int i = 0;i < key_num;i++) {
+    t->Insert(string_list[i], i);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "BwTree: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+            << " million email insertion/sec" << "\n";
+            
+  print_flag = true;
+  delete t;
+  print_flag = false;
+            
+  ///////////////////////////////////////////////////////////////////
+  // Then test BwTree
+  ///////////////////////////////////////////////////////////////////
+
+  stx::btree_multimap<std::string, long int> bt{};
+
+  start = std::chrono::system_clock::now();
+
+  for(int i = 0;i < key_num;i++) {
+    bt.insert(string_list[i], i);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+
+  std::cout << "stx::btree_multimap: " << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+            << " million email insertion/sec" << "\n";
+            
+  return;
+}

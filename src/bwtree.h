@@ -1199,6 +1199,14 @@ class BwTree {
       // We need to substract this value from the prefix sum in the new
       // inner node
       int split_item_index = FindSplitPoint(t);
+      
+      // Could not split because we could not find a split point
+      // and the caller is responsible for not spliting the node
+      // This should happen relative infrequently, in a sense that
+      // oversized page would affect performance
+      if(split_item_index == -1) {
+        return nullptr;
+      }
 
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's

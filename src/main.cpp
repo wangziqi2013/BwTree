@@ -10,6 +10,7 @@ int main(int argc, char **argv) {
   bool run_stress = false;
   bool run_epoch_test = false;
   bool run_infinite_insert_test = false;
+  bool run_email_test = false;
 
   int opt_index = 1;
   while(opt_index < argc) {
@@ -29,6 +30,8 @@ int main(int argc, char **argv) {
       run_epoch_test = true;
     } else if(strcmp(opt_p, "--infinite-insert-test") == 0) {
       run_infinite_insert_test = true;
+    } else if(strcmp(opt_p, "--email-test") == 0) {
+      run_email_test = true;
     } else {
       printf("ERROR: Unknown option: %s\n", opt_p);
 
@@ -44,6 +47,8 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
+  bwt_printf("RUN_INFINITE_INSERT_TEST = %d\n", run_infinite_insert_test);
+  bwt_printf("RUN_EMAIL_TEST = %d\n", run_email_test);
   bwt_printf("======================================\n");
 
   //////////////////////////////////////////////////////
@@ -51,6 +56,16 @@ int main(int argc, char **argv) {
   //////////////////////////////////////////////////////
 
   TreeType *t1 = nullptr;
+  
+  if(run_email_test == true) {
+    print_flag = true;
+    auto t2 = new BwTree<std::string, long int>{};
+    print_flag = false;
+    
+    TestBwTreeEmailInsertPerformance(t2, "emails_dump.txt");
+    
+    // t2 has already been deleted for memory reason
+  }
   
   if(run_infinite_insert_test == true) {
     print_flag = true;
