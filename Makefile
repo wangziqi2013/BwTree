@@ -71,6 +71,9 @@ epoch-test: main
 infinite-insert-test: main
 	$(PRELOAD_LIB) ./main --infinite-insert-test
 
+email-test:
+	$(PRELOAD_LIB) ./main --email-test
+
 prepare:
 	mkdir -p build
 	mkdir -p ./stl_test/bin
