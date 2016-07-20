@@ -49,6 +49,7 @@ Compile and Run
 |make test        | Runs insert-read-delete test for multiple times with different patterns|
 |make epoch-test  | Runs epoch manager test|
 |make infinite-insert-test | Runs random insert test on a random pattern|
+|make email-test | Runs email test. This requires a special email input file, which we will not provide for some reason|
 
 Misc
 ====
