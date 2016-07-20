@@ -8,9 +8,11 @@
  */
 
 #include <cstring>
+#include <string>
 #include <unordered_map>
 #include <random>
 #include <map>
+#include <fstream>
 
 #include <pthread.h>
 
@@ -175,6 +177,7 @@ void TestBTreeMultimapInsertReadPerformance();
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
+void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
 /*
  * Stress test suite
