@@ -25,11 +25,6 @@
 
 #pragma once
 
-// We use this to avoid allocating temporary STL variable
-// on the heap if everything happens locally and could
-// be contained on the stack
-#include <alloca.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
