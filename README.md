@@ -12,6 +12,10 @@ Benchmark
 
 ![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19-2.png)
 
+27.55 Million String Key; 1 thread; Intel Xeon E5-2420 v2 @ 2.20GHz; 32K/256K/16M L1/L2/L3 cache
+
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19-3.png)
+
 Stress test with key space = 60M (expected tree size = 30M); random insert/delete; 8 worker threads
 
 ![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/stress-test-result-20160629.jpg)
