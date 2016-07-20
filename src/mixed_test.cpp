@@ -15,7 +15,7 @@ std::atomic<size_t> mixed_delete_success;
 std::atomic<size_t> mixed_delete_attempt;
 
 int mixed_thread_num = 8;
-int mixed_key_num = 128 * 1024;
+int mixed_key_num = 1024 * 1024;
 
 /*
  * MixedTest1() - Tests insert-delete contention
@@ -30,16 +30,18 @@ void MixedTest1(uint64_t thread_id, TreeType *t) {
       if(t->Insert(key, key)) mixed_insert_success.fetch_add(1);
     }
 
-    printf("Finish inserting\n");
+    printf("Finish Inserting (%lu)\n", thread_id);
   } else {
     for(int i = 0;i < mixed_key_num;i++) {
       int key = mixed_thread_num * i + thread_id - 1;
 
-      while(t->Delete(key, key) == false) ;
+      while(t->Delete(key, key) == false) mixed_delete_attempt.fetch_add(1);
 
       mixed_delete_success.fetch_add(1);
-      mixed_delete_attempt.fetch_add(1UL);
+      mixed_delete_attempt.fetch_add(1);
     }
+    
+    printf("Finish Deleting (%lu -> %lu)\n", thread_id, thread_id - 1);
   }
 
   return;
