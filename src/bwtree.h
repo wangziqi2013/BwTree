@@ -5575,6 +5575,8 @@ before_switch:
             const BaseNode *node_p = GetNode(item.second);
             assert(node_p->GetType() == NodeType::LeafRemoveType ||
                    node_p->GetType() == NodeType::InnerRemoveType);
+                   
+            (void)node_p;
 
             // We cannot continue traversing the node without
             // finishing the split SMO. If we keep traversing down
@@ -5632,6 +5634,8 @@ before_switch:
             const BaseNode *node_p = GetNode(it->second);
             assert(node_p->GetType() == NodeType::LeafRemoveType ||
                    node_p->GetType() == NodeType::InnerRemoveType);
+            // To avoid compiler warning
+            (void)node_p;
                    
             context_p->abort_flag = true;
 
