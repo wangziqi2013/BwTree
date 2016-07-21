@@ -1,5 +1,5 @@
 
-SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp dcas_test.cpp partial_order_sort.cpp
+SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp dcas_test.cpp partial_order_sort.cpp copy_backward.cpp
 CXXFLAG = -O3 --std=gnu++11 -g -Wall
 
 all: $(SOURCE)
@@ -11,6 +11,7 @@ all: $(SOURCE)
 	g++ std_sort_malloc.cpp -o ./bin/std_sort_malloc $(CXXFLAG)
 	g++ sorted_small_set_test.cpp -o ./bin/sorted_small_set_test $(CXXFLAG)
 	g++ partial_order_sort.cpp -o ./bin/partial_order_sort $(CXXFLAG)
+	g++ copy_backward.cpp -o ./bin/copy_backward.cpp $(CXXFLAG)
 
 clean:
 	rm -f ./bin/*

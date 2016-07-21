@@ -11,6 +11,7 @@ int main(int argc, char **argv) {
   bool run_epoch_test = false;
   bool run_infinite_insert_test = false;
   bool run_email_test = false;
+  bool run_mixed_test = false;
 
   int opt_index = 1;
   while(opt_index < argc) {
@@ -32,6 +33,8 @@ int main(int argc, char **argv) {
       run_infinite_insert_test = true;
     } else if(strcmp(opt_p, "--email-test") == 0) {
       run_email_test = true;
+    } else if(strcmp(opt_p, "--mixed-test") == 0) {
+      run_mixed_test = true;
     } else {
       printf("ERROR: Unknown option: %s\n", opt_p);
 
@@ -49,6 +52,7 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
   bwt_printf("RUN_INFINITE_INSERT_TEST = %d\n", run_infinite_insert_test);
   bwt_printf("RUN_EMAIL_TEST = %d\n", run_email_test);
+  bwt_printf("RUN_MIXED_TEST = %d\n", run_mixed_test);
   bwt_printf("======================================\n");
 
   //////////////////////////////////////////////////////
@@ -56,6 +60,25 @@ int main(int argc, char **argv) {
   //////////////////////////////////////////////////////
 
   TreeType *t1 = nullptr;
+  
+  if(run_mixed_test == true) {
+    print_flag = true;
+    t1 = new TreeType{KeyComparator{1},
+                      KeyEqualityChecker{1}};
+    print_flag = false;
+
+    printf("Starting mixed testing...\n");
+    LaunchParallelTestID(mixed_thread_num, MixedTest1, t1);
+    printf("Finished mixed testing\n");
+
+    PrintStat(t1);
+
+    MixedGetValueTest(t1);
+
+    print_flag = true;
+    delete t1;
+    print_flag = false;
+  }
   
   if(run_email_test == true) {
     print_flag = true;

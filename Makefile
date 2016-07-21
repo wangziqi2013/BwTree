@@ -74,6 +74,9 @@ infinite-insert-test: main
 email-test:
 	$(PRELOAD_LIB) ./main --email-test
 
+mixed-test:
+	$(PRELOAD_LIB) ./main --mixed-test
+
 prepare:
 	mkdir -p build
 	mkdir -p ./stl_test/bin
