@@ -420,7 +420,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
   int iter = 10;
-
+  
   std::chrono::time_point<std::chrono::system_clock> start, end;
 
   auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
@@ -461,11 +461,66 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
             << " million read/sec" << "\n";
+            
+  ///////////////////////////////////////////////////////////////////
+  // Multithread random read performance
+  ///////////////////////////////////////////////////////////////////
+  
+  // Since it might be slow, we make it as 1
+  iter = 1;
+  
+  auto func2 = [key_num, iter](uint64_t thread_id, TreeType *t) {
+    std::vector<long> v{};
+
+    v.reserve(100);
+
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    
+    std::random_device r{};
+    std::default_random_engine e1(r());
+    std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+    start = std::chrono::system_clock::now();
+
+    for(int j = 0;j < iter;j++) {
+      for(int i = 0;i < key_num;i++) {
+        int key = uniform_dist(e1);
+        
+        t->GetValue(key, v);
+
+        v.clear();
+      }
+    }
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million read (random)/sec" << "\n";
+
+    return;
+  };
+
+  start = std::chrono::system_clock::now();
+  LaunchParallelTestID(num_thread, func2, t);
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << num_thread << " Threads BwTree: overall "
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
+            << " million read (random)/sec" << "\n";
 
   return;
 }
 
-
+/*
+ * TestBwTreeEmailInsertPerformance() - Tests insert performance on string
+ *                                      workload (email)
+ *
+ * This function requires a special email file that is not distributed
+ * publicly
+ */
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t,
                                       std::string filename) {
   std::ifstream email_file{filename};
