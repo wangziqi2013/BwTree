@@ -4891,7 +4891,16 @@ before_switch:
 
           // If this is false then we know the index term has already
           // been inserted
-          bool should_post = CheckSplitItem(parent_snapshot_p, *insert_item_p);
+          // This could also abort
+          bool should_post = \
+            CheckSplitItem(context_p, parent_snapshot_p, *insert_item_p);
+
+          // If it aborts then we know there is an item in the parent
+          // node that has the same key but different NodeID
+          // This is totally legal
+          if(context_p->abort_flag == true) {
+            return;
+          }
 
           // If the split key is out of range then we know the parent node has
           // changed
@@ -5516,8 +5525,11 @@ before_switch:
    * range of the current parent node which should be prevented since
    * we assume all delta nodes are within the valid range of the current node
    * observed from the topmost node of the delta chain
+   *
+   * Note: This function could abort
    */
-  inline bool CheckSplitItem(NodeSnapshot *snapshot_p,
+  inline bool CheckSplitItem(Context *context_p,
+                             NodeSnapshot *snapshot_p,
                              const KeyNodeIDPair &insert_item) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
@@ -5552,8 +5564,25 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(item.first, search_key) == true) {
+          
           if(item.second != insert_item.second) {
-            printf("****** NodeID does not match!\n");
+            bwt_printf("NodeID does not match (InnerInsertNode)!\n");
+            
+            // We know the old item must be an obsolete one since
+            // the node it points to has been removed and merged.
+            // The split sibling points to a new node whose split
+            // point is chosen to be the same as the old one
+            const BaseNode *node_p = GetNode(item.second);
+            assert(node_p->GetType() == NodeType::LeafRemoveType ||
+                   node_p->GetType() == NodeType::InnerRemoveType);
+
+            // We cannot continue traversing the node without
+            // finishing the split SMO. If we keep traversing down
+            // then it is possible that the SMO is posted upon before
+            // it is consolidated
+            context_p->abort_flag = true;
+            
+            return false;
           }
           
           return false;
@@ -5595,8 +5624,18 @@ before_switch:
           // then also could post
           return true;
         } else {
+          
+          // If the parent node is out of date
           if(it->second != insert_item.second) {
-            printf("****** NodeID does not match!\n");
+            bwt_printf("NodeID does not match (InnerNode) !\n");
+
+            const BaseNode *node_p = GetNode(it->second);
+            assert(node_p->GetType() == NodeType::LeafRemoveType ||
+                   node_p->GetType() == NodeType::InnerRemoveType);
+                   
+            context_p->abort_flag = true;
+
+            return false;
           }
           
           return false;
