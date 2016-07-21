@@ -4703,6 +4703,17 @@ before_switch:
         NodeSnapshot *parent_snapshot_p = \
           GetLatestParentNodeSnapshot(context_p);
 
+        // This is necessary - make sure the parent node snapshot
+        // is always update to date such that we do not miss a
+        // late InnerInsertNode that actually posts the deleted item
+        // o.w. the thread will just continue and post on top of
+        // an unfinished merge delta
+        if(parent_snapshot_p->node_p != GetNode(parent_snapshot_p->node_id)) {
+          context_p->abort_flag = true;
+          
+          return;
+        }
+
         // This is the item being deleted inside parent node
         const KeyNodeIDPair *delete_item_p = nullptr;
 
@@ -5573,6 +5584,8 @@ before_switch:
             // The split sibling points to a new node whose split
             // point is chosen to be the same as the old one
             const BaseNode *node_p = GetNode(item.second);
+            // Also we know the NodeID must be valid, since
+            //
             assert(node_p->GetType() == NodeType::LeafRemoveType ||
                    node_p->GetType() == NodeType::InnerRemoveType);
                    
