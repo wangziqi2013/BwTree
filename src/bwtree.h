@@ -4359,10 +4359,34 @@ retry_traverse:
 
     // This is the serialization point for reading/writing root node
     NodeID child_node_id = root_id.load();
+    
+    LoadNodeIDReadOptimized(child_node_id, context_p);
 
+    if(context_p->abort_flag == true) {
+      bwt_printf("LoadNodeID aborted on loading root (RO)\n");
+
+      goto abort_traverse;
+    }
+    
     bwt_printf("Successfully loading root node ID (RO)\n");
 
     while(1) {
+      child_node_id = NavigateInnerNode(context_p);
+
+      // Navigate could abort since it might go to another NodeID
+      // if there is a split delta and the key is >= split key
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (RO)\n");
+
+        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
+        // as a double check
+        // This is the only situation that this function returns
+        // INVALID_NODE_ID
+        assert(child_node_id == INVALID_NODE_ID);
+
+        goto abort_traverse;
+      }
+      
       // This might load a leaf child
       // Also LoadNodeID() does not guarantee the node bound matches
       // search key. Since we could readjust using the split side link
@@ -4397,22 +4421,6 @@ retry_traverse:
 
         // If there is no abort then we could safely return
         return;
-      }
-      
-      child_node_id = NavigateInnerNode(context_p);
-
-      // Navigate could abort since it might go to another NodeID
-      // if there is a split delta and the key is >= split key
-      if(context_p->abort_flag == true) {
-        bwt_printf("Navigate Inner Node abort (RO). ABORT\n");
-
-        // If NavigateInnerNode() aborts then it retrns INVALID_NODE_ID
-        // as a double check
-        // This is the only situation that this function returns
-        // INVALID_NODE_ID
-        assert(child_node_id == INVALID_NODE_ID);
-
-        goto abort_traverse;
       }
     } // while(1)
 
