@@ -54,6 +54,7 @@ Compile and Run
 |make epoch-test  | Runs epoch manager test|
 |make infinite-insert-test | Runs random insert test on a random pattern|
 |make email-test | Runs email test. This requires a special email input file, which we will not provide for some reason|
+|make mixed-test | Runs insert-delete extremely high contention test. This test is the one that fails most implementations|
 
 Misc
 ====
