@@ -13,6 +13,7 @@
 #include <random>
 #include <map>
 #include <fstream>
+#include <iostream>
 
 #include <pthread.h>
 
