@@ -1,5 +1,7 @@
 # BwTree [![Build Status](https://travis-ci.org/wangziqi2013/BwTree.svg?branch=peloton)](https://travis-ci.org/wangziqi2013/BwTree)
-This is a street strength implementation of Bw-Tree, the Microsoft's implementation of which is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
+This is a street strength implementation of Bw-Tree, using ideas from the MSR's paper with some minor modifications. The official implementation of BwTree by Microsoft is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
+
+BwTree is a general purpose, concurrent and lock-free B+-Tree index. It allows for multiple threads modifying and/or querying the tree concurrently without corrupting the tree or giving any inconsistent results. However, BwTree only guarantees atomicity of operations, and is not a concurrent control agent. If both atomicity and isolation is required, you need an extra  concurrent control scheme.
  
 Benchmark
 =========
