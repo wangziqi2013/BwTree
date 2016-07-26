@@ -86,19 +86,6 @@
                                             typename ValueEqualityChecker, \
                                             typename ValueHashFunc>
 
-// These two are used to verify whether to use certain flags
-#ifdef BWTREE_PELOTON
-  #pragma message("BWTREE_PELOTON = On")
-#else
-  #pragma message("BWTREE_PELOTON = Off")
-#endif
-
-#ifdef BWTREE_DEBUG
-  #pragma message("BWTREE_DEBUG = On")
-#else
-  #pragma message("BWTREE_DEBUG = Off")
-#endif
-
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
@@ -6395,19 +6382,19 @@ before_switch:
       // measure just force cleaning all epoches no matter whether they
       // are cleared or not
       if(head_epoch_p != nullptr) {
-        printf("ERROR: After cleanup there is still epoch left\n");
-        printf("==============================================\n");
-        printf("DUMP\n");
+        bwt_printf("ERROR: After cleanup there is still epoch left\n");
+        bwt_printf("==============================================\n");
+        bwt_printf("DUMP\n");
 
         for(EpochNode *epoch_node_p = head_epoch_p;
             epoch_node_p != nullptr;
             epoch_node_p = epoch_node_p->next_p) {
-          printf("Active thread count: %d\n",
+          bwt_printf("Active thread count: %d\n",
                  epoch_node_p->active_thread_count.load());
           epoch_node_p->active_thread_count = 0;
         }
 
-        printf("RETRY CLEANING...\n");
+        bwt_printf("RETRY CLEANING...\n");
         ClearEpoch();
       }
 
