@@ -35,21 +35,6 @@
 #include <vector>
 
 /*
- * class PointerComparator - A template class for comparing pointer types
- *
- * If the ValueType of BwTree is pointer type, we usually do not want to
- * compare pointers directly, but instead we hope to dereference the pointer
- * and do comparison with the dereferenced type
- */
-template <typename DereferencedType,
-          typename DereferencedTypeComparator = std::equal_to<DereferencedType>>
-class PointerComparator {
-  inline bool operator()(const DereferencedType *p1, const DereferencedType *p2) {
-    return DereferencedTypeComparator(*p1, *p2);
-  }
-};
-
-/*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
  *                  We strive to make BwTree a standalone and independent
@@ -139,57 +124,6 @@ static void dummy(const char*, ...) {}
   } while (0);
 
 #endif
-
-/*
- * class DummyOutObject - Mimics std::cout interface and avoids std::cout
- *                       appearing in the source
- *
- * It is a validation requirement that std::cout should not appear in the
- * source code, and all output should use logger function
- */
-class DummyOutObject {
- public:
-
-  /*
-   * operator<<() - accepts any type and chauin them up
-   *
-   * The template argument can be automatically deducted from the actual
-   * argument, which is done by the compiler
-   */
-  template <typename T>
-  DummyOutObject &operator<<(const T &value) {
-    (void)value;
-
-    return *this;
-  }
-
-  /*
-   * operator<<() - The following three are to support std::endl()
-   */
-  DummyOutObject &operator<<(std::ostream& (*f)(std::ostream &)) {
-    (void)f;
-
-    return *this;
-  }
-
-  DummyOutObject &operator<<(std::ostream& (*f)(std::ios &)) {
-    (void)f;
-
-    return *this;
-  }
-
-  DummyOutObject &operator<<(std::ostream& (*f)(std::ios_base &)) {
-    (void)f;
-
-    return *this;
-  }
-};
-
-/*
-static DummyOutObject dummy_out;
-*/
-
-#define dummy_out std::cout
 
 using NodeID = uint64_t;
 
