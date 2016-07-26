@@ -204,6 +204,24 @@ extern bool print_flag;
 // The NodeID for the first leaf is fixed, which is 2
 #define FIRST_LEAF_NODE_ID ((NodeID)2UL)
 
+// This is the value we use in epoch manager to make sure
+// no thread sneaking in while GC decision is being made
+#define MAX_THREAD_COUNT ((int)0x7FFFFFFF)
+
+// The maximum number of nodes we could map in this index
+#define MAPPING_TABLE_SIZE ((size_t)(1 << 20))
+
+// If the length of delta chain exceeds ( >= ) this then we consolidate the node
+#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)10)
+#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
+
+// If node size goes above this then we split it
+#define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
+#define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)32)
+
+#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)64)
+#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)16)
+
 /*
  * class BwTree - Lock-free BwTree index implementation
  *
@@ -304,22 +322,6 @@ class BwTree {
 
 
   using EpochNode = typename EpochManager::EpochNode;
-
-  // The maximum number of nodes we could map in this index
-  constexpr static NodeID MAPPING_TABLE_SIZE = 1 << 20;
-
-  // If the length of delta chain exceeds ( >= ) this then we consolidate the node
-  constexpr static int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 10;
-  constexpr static int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
-
-  // If node size goes above this then we split it
-  constexpr static size_t INNER_NODE_SIZE_UPPER_THRESHOLD = 128;
-  constexpr static size_t INNER_NODE_SIZE_LOWER_THRESHOLD = 32;
-  
-  constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
-  constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 16;
-
-  constexpr static int MAX_THREAD_COUNT = 0x7FFFFFFF;
 
   /*
    * enum class NodeType - Bw-Tree node type
