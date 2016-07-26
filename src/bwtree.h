@@ -209,6 +209,7 @@ class BwTree {
   class BaseNode;
   class NodeSnapshot;
 
+  class KeyNodeIDPairComparator;
   class KeyNodeIDPairHashFunc;
   class KeyNodeIDPairEqualityChecker;
   class KeyValuePairHashFunc;
@@ -384,8 +385,40 @@ class BwTree {
   };
 
   ///////////////////////////////////////////////////////////////////
-  // Equality checker and hasher for key-value pair
+  // Comparator, equality checker and hasher for key-value pair
   ///////////////////////////////////////////////////////////////////
+
+  /*
+   * class KeyValuePairComparator - Comparator class for KeyValuePair
+   */
+  class KeyValuePairComparator {
+   public:
+    const KeyComparator *key_cmp_obj_p;
+
+    /*
+     * Default constructor - deleted
+     */
+    KeyValuePairComparator() = delete;
+
+    /*
+     * Constructor
+     */
+    KeyValuePairComparator(BwTree *p_tree_p) :
+      key_cmp_obj_p{&p_tree_p->key_cmp_obj}
+    {}
+
+    /*
+     * operator() - Compares key-value pair by comparing each component
+     *              of them
+     *
+     * NOTE: This function only compares keys with KeyType. For +/-Inf
+     * the wrapped raw key comparator will fail
+     */
+    inline bool operator()(const KeyValuePair &kvp1,
+                           const KeyValuePair &kvp2) const {
+      return (*key_cmp_obj_p)(kvp1.first, kvp2.first);
+    }
+  };
 
   /*
    * class KeyValuePairEqualityChecker - Checks KeyValuePair equality
@@ -1676,6 +1709,7 @@ class BwTree {
       value_hash_obj{p_value_hash_obj},
 
       // key-node ID pair equality checker and hasher
+      key_node_id_pair_cmp_obj{this},
       key_node_id_pair_eq_obj{this},
       key_node_id_pair_hash_obj{this},
 
@@ -2338,10 +2372,7 @@ abort_traverse:
     auto it = std::upper_bound(sep_list_p->begin() + 1,
                                sep_list_p->end(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               [this](const KeyNodeIDPair &knp1,
-                                      const KeyNodeIDPair &knp2) {
-                                  return this->key_cmp_obj(knp1.first, knp2.first);
-                               });
+                               key_node_id_pair_cmp_obj);
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -2652,10 +2683,7 @@ abort_traverse:
               std::lower_bound(inner_node_p->sep_list.begin() + 1,
                                inner_node_p->sep_list.end(),
                                high_key_pair,     // This contains the high key
-                               [this](const KeyNodeIDPair &knp1,
-                                      const KeyNodeIDPair &knp2) {
-                                 return this->key_cmp_obj(knp1.first, knp2.first);
-                               });
+                               key_node_id_pair_cmp_obj);
           }
 
           // Since we want to access its first element
@@ -5561,9 +5589,7 @@ before_switch:
         auto it = std::lower_bound(sep_list_p->begin() + 1,
                                    sep_list_p->end(),
                                    insert_item,
-                                   [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
-                                     return this->key_cmp_obj(knp1.first, knp2.first);
-                                   });
+                                   key_node_id_pair_cmp_obj);
         // This is special case since we could not compare the iterator
         if(it == sep_list_p->end()) {
           // If the key does not exist then return true and post node
@@ -5695,9 +5721,7 @@ before_switch:
       std::lower_bound(inner_node_p->sep_list.begin() + 1,
                        inner_node_p->sep_list.end(),
                        *delete_item_p,
-                       [this](const KeyNodeIDPair &knp1, const KeyNodeIDPair &knp2) {
-                         return this->key_cmp_obj(knp1.first, knp2.first);
-                       });
+                       key_node_id_pair_cmp_obj);
 
     // If the lower bound of merge_key_p is not itself, then we
     // declare such key does not exist
@@ -6192,6 +6216,7 @@ before_switch:
   const ValueHashFunc value_hash_obj;
 
   // The following three are used for std::pair<KeyType, NodeID>
+  const KeyNodeIDPairComparator key_node_id_pair_cmp_obj;
   const KeyNodeIDPairEqualityChecker key_node_id_pair_eq_obj;
   const KeyNodeIDPairHashFunc key_node_id_pair_hash_obj;
 
