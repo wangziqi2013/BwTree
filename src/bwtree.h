@@ -1708,12 +1708,13 @@ class BwTree {
       value_eq_obj{p_value_eq_obj},
       value_hash_obj{p_value_hash_obj},
 
-      // key-node ID pair equality checker and hasher
+      // key-node ID pair cmp, equality checker and hasher
       key_node_id_pair_cmp_obj{this},
       key_node_id_pair_eq_obj{this},
       key_node_id_pair_hash_obj{this},
 
-      // key-value pair equality checker and hasher
+      // key-value pair cmp, equality checker and hasher
+      key_value_pair_cmp_obj{this},
       key_value_pair_eq_obj{this},
       key_value_pair_hash_obj{this},
 
@@ -2984,9 +2985,7 @@ abort_traverse:
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
-                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                                return this->key_cmp_obj(kvp1.first, kvp2.first);
-                             });
+                             key_value_pair_cmp_obj);
 
           // If there is something to copy
           while((copy_start_it != leaf_node_p->data_list.end()) && \
@@ -3159,9 +3158,7 @@ abort_traverse:
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
-                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                               return this->key_cmp_obj(kvp1.first, kvp2.first);
-                             });
+                             key_value_pair_cmp_obj);
 
           // Search all values with the search key
           while((scan_start_it != leaf_node_p->data_list.end()) && \
@@ -3354,9 +3351,7 @@ abort_traverse:
             std::lower_bound(leaf_node_p->data_list.begin(),
                              leaf_node_p->data_list.end(),
                              std::make_pair(search_key, ValueType{}),
-                             [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                                return this->key_cmp_obj(kvp1.first, kvp2.first);
-                             });
+                             key_value_pair_cmp_obj);
 
           while((copy_start_it != leaf_node_p->data_list.end()) && \
                 (KeyCmpEqual(search_key, copy_start_it->first))) {
@@ -3639,10 +3634,7 @@ abort_traverse:
                                            // It only compares key so we
                                            // just use high key pair
                                            std::make_pair(high_key_pair.first, ValueType{}),
-                                           [this](const KeyValuePair &kvp1,
-                                                  const KeyValuePair &kvp2) {
-                                             return this->key_cmp_obj(kvp1.first, kvp2.first);
-                                           });
+                                           key_value_pair_cmp_obj);
           }
           
           // This is the index of the copy end it
@@ -6221,6 +6213,7 @@ before_switch:
   const KeyNodeIDPairHashFunc key_node_id_pair_hash_obj;
 
   // The following two are used for hashing KeyValuePair
+  const KeyValuePairComparator key_value_pair_cmp_obj;
   const KeyValuePairEqualityChecker key_value_pair_eq_obj;
   const KeyValuePairHashFunc key_value_pair_hash_obj;
 
@@ -7363,9 +7356,7 @@ try_join_again:
         it = std::lower_bound(leaf_node_p->data_list.begin(),
                               leaf_node_p->data_list.end(),
                               std::make_pair(start_key, ValueType{}),
-                              [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-                                return this->tree_p->key_cmp_obj(kvp1.first, kvp2.first);
-                              });
+                              this->tree_p->key_value_pair_cmp_obj);
 
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
