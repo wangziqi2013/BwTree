@@ -989,12 +989,12 @@ class BwTree {
    */
   class LeafNode : public BaseNode {
    public:
-    // We always hold data within a vector of KeyValuePair
-    std::vector<KeyValuePair> data_list;
-
     // This holds high key and the next node ID inside a pair
     // so that they could be accessed in a compacted manner
     KeyNodeIDPair high_key;
+    
+    // We always hold data within a vector of KeyValuePair
+    std::vector<KeyValuePair> data_list;
 
     /*
      * Constructor - Initialize bounds and next node ID
@@ -1336,12 +1336,14 @@ class BwTree {
    */
   class InnerNode : public BaseNode {
    public:
+    // This stores the high key of the node
+    // We store high key as the first member element to make
+    // speculative read and prefetching easier
+    KeyNodeIDPair high_key;
+    
     // The vector stores the separators, with the first element being the
     // low key-NodeID pair (low key is not used)
     std::vector<KeyNodeIDPair> sep_list;
-
-    // This stores the high key of the node
-    KeyNodeIDPair high_key;
 
     /*
      * Constructor
@@ -1354,7 +1356,6 @@ class BwTree {
                &high_key,      // High key is stored inside InnerNode
                p_depth,        // Depth of InnerNode defaults to 0
                p_item_count},  // We use this to reserve storage
-      sep_list{},              // This will be initialized later
       high_key{p_high_key_p} {
       // First reserve that much space (it should not be changed once set)
       // The first element is the low key, and we maintain a pointer to it
@@ -4344,6 +4345,9 @@ retry_traverse:
         // If there is no abort then we could safely return
         return;
       }
+      
+      // This does not work
+      //_mm_prefetch(&context_p->current_snapshot.node_p->GetLowKeyPair(), _MM_HINT_T0);
     } // while(1)
 
 abort_traverse:
