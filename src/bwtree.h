@@ -193,7 +193,16 @@ static DummyOutObject dummy_out;
 
 using NodeID = uint64_t;
 
+// This could not be set as a macro since we will change the flag inside
+// the testing framework
 extern bool print_flag;
+
+// This constant represents INVALID_NODE_ID which is used as an indication
+// that the node is actually the last node on that level
+#define INVALID_NODE_ID ((NodeID)0UL)
+
+// The NodeID for the first leaf is fixed, which is 2
+#define FIRST_LEAF_NODE_ID ((NodeID)2UL)
 
 /*
  * class BwTree - Lock-free BwTree index implementation
@@ -310,14 +319,7 @@ class BwTree {
   constexpr static size_t LEAF_NODE_SIZE_UPPER_THRESHOLD = 64;
   constexpr static size_t LEAF_NODE_SIZE_LOWER_THRESHOLD = 16;
 
-  constexpr static int max_thread_count = 0x7FFFFFFF;
-
-  // This constant represents INVALID_NODE_ID which is used as an indication
-  // that the node is actually the last node on that level
-  constexpr static NodeID INVALID_NODE_ID = 0;
-
-  // The NodeID for the first leaf is fixed, which is 2
-  constexpr static NodeID FIRST_LEAF_NODE_ID = 2;
+  constexpr static int MAX_THREAD_COUNT = 0x7FFFFFFF;
 
   /*
    * enum class NodeType - Bw-Tree node type
@@ -6838,13 +6840,13 @@ try_join_again:
         // number, which is the number of threads that have joined the epoch
         // since last epoch counter testing.
 
-        if(head_epoch_p->active_thread_count.fetch_sub(max_thread_count) > 0) {
+        if(head_epoch_p->active_thread_count.fetch_sub(MAX_THREAD_COUNT) > 0) {
           bwt_printf("Some thread sneaks in after we have decided"
                      " to clean. Return\n");
 
           // Must add it back to let the next round of cleaning correctly
           // identify empty epoch
-          head_epoch_p->active_thread_count.fetch_add(max_thread_count);
+          head_epoch_p->active_thread_count.fetch_add(MAX_THREAD_COUNT);
 
           break;
         }
