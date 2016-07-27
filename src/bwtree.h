@@ -5647,6 +5647,198 @@ before_switch:
     assert(false);
     return false;
   }
+  
+  /*
+   * FindLeftSibling() - Finds the left sibling of the current child node
+   *                     specified by a search key
+   *
+   * This function works in a way similar to how inner node delta chains
+   * are consolidated: We replay the log using sorted small set on all keys
+   * less than or equal to the search key, and then choose the second key
+   * in key order from high to low, after combing the content of InnerNode
+   * and the delta chain nodes
+   */
+  inline NodeID FindLeftSibling(const KeyType &search_key,
+                                NodeSnapshot *snapshot_p) {
+                                  
+    // We can only search for left sibling on inner delta chain
+    assert(snapshot_p->node_p->IsOnLeafDeltaChain() == false);
+
+    const BaseNode *node_p = snapshot_p->node_p;
+    
+    const InnerDataNode *data_node_list[node_p->GetDepth()];
+
+    // These two are used to compare InnerDataNode for < and == relation
+
+    // NOTE: For this function we reverse the direction of comparison,
+    // i.e. the order is big-to-small to make iteration a little bit easier
+    auto f1 = [this](const InnerDataNode *idn_1, const InnerDataNode *idn_2) {
+                      return this->KeyCmpLess(idn_2->item.first, idn_1->item.first);
+                      //                          ^ <-------------> ^
+                    };
+
+    auto f2 = [this](const InnerDataNode *idn_1, const InnerDataNode *idn_2) {
+                      return this->KeyCmpEqual(idn_1->item.first, idn_2->item.first);
+                    };
+
+    SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
+      sss{data_node_list, f1, f2};
+
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::InnerType: {
+          const InnerNode *inner_node_p = \
+            static_cast<const InnerNode *>(node_p);
+
+          // This finds the next item
+          auto it1 = std::lower_bound(inner_node_p->sep_list.begin() + 1,
+                                      inner_node_p->sep_List.end(),
+                                      std::make_pair(search_key, INVALID_NODE_ID),
+                                      key_node_id_pair_cmp_obj);
+
+          // After this it1 points to the current item
+          it1--;
+          
+          // Otherwise we are on the left most sibling
+          assert(it1 != inner_node_p->sep_list.begin());
+          
+          // Then locate the last element in sss
+          // The corner case is that if there is no delta node
+          // on the inner node then it2 points to the end
+          auto it2 = sss.GetBegin();
+          
+          // We need to pop out 2 items
+          KeyNodeIDPair *left_item_p = nullptr;
+          
+          int counter = 0;
+          // Loop twice. Hope compiler expands this loop
+          while(counter < 2) {
+            if(it2 == sss.GetEnd()) {
+              left_item_p = &(*it1);
+              
+              it1--;
+              counter++;
+              
+              continue;
+            }
+            
+            // Otherwise it2 == sss.GetEnd();
+            assert(it1 != inner_node_p->sep_list.begin());
+            
+            // After this point it1-- is always valid since it is not begin()
+            
+            // If the two items are same
+            if(KeyCmpEqual(sss.GetFront()->item.first, it1->first)) {
+              // If a delete node and a sep item has the same key
+              if(sss.GetFront()->GetType() == NodeType::InnerDeleteNode) {
+                it1--;
+              } else {
+                // Otherwise an insert node overrides existing key
+                left_item_p = &(sss.GetFront()->item);
+                
+                it1--;
+                
+                counter++;
+              }
+              
+              // This is common
+              sss.PopFront();
+            } else if(KeyCmpLess(sss.GetFront()->item.first, it1->first)) {
+              // If the inner node has larger sep item
+              // Otherwise an insert node overrides existing key
+              left_item_p = &(*it1);
+
+              it1--;
+
+              counter++;
+            } else {
+              if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
+                // If the delta node has larger item then set left item p
+                // to delta item
+                left_item_p = &(sss.GetFront()->item);
+
+                counter++;
+              } 
+              
+              // This is common
+              sss.PopFront();
+            }
+          } // while counter < 2
+          
+          // This is the NodeID of the left sibling
+          return left_item_p->second;
+        } 
+        case NodeType::InnerInsertType: {
+          const InnerInsertNode *insert_node_p = \
+            static_cast<const InnerInsertNode *>(node_p);
+
+          const KeyNodeIDPair &insert_item = insert_node_p->item;
+
+          if(KeyCmpLessEqual(insert_item.first, search_key) == true) {
+            sss.Insert(insert_node_p);
+          }
+
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // InnerInsertType
+        case NodeType::InnerDeleteType: {
+          const InnerDeleteNode *delete_node_p = \
+            static_cast<const InnerDeleteNode *>(node_p);
+
+          const KeyNodeIDPair &delete_item = delete_node_p->item;
+
+          if(KeyCmpLessEqual(delete_item.first, search_key) == true) {
+            sss.Insert(delete_node_p);
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // InnerDeleteType
+        case NodeType::InnerSplitType: {
+          const InnerSplitNode *split_node_p = \
+            static_cast<const InnerSplitNode *>(node_p);
+
+          node_p = split_node_p->child_node_p;
+
+          break;
+        } // case InnerSplitType
+        case NodeType::InnerMergeType: {
+          const InnerMergeNode *merge_node_p = \
+            static_cast<const InnerMergeNode *>(node_p);
+
+          const KeyType &merge_key = merge_node_p->delete_item.first;
+
+          if(KeyCmpGreaterEqual(search_key, merge_key)) {
+            bwt_printf("Take merge right branch (ID = %lu)\n",
+                       snapshot_p->node_id);
+
+            node_p = merge_node_p->right_merge_p;
+          } else {
+            bwt_printf("Take merge left branch (ID = %lu)\n",
+                       snapshot_p->node_id);
+
+            node_p = merge_node_p->child_node_p;
+          }
+
+          break;
+        } // InnerMergeType
+        default: {
+          bwt_printf("ERROR: Unknown node type = %d",
+                     static_cast<int>(type));
+
+          assert(false);
+        }
+      } // switch type
+    } // while 1
+
+    // Should not reach here
+    assert(false);
+    return INVALID_NODE_ID;
+  }
 
   /*
    * FindMergePrevNextKey() - Find merge next and prev key and node ID
