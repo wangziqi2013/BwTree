@@ -3943,16 +3943,17 @@ abort_traverse:
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
     
+    /*
     {
       NodeID t = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
-                                 parent_snapshot_p);
+                                 parent_snapshot_p->node_p);
       
-      if(t != left_sibling_id) {
+      if(t != INVALID_NODE_ID && t != left_sibling_id) {
         printf("t = %lu; left sibling = %lu\n", t, left_sibling_id);
         
         assert(false);
       }
-    }
+    }*/
 
     // This might incur recursive update
     // We need to pass in the low key of left sibling node
@@ -5647,12 +5648,10 @@ before_switch:
    * These two might differ in the case of cascading remove node delta
    */
   inline NodeID FindLeftSibling(const KeyType &search_key,
-                                NodeSnapshot *snapshot_p) {
+                                const BaseNode *node_p) {
                                   
     // We can only search for left sibling on inner delta chain
-    assert(snapshot_p->node_p->IsOnLeafDeltaChain() == false);
-
-    const BaseNode *node_p = snapshot_p->node_p;
+    assert(node_p->IsOnLeafDeltaChain() == false);
     
     const InnerDataNode *data_node_list[node_p->GetDepth()];
 
@@ -5671,7 +5670,12 @@ before_switch:
 
     SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
       sss{data_node_list, f1, f2};
-      
+
+    // This is the high key of the current branch
+    //const KeyNodeIDPair &high_key_pair = node_p->GetHighKeyPair();
+    
+    int counter = 0;
+
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -5681,17 +5685,31 @@ before_switch:
             static_cast<const InnerNode *>(node_p);
             
           ///////////////////////////////////////////////////////////
-          // First find the nearest sep key < removed node ID on InnerNode
+          // First find the nearest sep key <= search key on InnerNode
           ///////////////////////////////////////////////////////////
 
-          // std::upper_bound finds the next item, and we move backward
-          // to the current element inside the inner node
+          // This is the logical end of the array
+
+          typename decltype(inner_node_p->sep_list)::const_iterator end_it{};
+          
+          // If this is not the last node then we have to bound the search
+          // range using the current high key of the branch
+          //if(high_key_pair.second == INVALID_NODE_ID) {
+            end_it = inner_node_p->sep_list.end();
+          //} else {
+          //  end_it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
+          //                            inner_node_p->sep_list.end(),
+          //                            high_key_pair,
+          //                            key_node_id_pair_cmp_obj);
+          //}
+
+          // Since we know the search key must be one of the key inside
+          // the inner node, lower bound is sufficient
           auto it1 = std::upper_bound(inner_node_p->sep_list.begin() + 1,
-                                      inner_node_p->sep_list.end(),
+                                      end_it,
                                       std::make_pair(search_key, INVALID_NODE_ID),
                                       key_node_id_pair_cmp_obj) - 1;
 
-          
           // Note that it is possible for it1 to be begin()
           // since it is not the real current node if the node id
           // is actually found on the delta chain
@@ -5707,7 +5725,6 @@ before_switch:
           // We need to pop out 2 items
           const KeyNodeIDPair *left_item_p = nullptr;
           
-          int counter = 0;
           // Loop twice. Hope compiler expands this loop
           while(counter < 2) {
             if(sss.GetBegin() == sss.GetEnd()) {
@@ -5811,24 +5828,9 @@ before_switch:
           break;
         } // case InnerSplitType
         case NodeType::InnerMergeType: {
-          const InnerMergeNode *merge_node_p = \
-            static_cast<const InnerMergeNode *>(node_p);
-
-          const KeyType &merge_key = merge_node_p->delete_item.first;
-
-          if(KeyCmpGreaterEqual(search_key, merge_key)) {
-            bwt_printf("Take merge right branch (ID = %lu)\n",
-                       snapshot_p->node_id);
-
-            node_p = merge_node_p->right_merge_p;
-          } else {
-            bwt_printf("Take merge left branch (ID = %lu)\n",
-                       snapshot_p->node_id);
-
-            node_p = merge_node_p->child_node_p;
-          }
-
-          break;
+          // We could not deal with merge node
+          // so return INVALID NODE ID to indicate that it has been ..
+          return INVALID_NODE_ID;
         } // InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown node type = %d",
