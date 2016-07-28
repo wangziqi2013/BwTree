@@ -831,9 +831,6 @@ class BwTree {
      * a leaf node would result in Segmentation Fault
      */
     inline const KeyType &GetLowKey() const {
-      // Make sure this is not called on leaf nodes
-      assert(IsOnLeafDeltaChain() == false);
-
       return metadata.low_key_or_index.low_key_p->first;
     }
 
@@ -860,9 +857,6 @@ class BwTree {
      * The return value is nullptr for LeafNode and its delta chain
      */
     inline const KeyNodeIDPair &GetLowKeyPair() const {
-      // Make sure this is not called on leaf nodes
-      assert(IsOnLeafDeltaChain() == false);
-
       return *metadata.low_key_or_index.low_key_p;
     }
     
@@ -877,9 +871,6 @@ class BwTree {
 
     /*
      * GetLowKeyNodeID() - Returns the NodeID for low key
-     *
-     * Since low key is not defined for LeafNode and its delta chian
-     * this must not be called on leafNode and its delta chain
      */
     inline NodeID GetLowKeyNodeID() const {
       assert(IsOnLeafDeltaChain() == false);
@@ -904,13 +895,10 @@ class BwTree {
     /*
      * SetLowKeyPair() - Sets the low key pair of metadata
      *
-     * This function could only be called by InnerNodes and its delta chain
-     * node since for LeafNodes their low key is always nullptr on initilization
-     * and could not be reset
+     * This is only called by InnerNode since for InnerNodes
+     * the low key cannot be known before vector reserve() returns
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
-      assert(IsOnLeafDeltaChain() == false);
-
       metadata.low_key_or_index.low_key_p = p_low_key_p;
 
       return;
@@ -1032,6 +1020,9 @@ class BwTree {
     // Since leaf nodes does not have low key as sep item,
     // but we do need them when searching for the low key
     // let's put it here as a class member
+    // NOTE: Only the key field is used
+    // next node ID is always set to INVALID_NODE_ID
+    // we keep this for consistency
     KeyNodeIDPair low_key;
 
     /*
@@ -1044,8 +1035,8 @@ class BwTree {
      * items into the vector, since the high key does not come from vector
      * items unlike the InnerNode
      */
-    LeafNode(const KeyNodeIDPair &p_high_key_p,
-             const KeyNodeIDPair &p_low_key_p,
+    LeafNode(const KeyNodeIDPair &p_low_key_p,
+             const KeyNodeIDPair &p_high_key_p,
              int p_item_count) :
       BaseNode{NodeType::LeafType,
                &low_key,         // Low key is not defined for leaf node
@@ -1177,11 +1168,12 @@ class BwTree {
       // This is the key part of the key-value pair, also the low key
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
-      //const KeyType &split_key = copy_start_it->first;
+      const KeyType &split_key = copy_start_it->first;
 
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
-        new LeafNode{this->GetHighKeyPair(),
+        new LeafNode{std::make_pair(split_key, INVALID_NODE_ID),
+                     this->GetHighKeyPair(),
                      static_cast<int>(std::distance(copy_start_it,
                                                     copy_end_it))};
 
@@ -2042,12 +2034,16 @@ class BwTree {
     #ifdef BWTREE_PELOTON
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID), 0};
+      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID),
+                   std::make_pair(KeyType(), INVALID_NODE_ID),
+                   0};
 
     #else
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 0};
+      new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID),
+                   std::make_pair(KeyType{}, INVALID_NODE_ID),
+                   0};
 
     #endif
 
@@ -3501,7 +3497,8 @@ abort_traverse:
     // Prepare new node
     /////////////////////////////////////////////////////////////////
 
-    LeafNode *leaf_node_p = new LeafNode{node_p->GetHighKeyPair(),
+    LeafNode *leaf_node_p = new LeafNode{node_p->GetLowKeyPair(),
+                                         node_p->GetHighKeyPair(),
                                          // The item count of the consolidated
                                          // leaf node is the set of items still
                                          // present in the node
