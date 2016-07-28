@@ -213,7 +213,7 @@ int main(int argc, char **argv) {
     IteratorTest(t1);
     PrintStat(t1);
 
-    printf("Finised tetsing iterator\n");
+    printf("Finised testing iterator\n");
 
     //////////////////////
     // Test random insert
