@@ -3903,7 +3903,16 @@ abort_traverse:
     assert(parent_snapshot_p->IsLeaf() == false);
     
     // If the parent has changed then abort
+    // This is to avoid missing InnerInsertNode which is fatal in our case
+    // because we could not find the item that actually is on the parent node
+    //
+    // Or we might traverse right on the child (i.e. there was a split and
+    // the split was consolidated), which means also that we
+    // could not find a sep item on the parent node
     if(parent_snapshot_p->node_p != GetNode(parent_snapshot_p->node_id)) {
+      bwt_printf("Inconsistent parent node snapshot and "
+                 "current parent node. ABORT\n");
+      
       context_p->abort_flag = true;
       
       return;
@@ -3932,14 +3941,21 @@ abort_traverse:
                              return knp.second == removed_node_id;
                            });
 
+    // The removed node ID must be found inside the inner node since
+    // we are certain that at this point we did not miss any InnerInsertNode
+    // which was posted between taking parent's snapshot and taking snapshot
+    // of the removed node
+    //
+    // i.e. if there is a split delta, then either it is finished before taking
+    // the parent node snapshot, which will be part of the snapshot
+    // or it is finished and consolidated between taking parent and child node
+    // snapshot which will be found by the previous pointer check
+    //
+    // If it is finished (or even consolidated) only after taking the
+    // snapshot of the child node, then the current thread will have tried to
+    // finish that SMO and will not reach here since it would abort due to
+    // failed SMO
     assert(it != inner_node_p->sep_list.end());
-    
-    // The removed node ID may not be found in the inner node
-    if(it == inner_node_p->sep_list.end()) {
-      context_p->abort_flag = true;
-
-      return;
-    }
 
     // it points to the current node (must be an exact match),
     // so it-- points to its possible left sibling
