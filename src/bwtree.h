@@ -5672,8 +5672,6 @@ before_switch:
     SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
       sss{data_node_list, f1, f2};
       
-    const KeyNodeIDPair *current_item_p = nullptr;
-
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -5690,7 +5688,7 @@ before_switch:
           // to the current element inside the inner node
           auto it1 = std::upper_bound(inner_node_p->sep_list.begin() + 1,
                                       inner_node_p->sep_list.end(),
-                                      *current_item_p,
+                                      std::make_pair(search_key, INVALID_NODE_ID),
                                       key_node_id_pair_cmp_obj) - 1;
 
           
@@ -5719,7 +5717,7 @@ before_switch:
               counter++;
               
               continue;
-            } else if(it1 != inner_node_p->sep_list.begin()) {
+            } else if(it1 == inner_node_p->sep_list.begin()) {
               // We know the sss is not empty, so could always pop from it
               if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
                 left_item_p = &(sss.GetFront()->item);
