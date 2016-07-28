@@ -4884,6 +4884,23 @@ before_switch:
             // node that has the same key but different NodeID
             // This is totally legal
             if(found_item_p->second != insert_item_p->second) {
+              
+              #ifdef BWTREE_DEBUG
+              
+              // If this happens then it must be the case that the node with
+              // the same split key but different node ID was removed and then
+              // merged into the current node and then it is splited again
+              //
+              // We are now on the way of completing the second split SMO
+              // but since the parent has changed (we must have missed an
+              // InnerInsertNode) we need to abort and restart traversing
+              const BaseNode *node_p = GetNode(found_item_p->second);
+              
+              assert(node_p->GetType() == NodeType::InnerRemoveType ||
+                     node_p->GetType() == NodeType::LeafRemoveType);
+              
+              #endif
+              
               context_p->abort_flag = true;
             }
             
