@@ -571,7 +571,7 @@ void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t,
   print_flag = false;
             
   ///////////////////////////////////////////////////////////////////
-  // Then test BwTree
+  // Then test stx::btree_multimap
   ///////////////////////////////////////////////////////////////////
 
   stx::btree_multimap<std::string, long int> bt{};
