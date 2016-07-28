@@ -654,36 +654,15 @@ class BwTree {
    */
   class NodeMetaData {
    public:
-    // For inner nodes, low key always points to the KeyNodeIDPair inside the
-    // InnerNode
-    // For LeafInsert and LeafDelete nodes, this field is set to the index for
-    // the change that will be applied to on LeafNode data_list
-    // For other leaf nodes this field is set to nullptr and has no special
-    // meaning
-    union LowKeyOrIndex{
-      const KeyNodeIDPair *low_key_p;
-      
-      std::pair<int, bool> index_pair;
-      
-      /*
-       * Constructor - We always initialize the first element
-       *               even if it is a BaseNode *
-       */
-      LowKeyOrIndex(const KeyNodeIDPair *p_low_key_p) :
-        low_key_p{p_low_key_p}
-      {}
-      
-      LowKeyOrIndex(std::pair<int, bool> p_index_pair) :
-        index_pair{p_index_pair}
-      {}
-    } low_key_or_index;
 
-    // For inner nodes, high key points to the first element inside its
-    // separator list if there is neither InnerSplitNode nor InnerMergeNode
-    // However if there is one then the pointer points to the item inside
-    // InnerSplitNode or InnerMergeNode
-    // For leaf nodes, high key points to the KeyNodeIDPair inside the LeafNode
-    // if there is neither LeafSplitNode nor LeafMergeNode. Otherwise it
+    // For all nodes including base node and data node and SMO nodes,
+    // the low key pointer always points to a KeyNodeIDPair structure
+    // inside the base node, which is either the first element of the
+    // node sep list (InnerNode), or a class member (LeafNode)
+    const KeyNodeIDPair *low_key_p;
+
+    // high key points to the KeyNodeIDPair inside the LeafNode and InnerNode
+    // if there is neither SplitNode nor MergeNode. Otherwise it
     // points to the item inside split node or merge node
     const KeyNodeIDPair *high_key_p;
 
@@ -699,17 +678,12 @@ class BwTree {
 
     /*
      * Constructor
-     *
-     * NOTE: This constructor uses template type auto deduction which
-     * allows us to assign to the union without having to write two
-     * different constructors (the compiler will synthesize for us)
      */
-    template <typename T>
-    NodeMetaData(T p_low_key_or_index,
+    NodeMetaData(const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
                  int p_depth,
                  int p_item_count) :
-      low_key_or_index{p_low_key_or_index},
+      low_key_p{p_low_key_p},
       high_key_p{p_high_key_p},
       depth{p_depth},
       item_count{p_item_count}
@@ -733,19 +707,25 @@ class BwTree {
     /*
      * Constructor - Initialize type and metadata
      */
-    template <typename T>
     BaseNode(NodeType p_type,
-             T p_low_key_or_index,
+             const KeyNodeIDPair *p_low_key_p,
              const KeyNodeIDPair *p_high_key_p,
              int p_depth,
              int p_item_count) :
       type{p_type},
-      metadata{p_low_key_or_index, p_high_key_p, p_depth, p_item_count}
+      metadata{p_low_key_p,
+               p_high_key_p,
+               p_depth,
+               p_item_count}
     {}
 
     /*
-     * Destructor - This must be virtual in order to properly destroy
-     * the object only given a base type key
+     * Destructor
+     *
+     * Note that the destructor is not virtual which means we have to manually
+     * identify node type when destroying nodes, and call the destructor of
+     * the most derived types by converting it to the point type of the
+     * most derived type
      */
     ~BaseNode() {}
 
@@ -831,7 +811,7 @@ class BwTree {
      * a leaf node would result in Segmentation Fault
      */
     inline const KeyType &GetLowKey() const {
-      return metadata.low_key_or_index.low_key_p->first;
+      return metadata.low_key_p->first;
     }
 
     /*
@@ -857,7 +837,7 @@ class BwTree {
      * The return value is nullptr for LeafNode and its delta chain
      */
     inline const KeyNodeIDPair &GetLowKeyPair() const {
-      return *metadata.low_key_or_index.low_key_p;
+      return *metadata.low_key_p;
     }
     
     
@@ -871,11 +851,14 @@ class BwTree {
 
     /*
      * GetLowKeyNodeID() - Returns the NodeID for low key
+     *
+     * NOTE: This function should not be called for leaf nodes
+     * since the low key node ID for leaf node is not defined
      */
     inline NodeID GetLowKeyNodeID() const {
       assert(IsOnLeafDeltaChain() == false);
 
-      return metadata.low_key_or_index.low_key_p->second;
+      return metadata.low_key_p->second;
     }
 
     /*
@@ -899,22 +882,9 @@ class BwTree {
      * the low key cannot be known before vector reserve() returns
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
-      metadata.low_key_or_index.low_key_p = p_low_key_p;
+      metadata.low_key_p = p_low_key_p;
 
       return;
-    }
-    
-    /*
-     * GetIndexPair() - Returns the index-flag pair inside metadata
-     *
-     * This function must be called only on LeafInsertNode or LeafDeleteNode
-     * On other node types it would fail
-     */
-    inline std::pair<int, bool> GetIndexPair() const {
-      assert(GetType() == NodeType::LeafInsertType ||
-             GetType() == NodeType::LeafDeleteType);
-             
-      return metadata.low_key_or_index.index_pair;
     }
   };
 
@@ -931,15 +901,14 @@ class BwTree {
     /*
      * Constructor
      */
-    template <typename T>
     DeltaNode(NodeType p_type,
               const BaseNode *p_child_node_p,
-              T p_low_key_or_index,
+              const KeyNodeIDPair *p_low_key_p,
               const KeyNodeIDPair *p_high_key_p,
               int p_depth,
               int p_item_count) :
       BaseNode{p_type,
-               p_low_key_or_index,
+               p_low_key_p,
                p_high_key_p,
                p_depth,
                p_item_count},
@@ -982,24 +951,41 @@ class BwTree {
    */
   class LeafDataNode : public DeltaNode {
    public:
-    KeyValuePair item;
 
-    template <typename T>
+    // This is the item being deleted or inserted
+    KeyValuePair item;
+    
+    // This is the index of the node when inserting/deleting
+    // the item into the base leaf node
+    std::pair<int, bool> index_pair;
+
     LeafDataNode(const KeyValuePair &p_item,
                  NodeType p_type,
                  const BaseNode *p_child_node_p,
-                 T p_low_key_or_index,
+                 std::pair<int, bool> p_index_pair,
+                 const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
                  int p_depth,
                  int p_item_count) :
       DeltaNode{p_type,
                 p_child_node_p,
-                p_low_key_or_index,
+                p_low_key_p,
                 p_high_key_p,
                 p_depth,
                 p_item_count},
-      item{p_item}
+      item{p_item},
+      index_pair{p_index_pair}
     {}
+    
+    /*
+     * GetIndexPair() - Returns the index pair for LeafDataNode
+     *
+     * Note that this function does not return reference which means
+     * that there is no way to modify the index pair
+     */
+    std::pair<int, bool> GetIndexPair() const {
+      return index_pair;
+    }
   };
 
   /*
