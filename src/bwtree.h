@@ -3901,6 +3901,13 @@ abort_traverse:
     // Get its parent node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
     assert(parent_snapshot_p->IsLeaf() == false);
+    
+    // If the parent has changed then abort
+    if(parent_snapshot_p->node_p != GetNode(parent_snapshot_p->node_id)) {
+      context_p->abort_flag = true;
+      
+      return;
+    }
 
     // We either consolidate the parent node to get an inner node
     // or directly use the parent node_p if it is already inner node
@@ -3925,6 +3932,8 @@ abort_traverse:
                              return knp.second == removed_node_id;
                            });
 
+    assert(it != inner_node_p->sep_list.end());
+    
     // The removed node ID may not be found in the inner node
     if(it == inner_node_p->sep_list.end()) {
       context_p->abort_flag = true;
