@@ -1028,6 +1028,11 @@ class BwTree {
     
     // We always hold data within a vector of KeyValuePair
     std::vector<KeyValuePair> data_list;
+    
+    // Since leaf nodes does not have low key as sep item,
+    // but we do need them when searching for the low key
+    // let's put it here as a class member
+    KeyNodeIDPair low_key;
 
     /*
      * Constructor - Initialize bounds and next node ID
@@ -1039,13 +1044,16 @@ class BwTree {
      * items into the vector, since the high key does not come from vector
      * items unlike the InnerNode
      */
-    LeafNode(const KeyNodeIDPair &p_high_key_p, int p_item_count) :
+    LeafNode(const KeyNodeIDPair &p_high_key_p,
+             const KeyNodeIDPair &p_low_key_p,
+             int p_item_count) :
       BaseNode{NodeType::LeafType,
-               nullptr,         // Low key is not defined for leaf node
-               &high_key,       // The high key is stored inside leaf node
-               0,               // Depth of the node - always 0
+               &low_key,         // Low key is not defined for leaf node
+               &high_key,        // The high key is stored inside leaf node
+               0,                // Depth of the node - always 0
                p_item_count},
-      high_key{p_high_key_p}
+      high_key{p_high_key_p},
+      low_key{p_low_key_p}
     {}
 
     /*
