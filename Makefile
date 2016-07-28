@@ -76,10 +76,10 @@ epoch-test: main
 infinite-insert-test: main
 	$(PRELOAD_LIB) ./main --infinite-insert-test
 
-email-test:
+email-test: main
 	$(PRELOAD_LIB) ./main --email-test
 
-mixed-test:
+mixed-test: main
 	$(PRELOAD_LIB) ./main --mixed-test
 
 prepare:
