@@ -1492,8 +1492,7 @@ class BwTree {
    */
   class InnerDeleteNode : public InnerDataNode {
    public:
-    KeyNodeIDPair delete_item;
-
+     
     // This holds the previous key-NodeID item in the inner node
     // if the NodeID matches the low key of the inner node (which
     // should be a constant and kept inside each node on the delta chain)
@@ -3922,25 +3921,7 @@ abort_traverse:
         CollectAllSepsOnInner(parent_snapshot_p,
                               parent_snapshot_p->node_p->GetDepth() + 1);
 
-      const BaseNode *old_node_p = parent_snapshot_p->node_p;
-
-      // As an optimization, we CAS the consolidated version of InnerNode
-      // here. If CAS fails, we SHOULD NOT delete the inner node immediately
-      // since its value is still being used by this function
-      // So we delay allocation by putting it into the garbage chain
-      bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
-                                      inner_node_p,
-                                      old_node_p);
-
-      // If CAS succeeds we update the node_p in parent snapshot
-      // If CAS fails we delete inner node allocated in CollectAllSeps..()
-      if(ret == true) {
-        parent_snapshot_p->node_p = inner_node_p;
-
-        epoch_manager.AddGarbageNode(old_node_p);
-      } else {
         epoch_manager.AddGarbageNode(inner_node_p);
-      }
     }
 
     // This returns the first iterator >= current low key
@@ -3968,7 +3949,18 @@ abort_traverse:
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
-
+    
+    /*
+    {
+      NodeID t = FindLeftSibling(removed_node_id, parent_snapshot_p);
+      
+      if(t != left_sibling_id) {
+        printf("t = %lu; left sibling = %lu\n", t, left_sibling_id);
+        
+        assert(false);
+      }
+    }
+    */
 
     // This might incur recursive update
     // We need to pass in the low key of left sibling node
@@ -5658,7 +5650,8 @@ before_switch:
    * in key order from high to low, after combing the content of InnerNode
    * and the delta chain nodes
    */
-  inline NodeID FindLeftSibling(const KeyType &search_key,
+   /*
+  inline NodeID FindLeftSibling(NodeID removed_node_id,
                                 NodeSnapshot *snapshot_p) {
                                   
     // We can only search for left sibling on inner delta chain
@@ -5683,6 +5676,8 @@ before_switch:
 
     SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
       sss{data_node_list, f1, f2};
+      
+    const KeyNodeIDPair *current_item_p = nullptr;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -5691,48 +5686,92 @@ before_switch:
         case NodeType::InnerType: {
           const InnerNode *inner_node_p = \
             static_cast<const InnerNode *>(node_p);
+            
+          ///////////////////////////////////////////////////////////
+          // First find the nearest sep key < removed node ID on InnerNode
+          ///////////////////////////////////////////////////////////
 
-          // This finds the next item
-          auto it1 = std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                                      inner_node_p->sep_List.end(),
-                                      std::make_pair(search_key, INVALID_NODE_ID),
-                                      key_node_id_pair_cmp_obj);
+          typename decltype(inner_node_p->sep_list)::const_iterator it1{};
 
-          // After this it1 points to the current item
-          it1--;
+          if(current_item_p == nullptr) {
+            it1 = std::find_if(inner_node_p->sep_list.begin() + 1,
+                               inner_node_p->sep_list.end(),
+                               [removed_node_id](const InnerDataNode *idn_p) {
+                                 return idn_p->item.second == removed_node_id;
+                               });
+
+            // If the node id not found in delta nodes then
+            // it must be inside the inner node
+            assert(it1 != inner_node_p->sep_list.end());
+            
+            current_item_p = &(*it1);
+          } else {
+
+            // std::upper_bound finds the next item, and we move backward
+            // to the current element inside the inner node
+            it1 = std::upper_bound(inner_node_p->sep_list.begin() + 1,
+                                   inner_node_p->sep_list.end(),
+                                   *current_item_p,
+                                   key_node_id_pair_cmp_obj) - 1;
+          }
           
-          // Otherwise we are on the left most sibling
-          assert(it1 != inner_node_p->sep_list.begin());
+          // Note that it is possible for it1 to be begin()
+          // since it is not the real current node if the node id
+          // is actually found on the delta chain
+
+          // After this point current item p is guaranteed to be valid pointer
+          // to either an item on the delta chain or on InnerNode
           
-          // Then locate the last element in sss
-          // The corner case is that if there is no delta node
-          // on the inner node then it2 points to the end
-          auto it2 = sss.GetBegin();
+          ///////////////////////////////////////////////////////////
+          // Then find the nearest position on the delta set
+          ///////////////////////////////////////////////////////////
+          
+          while(sss.GetBegin() != sss.GetEnd() && \
+                KeyCmpLess(current_item_p->first, sss.GetFront()) == true) {
+            sss.PopFront();
+          }
+          
+          ///////////////////////////////////////////////////////////
+          // After this point, it is guaranteed:
+          //   1. it1 points to an element <= removed node's low key
+          //   2. sss.GetBegin() points to an element <= removed node's low key
+          //      * OR *
+          //      sss.GetBegin() == sss.GetEnd()
+          ///////////////////////////////////////////////////////////
           
           // We need to pop out 2 items
-          KeyNodeIDPair *left_item_p = nullptr;
+          const KeyNodeIDPair *left_item_p = nullptr;
           
           int counter = 0;
           // Loop twice. Hope compiler expands this loop
           while(counter < 2) {
-            if(it2 == sss.GetEnd()) {
+            if(sss.GetBegin() == sss.GetEnd()) {
               left_item_p = &(*it1);
               
               it1--;
               counter++;
               
               continue;
+            } else if(it1 != inner_node_p->sep_list.begin()) {
+              // We know the sss is not empty, so could always pop from it
+              if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
+                left_item_p = &(sss.GetFront()->item);
+
+                counter++;
+              }
+              
+              // This has to be done anyway
+              sss.PopFront();
+              
+              continue;
             }
-            
-            // Otherwise it2 == sss.GetEnd();
-            assert(it1 != inner_node_p->sep_list.begin());
             
             // After this point it1-- is always valid since it is not begin()
             
             // If the two items are same
             if(KeyCmpEqual(sss.GetFront()->item.first, it1->first)) {
               // If a delete node and a sep item has the same key
-              if(sss.GetFront()->GetType() == NodeType::InnerDeleteNode) {
+              if(sss.GetFront()->GetType() == NodeType::InnerDeleteType) {
                 it1--;
               } else {
                 // Otherwise an insert node overrides existing key
@@ -5776,9 +5815,11 @@ before_switch:
 
           const KeyNodeIDPair &insert_item = insert_node_p->item;
 
-          if(KeyCmpLessEqual(insert_item.first, search_key) == true) {
-            sss.Insert(insert_node_p);
+          if(insert_item.second== removed_node_id) {
+            current_item_p = &insert_node_p->item;
           }
+          
+          sss.Insert(insert_node_p);
 
           node_p = insert_node_p->child_node_p;
 
@@ -5788,11 +5829,16 @@ before_switch:
           const InnerDeleteNode *delete_node_p = \
             static_cast<const InnerDeleteNode *>(node_p);
 
-          const KeyNodeIDPair &delete_item = delete_node_p->item;
-
-          if(KeyCmpLessEqual(delete_item.first, search_key) == true) {
-            sss.Insert(delete_node_p);
+          // This is necessary since if we ignore this then
+          // we might use an old NodeID with a different key which
+          // is fatal
+          // GC will not protect us from seeing a out of date NodeID
+          // between operations
+          if(delete_node_p->prev_item.second == removed_node_id) {
+            current_item_p = &delete_node_p->prev_item;
           }
+          
+          sss.Insert(delete_node_p);
 
           node_p = delete_node_p->child_node_p;
 
@@ -5839,6 +5885,7 @@ before_switch:
     assert(false);
     return INVALID_NODE_ID;
   }
+  */
 
   /*
    * FindMergePrevNextKey() - Find merge next and prev key and node ID
@@ -5879,22 +5926,7 @@ before_switch:
       inner_node_p = CollectAllSepsOnInner(snapshot_p,
                                            snapshot_p->node_p->GetDepth() + 1);
 
-      // We are going to garbage collect this node
-      const BaseNode *old_node_p = snapshot_p->node_p;
-
-      bool ret = InstallNodeToReplace(snapshot_p->node_id,
-                                      inner_node_p,
-                                      old_node_p);
-
-      if(ret == true) {
-        snapshot_p->node_p = inner_node_p;
-
-        epoch_manager.AddGarbageNode(old_node_p);
-      } else {
-        // Must delay deallocation since we return pointers pointing
-        // into this node's data
         epoch_manager.AddGarbageNode(inner_node_p);
-      }
     }
 
     // Find the merge key
