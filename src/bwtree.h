@@ -1187,6 +1187,7 @@ class BwTree {
                    NodeType::LeafInsertType,
                    p_child_node_p,
                    p_index_pair,
+                   &p_child_node_p->GetLowKeyPair(),
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
                    // For insert nodes, the item count is inheried from the child
@@ -1216,6 +1217,7 @@ class BwTree {
                    NodeType::LeafDeleteType,
                    p_child_node_p,
                    p_index_pair,
+                   &p_child_node_p->GetLowKeyPair(),
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
                    // For delete node it inherits item count from its child
@@ -1251,7 +1253,7 @@ class BwTree {
                   const BaseNode *p_split_node_p) :
       DeltaNode{NodeType::LeafSplitType,
                 p_child_node_p,
-                nullptr,
+                &p_child_node_p->GetLowKeyPair(),
                 // High key is redirected to the split item inside the node
                 &insert_item,
                 // NOTE: split node is SMO and does not introduce
@@ -1287,7 +1289,7 @@ class BwTree {
                    const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafRemoveType,
                 p_child_node_p,
-                nullptr,
+                &p_child_node_p->GetLowKeyPair(),
                 &p_child_node_p->GetHighKeyPair(),
                 // REMOVE node is an SMO and does not introduce data
                 p_child_node_p->GetDepth(),
@@ -1325,7 +1327,7 @@ class BwTree {
                   const BaseNode *p_child_node_p) :
       DeltaNode{NodeType::LeafMergeType,
                 p_child_node_p,
-                nullptr,
+                &p_child_node_p->GetLowKeyPair(),
                 // The high key of the merge node is inherited
                 // from the right sibling
                 &p_right_merge_p->GetHighKeyPair(),
@@ -3190,7 +3192,7 @@ abort_traverse:
             if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
               // Only Delete() will use this
               // We just simply inherit from the first node
-              *index_pair_p = node_p->GetIndexPair();
+              *index_pair_p = insert_node_p->GetIndexPair();
               
               return &insert_node_p->item;
             }
@@ -3209,7 +3211,7 @@ abort_traverse:
             if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
               // Only Insert() will use this
               // We just simply inherit from the first node
-              *index_pair_p = node_p->GetIndexPair();
+              *index_pair_p = delete_node_p->GetIndexPair();
               
               return nullptr;
             }
