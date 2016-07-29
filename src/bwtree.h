@@ -3918,6 +3918,7 @@ abort_traverse:
       return;
     }
 
+/*
     // We either consolidate the parent node to get an inner node
     // or directly use the parent node_p if it is already inner node
     const InnerNode *inner_node_p = \
@@ -3967,18 +3968,11 @@ abort_traverse:
 
     // This is our starting point to traverse right
     NodeID left_sibling_id = it->second;
-    
-    /*
-    {
-      NodeID t = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
-                                 parent_snapshot_p->node_p);
-      
-      if(t != INVALID_NODE_ID && t != left_sibling_id) {
-        printf("t = %lu; left sibling = %lu\n", t, left_sibling_id);
-        
-        assert(false);
-      }
-    }*/
+*/
+
+
+    NodeID left_sibling_id = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
+                                             parent_snapshot_p);
 
     // This might incur recursive update
     // We need to pass in the low key of left sibling node
@@ -5654,8 +5648,15 @@ before_switch:
    * These two might differ in the case of cascading remove node delta
    */
   inline NodeID FindLeftSibling(const KeyType &search_key,
-                                const BaseNode *node_p) {
-                                  
+                                NodeSnapshot *snapshot_p) {
+
+    // This will be changed during the traversal
+    const BaseNode *node_p = snapshot_p->node_p;
+    
+    // First check that the node is always in the range of the inner node
+    assert(node_p->GetNextNodeID() == INVALID_NODE_ID || \
+           KeyCmpLess(search_key, node_p->GetHighKey()));
+    
     // We can only search for left sibling on inner delta chain
     assert(node_p->IsOnLeafDeltaChain() == false);
     
@@ -5676,11 +5677,6 @@ before_switch:
 
     SortedSmallSet<const InnerDataNode *, decltype(f1), decltype(f2)> \
       sss{data_node_list, f1, f2};
-
-    // This is the high key of the current branch
-    //const KeyNodeIDPair &high_key_pair = node_p->GetHighKeyPair();
-    
-    int counter = 0;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -5730,6 +5726,8 @@ before_switch:
           
           // We need to pop out 2 items
           const KeyNodeIDPair *left_item_p = nullptr;
+          
+          int counter = 0;
           
           // Loop twice. Hope compiler expands this loop
           while(counter < 2) {
@@ -5834,9 +5832,46 @@ before_switch:
           break;
         } // case InnerSplitType
         case NodeType::InnerMergeType: {
-          // We could not deal with merge node
-          // so return INVALID NODE ID to indicate that it has been ..
-          return INVALID_NODE_ID;
+          bwt_printf("Found merge node. "
+                     "Need consolidation to find left sibling\n");
+
+          // Since we could not deal with merge delta, if there is
+          // a merge delta on the path, the only solution is to
+          // consolidate the inner node, and try to install it
+          //
+          // Even if installation fails, we need to prevserve the content
+          // of the consolidated node, so need to add it to the GC instead
+          // of directly releasing its memory
+
+          InnerNode *inner_node_p = \
+            CollectAllSepsOnInner(snapshot_p,
+                                  // Must +1 to avoid looping on the same depth
+                                  // without any consolidation
+                                  snapshot_p->node_p->GetDepth() + 1);
+
+          bool ret = InstallNodeToReplace(snapshot_p->node_id,
+                                          inner_node_p,
+                                          snapshot_p->node_p);
+                                          
+          if(ret == true) {
+            epoch_manager.AddGarbageNode(snapshot_p->node_p);
+            
+            snapshot_p->node_p = inner_node_p;
+          } else {
+            // This is necessary to preserve the content of the inner node
+            // while avoid memory leaks
+            epoch_manager.AddGarbageNode(inner_node_p);
+          }
+          
+          // Next iteration will go directly into inner node we have
+          // just consolidated
+          node_p = inner_node_p;
+            
+          // This is important - since we just changed the entire node,
+          // the sss should be empty
+          sss.Invalidate();
+          
+          break;
         } // InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown node type = %d",
