@@ -140,8 +140,8 @@ extern bool print_flag;
 #define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
-#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)64)
-#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)16)
+#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
+#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
 /*
  * class BwTree - Lock-free BwTree index implementation
