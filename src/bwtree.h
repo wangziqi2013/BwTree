@@ -4112,11 +4112,8 @@ abort_traverse:
       return;
     }
 
+    // This does not abort
     TryConsolidateNode(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
-    }
 
     AdjustNodeSize(context_p);
 
@@ -4144,11 +4141,8 @@ abort_traverse:
       return;
     }
 
+    // This does not abort
     TryConsolidateNode(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
-    }
 
     AdjustNodeSize(context_p);
 
