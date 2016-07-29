@@ -144,4 +144,14 @@ class SortedSmallSet {
   inline std::ptrdiff_t GetSize() const {
     return end_p - start_p;
   }
+  
+  /*
+   * Invaidate() - Clears all contents between start_p and end_p
+   *
+   * This is called if we want to set the size to 0 to avoid
+   * fetching any element from the sss
+   */
+  inline void Invalidate() {
+    end_p = start_p;
+  }
 };
