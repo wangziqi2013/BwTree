@@ -49,12 +49,36 @@ BWTREE_INDEX_TYPE::~BWTreeIndex() {
 BWTREE_TEMPLATE_ARGUMENTS
 bool
 BWTREE_INDEX_TYPE::InsertEntry(const storage::Tuple *key,
-                               const ItemPointer &location) {
+                               const ItemPointer &location,
+                              ItemPointer **itempointer_ptr) {
+  KeyType index_key;
+
+  index_key.SetFromKey(key);
+  ItemPointer *itempointer = new ItemPointer(location);
+  std::pair<KeyType, ValueType> entry(index_key,
+                                      itempointer);
+  if (itempointer_ptr != nullptr) {
+    *itempointer_ptr = itempointer;
+  }
+  
+  bool ret = container.Insert(index_key, itempointer);
+  // If insertion fails we just delete the new value and return false
+  // to notify the caller
+  if(ret == false) {
+    delete itempointer;
+  }
+
+  return ret;
+}
+
+BWTREE_TEMPLATE_ARGUMENTS
+bool
+BWTREE_INDEX_TYPE::InsertEntryInTupleIndex(const storage::Tuple *key, ItemPointer *location) {
   KeyType index_key;
   index_key.SetFromKey(key);
-  
-  ItemPointer *item_p = new ItemPointer{location};
-  
+
+  ItemPointer *item_p = location;
+
   bool ret = container.Insert(index_key, item_p);
   // If insertion fails we just delete the new value and return false
   // to notify the caller
@@ -98,6 +122,31 @@ BWTREE_INDEX_TYPE::DeleteEntry(const storage::Tuple *key,
 
 BWTREE_TEMPLATE_ARGUMENTS
 bool
+BWTREE_INDEX_TYPE::DeleteEntryInTupleIndex(const storage::Tuple *key, ItemPointer *location) {
+  KeyType index_key;
+  index_key.SetFromKey(key);
+
+  // Must allocate new memory here
+  ItemPointer *ip_p = location;
+
+  // In Delete() since we just use the value for comparison (i.e. read-only)
+  // it is unnecessary for us to allocate memory
+  bool ret = container.DeleteExchange(index_key, &ip_p);
+
+  // IF delete succeeds then DeleteExchange() will exchange the deleted
+  // value into this variable
+//  if(ret == true) {
+//    //delete ip_p;
+//  } else {
+//    // This will delete the unused memory
+//    // delete ip_p;
+//  }
+
+  return ret;
+}
+
+BWTREE_TEMPLATE_ARGUMENTS
+bool
 BWTREE_INDEX_TYPE::CondInsertEntry(const storage::Tuple *key,
                                    const ItemPointer &location,
                                    std::function<bool(const void *)> predicate,
@@ -107,7 +156,7 @@ BWTREE_INDEX_TYPE::CondInsertEntry(const storage::Tuple *key,
   
   ItemPointer *item_p = new ItemPointer{location};
   bool predicate_satisfied = false;
-  
+
   // This function will complete them in one step
   // predicate will be set to nullptr if the predicate
   // returns true for some value
@@ -135,6 +184,27 @@ BWTREE_INDEX_TYPE::CondInsertEntry(const storage::Tuple *key,
 }
 
 BWTREE_TEMPLATE_ARGUMENTS
+bool
+BWTREE_INDEX_TYPE::CondInsertEntryInTupleIndex(const storage::Tuple *key,
+                                               ItemPointer *location,
+                                               std::function<bool(const void *)> predicate) {
+  KeyType index_key;
+  index_key.SetFromKey(key);
+
+  ItemPointer *item_p = location;
+  bool predicate_satisfied = false;
+
+  // This function will complete them in one step
+  // predicate will be set to nullptr if the predicate
+  // returns true for some value
+  bool ret = container.ConditionalInsert(index_key,
+                                         item_p,
+                                         predicate,
+                                         &predicate_satisfied);
+  return ret;
+}
+
+BWTREE_TEMPLATE_ARGUMENTS
 void
 BWTREE_INDEX_TYPE::Scan(const std::vector<Value> &values,
                         const std::vector<oid_t> &key_column_ids,
@@ -142,74 +212,46 @@ BWTREE_INDEX_TYPE::Scan(const std::vector<Value> &values,
                         const ScanDirectionType &scan_direction,
                         std::vector<ItemPointer> &result) {
   KeyType index_key;
-
-  // Checkif we have leading (leftmost) column equality
-  // refer : http://www.postgresql.org/docs/8.2/static/indexes-multicolumn.html
-  oid_t leading_column_id = 0;
-  auto key_column_ids_itr = std::find(key_column_ids.begin(),
-                                      key_column_ids.end(), leading_column_id);
-
-  // SPECIAL CASE : leading column id is one of the key column ids
-  // and is involved in a equality constraint
-  bool special_case = false;
-  if (key_column_ids_itr != key_column_ids.end()) {
-    auto offset = std::distance(key_column_ids.begin(), key_column_ids_itr);
-    if (expr_types[offset] == EXPRESSION_TYPE_COMPARE_EQUAL) {
-      special_case = true;
-    }
-  }
-
-  LOG_TRACE("Special case : %d ", special_case);
-
-  // This is only a placeholder that cannot be moved but can be assigned to
-  auto scan_begin_itr = container.NullIterator();
   
+  // This key contains tuples that are actually indexed
+  // we fill the key with the min value if the attr is not involved
+  // into any equality relation; Otherwise we fill it with the
+  // value of equality relation
+  //
+  // No matter which case applies the start key is always filled
+  // with the lower bound of traversal into the index after call
+  // to ConstructLowerBound()
   std::unique_ptr<storage::Tuple> start_key;
-  bool all_constraints_are_equal = false;
 
-  // If it is a special case, we can figure out the range to scan in the index
-  if (special_case == true) {
-    start_key.reset(new storage::Tuple(metadata->GetKeySchema(), true));
+  // First check whether it is the special case that all
+  // constraints are equality relation such that we could use
+  // point query
+  start_key.reset(new storage::Tuple(metadata->GetKeySchema(), true));
 
-    // Construct the lower bound key tuple
-    all_constraints_are_equal = ConstructLowerBoundTuple(
-        start_key.get(), values, key_column_ids, expr_types);
-        
-    LOG_TRACE("All constraints are equal : %d ", all_constraints_are_equal);
-    
+  // This provides extra benefit if it is a point query
+  // since the index is highly optimized for point query
+  bool all_constraints_are_equal = ConstructLowerBoundTuple(
+          start_key.get(), values, key_column_ids, expr_types);
+
+  // Optimize for point query
+  if (all_constraints_are_equal == true) {
     index_key.SetFromKey(start_key.get());
+
+    container.GetValueDereference(index_key, result);
     
-    // If it is point query then we just do a GetValue() since GetValue()
-    // is way more faster than scanning using iterator
-    if(all_constraints_are_equal == true) {
-      std::vector<ItemPointer *> item_p_list{};
-      
-      // This retrieves a list of ItemPointer *
-      container.GetValue(index_key, item_p_list);
-
-      // To reduce allocation
-      result.reserve(item_p_list.size());
-      
-      // Dereference pointers one by one
-      for(auto p : item_p_list) {
-        result.push_back(*p);
-      }
-      
-      return;
-    }
-
-    // This returns an iterator pointing to index_key's values
-    scan_begin_itr = container.Begin(index_key);
-  } else {
-    scan_begin_itr = container.Begin();
+    return;
   }
-  
-  //printf("Start scanning\n");
+
+  // This returns an iterator pointing to index_key's values
+  auto scan_begin_itr = container.Begin(index_key);
 
   switch (scan_direction) {
     case SCAN_DIRECTION_TYPE_FORWARD:
     case SCAN_DIRECTION_TYPE_BACKWARD: {
-      // Scan the index entries in forward direction
+      // TODO: This requires further optimization to at least
+      // find an upper bound for scanning (i.e. when the highest columns
+      // has < or <= relation). Otherwise we will have to scan till the
+      // end of the index which is toooooooooooooooooooooooooooooo slow
       for (auto scan_itr = scan_begin_itr;
            scan_itr.IsEnd() == false;
            scan_itr++) {
@@ -223,15 +265,11 @@ BWTREE_INDEX_TYPE::Scan(const std::vector<Value> &values,
         // For instance, "5" EXPR_GREATER_THAN "2" is true
         if (Compare(tuple, key_column_ids, expr_types, values) == true) {
           result.push_back(*(scan_itr->second));
-        } else {
-          // We can stop scanning if we know that all constraints are equal
-          if (all_constraints_are_equal == true) {
-            break;
-          }
         }
       }
-
-    } break;
+      
+      break;
+    }
 
     case SCAN_DIRECTION_TYPE_INVALID:
     default:
@@ -266,10 +304,7 @@ BWTREE_INDEX_TYPE::ScanKey(const storage::Tuple *key,
   std::vector<ItemPointer *> temp_list{};
 
   // This function in BwTree fills a given vector
-  container.GetValue(index_key, temp_list);
-  for(auto item_pointer_p : temp_list) {
-    result.push_back(*item_pointer_p);
-  }
+  container.GetValueDereference(index_key, result);
 
   return;
 }
@@ -282,71 +317,36 @@ BWTREE_INDEX_TYPE::Scan(const std::vector<Value> &values,
                         const ScanDirectionType &scan_direction,
                         std::vector<ItemPointer *> &result) {
   KeyType index_key;
-
-  // Checkif we have leading (leftmost) column equality
-  // refer : http://www.postgresql.org/docs/8.2/static/indexes-multicolumn.html
-  oid_t leading_column_id = 0;
-  auto key_column_ids_itr = std::find(key_column_ids.begin(),
-                                      key_column_ids.end(), leading_column_id);
-
-  // SPECIAL CASE : leading column id is one of the key column ids
-  // and is involved in a equality constraint
-  bool special_case = false;
-  if (key_column_ids_itr != key_column_ids.end()) {
-    auto offset = std::distance(key_column_ids.begin(), key_column_ids_itr);
-    if (expr_types[offset] == EXPRESSION_TYPE_COMPARE_EQUAL) {
-      special_case = true;
-    }
-  }
-
-  LOG_TRACE("Special case : %d ", special_case);
-
-  // This is only a placeholder that cannot be moved but can be assigned to
-  auto scan_begin_itr = container.NullIterator();
-
   std::unique_ptr<storage::Tuple> start_key;
-  bool all_constraints_are_equal = false;
 
-  // If it is a special case, we can figure out the range to scan in the index
-  if (special_case == true) {
-    start_key.reset(new storage::Tuple(metadata->GetKeySchema(), true));
+  start_key.reset(new storage::Tuple(metadata->GetKeySchema(), true));
 
-    // Construct the lower bound key tuple
-    all_constraints_are_equal = ConstructLowerBoundTuple(
-        start_key.get(), values, key_column_ids, expr_types);
+  bool all_constraints_are_equal = ConstructLowerBoundTuple(
+          start_key.get(), values, key_column_ids, expr_types);
 
-    LOG_TRACE("All constraints are equal : %d ", all_constraints_are_equal);
-
+  if (all_constraints_are_equal == true) {
     index_key.SetFromKey(start_key.get());
-/*
-    // If it is point query then we just do a GetValue() since GetValue()
-    // is way more faster than scanning using iterator
-    if(all_constraints_are_equal == true) {
-      //printf("All constraints are equal\n");
-      
-      // This retrieves a list of ItemPointer *
-      container.GetValue(index_key, result);
 
-      return;
-    }
-*/
-    //printf("Non special case\n");
-
-    // This returns an iterator pointing to index_key's values
-    scan_begin_itr = container.Begin(index_key);
-  } else {
-    scan_begin_itr = container.Begin();
+    container.GetValue(index_key, result);
+    
+    return;
   }
+
+  // This returns an iterator pointing to index_key's values
+  auto scan_begin_itr = container.Begin(index_key);
 
   switch (scan_direction) {
     case SCAN_DIRECTION_TYPE_FORWARD:
     case SCAN_DIRECTION_TYPE_BACKWARD: {
-      // Scan the index entries in forward direction
+      // TODO: This requires further optimization to at least
+      // find an upper bound for scanning (i.e. when the highest columns
+      // has < or <= relation). Otherwise we will have to scan till the
+      // end of the index which is toooooooooooooooooooooooooooooo slow
       for (auto scan_itr = scan_begin_itr;
            scan_itr.IsEnd() == false;
            scan_itr++) {
         KeyType &scan_current_key = const_cast<KeyType &>(scan_itr->first);
-          
+
         auto tuple =
             scan_current_key.GetTupleForComparison(metadata->GetKeySchema());
 
@@ -355,15 +355,11 @@ BWTREE_INDEX_TYPE::Scan(const std::vector<Value> &values,
         // For instance, "5" EXPR_GREATER_THAN "2" is true
         if (Compare(tuple, key_column_ids, expr_types, values) == true) {
           result.push_back(scan_itr->second);
-        } else {
-          // We can stop scanning if we know that all constraints are equal
-          if (all_constraints_are_equal == true) {
-            break;
-          }
         }
       }
 
-    } break;
+      break;
+    }
 
     case SCAN_DIRECTION_TYPE_INVALID:
     default:
