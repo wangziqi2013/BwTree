@@ -48,6 +48,13 @@ Besides that, when finishing a node split delta by posting index term insert nod
 
 But on the other hand, when dealing with node merge delta, it is mandatory that we check for the status of the parent node after taking the snapshot of the merge delta node. Because for merge delta node's help-along protocol, if we go back to the parent node, and could not find the separator key that is going to be deleted, we assume that it has already been finished by other threads, and thus will proceed with the current operation that might overwrite the merge delta before it is finished. Imagine the case where the snapshot was taken before an InnerInsertNode was posted. In this case, if we use the old parent node snapshot, then a wrong conslusion that the merge delta has already been finished will be reached.
 
+Known Problem
+=============
+
+The ABORT mechanism stated above renders BwTree non-wait-free, since it essentially locks the parent node of the node being removed, and one thread will spin on that ABORT node if it intends to post on the locked parent. Even worse, if the node posting ABORT node dies before it removes the ABORT, no remaining thread could succeed posting on the locked parent, and the data structure will become non-responsive (i.e. starvation to the extreme).
+
+Till now the size of the mapping table is fixed, and could not be extended in the case of an overflow. This problem could be alleviated by allocating a "large enough" mapping table that covers 99% of the cases, but no one could guarantee how large is "large enough", and when the size of the table will grow to the limit. For running benchmarks on data base systems this is fine, but for real world use cases it needs to be fixed, and I am open to any suggestion related to this issue.
+
 Compile and Run
 ===============
 | Command | Description |
