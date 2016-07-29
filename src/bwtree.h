@@ -4706,58 +4706,6 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
-        // These two are set to be pointing to the prev and next KeyNodeIDPair
-        // Note that for prev key id pair the key does not matter much since
-        // we could use the node ID later in the InnerDeleteNode to determine
-        // whether we have hit the left most sep or not
-        const KeyNodeIDPair *prev_item_p;
-        const KeyNodeIDPair *next_item_p;
-
-        // if this is false then we have already deleted the index term
-        bool merge_key_found = \
-          FindMergePrevNextKey(parent_snapshot_p,
-                               delete_item_p,
-                               &prev_item_p,
-                               &next_item_p);
-                               
-        // Find the deleted item
-        const KeyNodeIDPair *found_pair_p = \
-          NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
-
-        // If the item is found then next we post InnerDeleteNode
-        if(found_pair_p != nullptr) {
-          assert(found_pair_p->second == delete_item_p->second);
-        }
-
-        // If merge key is not found then we know we have already deleted the
-        // index term
-        if(merge_key_found == false) {
-          assert(found_pair_p == nullptr);
-          
-          bwt_printf("Index term is absent; No need to remove\n");
-
-          // If we have seen a merge delta but did not find
-          // corresponding sep in parent then it has already been removed
-          // so we propose a consolidation on current node to
-          // get rid of the merge delta
-          //ConsolidateNode(snapshot_p);
-
-          return;
-        }
-        
-        assert(found_pair_p != nullptr);
-
-        // It will post an InnerDeleteNode on the parent node
-        // and the return value is the result of CAS
-        // Note: Even if this function aborts, since we return immediately
-        // so do not have to test abort_flag here
-        PostInnerDeleteNode(context_p,
-                            *delete_item_p,
-                            *prev_item_p,
-                            *next_item_p);
-                            
-        return;
-/*
         // Find the deleted item
         const KeyNodeIDPair *found_pair_p = \
           NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
@@ -4785,7 +4733,6 @@ before_switch:
                             right_merge_p->GetHighKeyPair());
 
         return;
-        */
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
