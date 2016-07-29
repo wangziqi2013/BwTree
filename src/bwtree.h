@@ -5502,17 +5502,17 @@ before_switch:
    * NavigateInnerNode() - Given a parent snapshot and a key, return the item
    *                       with the same key if that item exists
    *
-   * This function checks whether the split key is out of the range
-   * of the current parent node. This is possible as long as the split
-   * delta has been finished with InnerInsertNode posted, and then
-   * parent node splited and the insert sibling is the left most child
-   * in the parent split sibling. In this case the insert item is out of the
-   * range of the current parent node which should be prevented since
-   * we assume all delta nodes are within the valid range of the current node
-   * observed from the topmost node of the delta chain
+   * This function checks whether a given key exists in the current
+   * inner node delta chain. If it exists then return a pointer to the
+   * item, otherwise return nullptr.
    *
-   * Note: This function could abort, but whether to abort depends on
-   * the caller being split or merge
+   * This function is called when complating both split SMO and merge SMO
+   * For split SMO we need to check, key range and key existance, and
+   * NodeID value, to avoid mssing a few InnerDeleteNode on the parent node.
+   * However, for merge SMO, we only check key existence.
+   *
+   * Note: This function does not abort. Any extra checking (e.g. whether
+   * NodeIDs match, whether key is inside range) should be done by the caller
    */
   inline const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
                                                 const KeyType &search_key) {
@@ -5640,6 +5640,12 @@ before_switch:
    * NOTE: search_key is the low key of the current node for which we are
    * find the left sibling, not the search key of the current operation.
    * These two might differ in the case of cascading remove node delta
+   *
+   * NOTE 2: This function could not deal with InnerMergeNode since the merge
+   * node imposes a non-consecutive storage for adjacent keys. As an alternative
+   * way of finding left sibling, whenever an InnerMergeNode is observed,
+   * the node will be consolidated and we use the plain InnerNode to
+   * continue searching
    */
   inline NodeID FindLeftSibling(const KeyType &search_key,
                                 NodeSnapshot *snapshot_p) {
@@ -5983,7 +5989,7 @@ before_switch:
       }
 
       // Update abort counter
-      // NOTW 1: We could not do this before return since the context
+      // NOTE 1: We could not do this before return since the context
       // object is cleared at the end of loop
       // NOTE 2: Since Traverse() might abort due to other CAS failures
       // context.abort_counter might be larger than 1 when
