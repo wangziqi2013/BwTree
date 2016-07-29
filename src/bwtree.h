@@ -4680,6 +4680,7 @@ before_switch:
 
         // This is the item being deleted inside parent node
         const KeyNodeIDPair *delete_item_p = nullptr;
+        const BaseNode *right_merge_p = nullptr;
 
         // Type of the merge delta
         // This is important since we might fall through
@@ -4691,11 +4692,13 @@ before_switch:
             static_cast<const InnerMergeNode *>(snapshot_p->node_p);
 
           delete_item_p = &merge_node_p->delete_item;
+          right_merge_p = merge_node_p->right_merge_p;
         } else if(type == NodeType::LeafMergeType) {
           const LeafMergeNode *merge_node_p = \
             static_cast<const LeafMergeNode *>(snapshot_p->node_p);
 
           delete_item_p = &merge_node_p->delete_item;
+          right_merge_p = merge_node_p->right_merge_p;
         } else {
           bwt_printf("ERROR: Illegal node type: %d\n",
                      static_cast<int>(type));
@@ -4716,10 +4719,21 @@ before_switch:
                                delete_item_p,
                                &prev_item_p,
                                &next_item_p);
+                               
+        // Find the deleted item
+        const KeyNodeIDPair *found_pair_p = \
+          NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
+
+        // If the item is found then next we post InnerDeleteNode
+        if(found_pair_p != nullptr) {
+          assert(found_pair_p->second == delete_item_p->second);
+        }
 
         // If merge key is not found then we know we have already deleted the
         // index term
         if(merge_key_found == false) {
+          assert(found_pair_p == nullptr);
+          
           bwt_printf("Index term is absent; No need to remove\n");
 
           // If we have seen a merge delta but did not find
@@ -4730,6 +4744,8 @@ before_switch:
 
           return;
         }
+        
+        assert(found_pair_p != nullptr);
 
         // It will post an InnerDeleteNode on the parent node
         // and the return value is the result of CAS
@@ -4739,8 +4755,37 @@ before_switch:
                             *delete_item_p,
                             *prev_item_p,
                             *next_item_p);
+                            
+        return;
+/*
+        // Find the deleted item
+        const KeyNodeIDPair *found_pair_p = \
+          NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
+          
+        // If the item is found then next we post InnerDeleteNode
+        if(found_pair_p != nullptr) {
+          assert(found_pair_p->second == delete_item_p->second);
+        } else {
+          return;
+        }
+
+        // It will post an InnerDeleteNode on the parent node
+        // and the return value is the result of CAS
+        // Note: Even if this function aborts, since we return immediately
+        // so do not have to test abort_flag here
+        //
+        // There is a trick: The prev key is the low key of the node
+        // being merged into
+        // and the next key is the high key of the node being merged from
+        PostInnerDeleteNode(context_p,
+                            *delete_item_p,
+                            // Note that for leaf node the low key is not complete
+                            std::make_pair(snapshot_p->node_p->GetLowKey(), snapshot_p->node_id),
+                            // Also note that high key pair is valid for both leaf and inner
+                            right_merge_p->GetHighKeyPair());
 
         return;
+        */
       } // case Inner/LeafMergeNode
       case NodeType::InnerSplitType:
       case NodeType::LeafSplitType: {
@@ -5538,6 +5583,14 @@ before_switch:
                                                 const KeyType &search_key) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
+    
+    // This is used to recognize the leftmost branch if there is
+    // a merge node
+    const KeyNodeIDPair &low_key_pair = node_p->GetLowKeyPair();
+    
+    // The caller must make sure this is true
+    assert(node_p->GetNextNodeID() == INVALID_NODE_ID ||
+           KeyCmpLess(search_key, node_p->GetHighKey()));
 
     while(1) {
       switch(node_p->GetType()) {
@@ -5570,20 +5623,32 @@ before_switch:
       case NodeType::InnerType: {
         auto sep_list_p = &static_cast<const InnerNode *>(node_p)->sep_list;
 
-        auto it = std::lower_bound(sep_list_p->begin() + 1,
+        // If we are on the leftmost branch of the inner node delta chain
+        // if there is a merge delta, then we should start searching from
+        // the second element. Otherwise always start search from the first
+        // element
+        auto start_it = sep_list_p->begin();
+
+        if(low_key_pair.second == (*sep_list_p)[0].second) {
+          start_it++;
+        }
+
+        auto it = std::lower_bound(start_it,
                                    sep_list_p->end(),
                                    std::make_pair(search_key, INVALID_NODE_ID),
                                    key_node_id_pair_cmp_obj);
                                    
-        // This is special case since we could not compare the iterator
         if(it == sep_list_p->end()) {
-          // If the key does not exist then return true and post node
+          // This is special case since we could not compare the iterator
+          // If the key does not exist then return nullptr
           return nullptr;
         } else if(KeyCmpEqual(it->first, search_key) == false) {
           // If found the lower bound but keys are different
-          // then also could post
+          // then also return nullptr
           return nullptr;
         } else {
+          // If found the lower bound and the key matches
+          // return the key
           return &(*it);
         }
 
@@ -5591,9 +5656,11 @@ before_switch:
         return nullptr;
       } // InnerNode
       case NodeType::InnerSplitType: {
-        // Since we already did bounds checking at the beginning of this
-        // function, the split key must be less than the split key
-        // here in this node
+        // We must guarantee that the key must be inside the range
+        // of this function
+        // For split SMO this is true by extra checking
+        // For merge SMO this is implicitly true sunce the merge key
+        // should not be in another node, o.w. the high key has changed
         node_p = \
           static_cast<const InnerSplitNode *>(node_p)->child_node_p;
 
