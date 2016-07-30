@@ -133,8 +133,8 @@ extern bool print_flag;
 #define MAPPING_TABLE_SIZE ((size_t)(1 << 20))
 
 // If the length of delta chain exceeds ( >= ) this then we consolidate the node
-#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)10)
-#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
+#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)1)
+#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)1)
 
 // If node size goes above this then we split it
 #define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
@@ -2972,6 +2972,8 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
+          auto start_it = leaf_node_p->data_list.begin() + start_index;
+
           // That is the end of searching
           auto end_it = ((end_index == -1) ? \
                          leaf_node_p->data_list.end() : \
@@ -2981,7 +2983,7 @@ abort_traverse:
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto copy_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin() + start_index,
+            std::lower_bound(start_it,
                              end_it,
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
