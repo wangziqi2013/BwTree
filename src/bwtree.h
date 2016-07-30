@@ -133,8 +133,8 @@ extern bool print_flag;
 #define MAPPING_TABLE_SIZE ((size_t)(1 << 20))
 
 // If the length of delta chain exceeds ( >= ) this then we consolidate the node
-#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)1)
-#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)1)
+#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)10)
+#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
 
 // If node size goes above this then we split it
 #define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
