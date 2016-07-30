@@ -2960,6 +2960,9 @@ abort_traverse:
       deleted_set{deleted_set_data_p,
                   value_eq_obj,
                   value_hash_obj};
+                  
+    int start_index = 0;
+    int end_index = -1;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2969,12 +2972,17 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
+          // That is the end of searching
+          auto end_it = ((end_index == -1) ? \
+                         leaf_node_p->data_list.end() : \
+                         leaf_node_p->data_list.begin() + end_index);
+
           // Here we know the search key < high key of current node
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto copy_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(leaf_node_p->data_list.begin() + start_index,
+                             end_it,
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
@@ -3016,6 +3024,10 @@ abort_traverse:
                 value_list.push_back(insert_node_p->item.second);
               }
             }
+          } else if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
+            start_index = insert_node_p->GetIndexPair().first;
+          } else {
+            end_index = insert_node_p->GetIndexPair().first;
           }
 
           node_p = insert_node_p->child_node_p;
@@ -3030,7 +3042,11 @@ abort_traverse:
             if(present_set.Exists(delete_node_p->item.second) == false) {
               deleted_set.Insert(delete_node_p->item.second);
             }
-          } 
+          } else if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
+            start_index = delete_node_p->GetIndexPair().first;
+          } else {
+            end_index = delete_node_p->GetIndexPair().first;
+          }
           
           node_p = delete_node_p->child_node_p;
 
