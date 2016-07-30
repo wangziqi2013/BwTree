@@ -2307,7 +2307,7 @@ abort_traverse:
    * If the traverse aborts then this function returns with abort_flag
    * setting to true.
    */
-  void NavigateSiblingChain(Context *context_p) {
+  inline void NavigateSiblingChain(Context *context_p) {
     do {
       // These two will be updated everytime we switch to
       // a new node
