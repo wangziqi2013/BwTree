@@ -647,6 +647,11 @@ class BwTree {
     /*
      * HasParentNode() - Returns whether the current node (top of path list)
      *                   has a parent node
+     *
+     * NOTE: This function is only called under debug mode, since we should
+     * validate when there is a remove node on the delta chain. However, under
+     * release mode, this function is unnecessary (also current_level is not
+     * present) and is not compiled into the binary.
      */
     inline bool HasParentNode() const {
       return current_level >= 1;
@@ -693,7 +698,7 @@ class BwTree {
 
     // high key points to the KeyNodeIDPair inside the LeafNode and InnerNode
     // if there is neither SplitNode nor MergeNode. Otherwise it
-    // points to the item inside split node or merge node
+    // points to the item inside split node or merge right sibling branch
     const KeyNodeIDPair *high_key_p;
 
     // This is the depth of current delta chain
@@ -728,10 +733,10 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    NodeType type;
-
-    // This holds low key, high key, and next node ID
+    // This holds low key, high key, next node ID, depth and item count
     NodeMetaData metadata;
+    
+    NodeType type;
    public:
 
     /*
@@ -742,22 +747,12 @@ class BwTree {
              const KeyNodeIDPair *p_high_key_p,
              int p_depth,
              int p_item_count) :
-      type{p_type},
       metadata{p_low_key_p,
                p_high_key_p,
                p_depth,
-               p_item_count}
+               p_item_count},
+      type{p_type}
     {}
-
-    /*
-     * Destructor
-     *
-     * Note that the destructor is not virtual which means we have to manually
-     * identify node type when destroying nodes, and call the destructor of
-     * the most derived types by converting it to the point type of the
-     * most derived type
-     */
-    ~BaseNode() {}
 
     /*
      * GetType() - Return the type of node
@@ -870,8 +865,6 @@ class BwTree {
       return *metadata.low_key_p;
     }
     
-    
-
     /*
      * GetNextNodeID() - Returns the next NodeID of the current node
      */
