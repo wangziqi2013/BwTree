@@ -574,6 +574,8 @@ class BwTree {
     NodeSnapshot current_snapshot;
     NodeSnapshot parent_snapshot;
 
+    #ifdef BWTREE_DEBUG
+    
     // Counts abort in one traversal
     int abort_counter;
 
@@ -581,6 +583,8 @@ class BwTree {
     // root is level 0
     // On initialization this is set to -1
     int current_level;
+    
+    #endif
 
     // Whether to abort current traversal, and start a new one
     // after seeing this flag, all function should return without
@@ -593,7 +597,7 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key) :
+    inline Context(const KeyType &p_search_key) :
       #ifdef BWTREE_PELOTON
 
       // Because earlier versions of g++ does not support
@@ -605,10 +609,22 @@ class BwTree {
       search_key{p_search_key},
 
       #endif
+      
+      #ifdef BWTREE_DEBUG
+      
       abort_counter{0},
       current_level{-1},
-      abort_flag{false}
-    {}
+      
+      #endif
+      
+      abort_flag{false} {
+
+      // This is used to identify root nodes
+      // NOTE: We set current snapshot since in LoadNodeID() or read opt.
+      // version the parent node snapshot will be overwritten with this child
+      // node snapshot
+      current_snapshot.node_id = INVALID_NODE_ID;
+    }
 
     /*
      * Destructor - Cleanup
@@ -626,12 +642,31 @@ class BwTree {
     Context(Context &&p_context) = delete;
     Context &operator=(Context &&p_context) = delete;
 
+    #ifdef BWTREE_DEBUG
+    
     /*
      * HasParentNode() - Returns whether the current node (top of path list)
      *                   has a parent node
+     *
+     * NOTE: This function is only called under debug mode, since we should
+     * validate when there is a remove node on the delta chain. However, under
+     * release mode, this function is unnecessary (also current_level is not
+     * present) and is not compiled into the binary.
      */
     inline bool HasParentNode() const {
       return current_level >= 1;
+    }
+    
+    #endif
+    
+    /*
+     * IsOnRootNode() - Returns true if the current node is root
+     *
+     * Though root node might change during traversal, but once it has been
+     * fixed using LoadNodeID(), the identity of root node has also been fixed
+     */
+    inline bool IsOnRootNode() const {
+      return parent_snapshot.node_id == INVALID_NODE_ID;
     }
   };
 
@@ -663,7 +698,7 @@ class BwTree {
 
     // high key points to the KeyNodeIDPair inside the LeafNode and InnerNode
     // if there is neither SplitNode nor MergeNode. Otherwise it
-    // points to the item inside split node or merge node
+    // points to the item inside split node or merge right sibling branch
     const KeyNodeIDPair *high_key_p;
 
     // This is the depth of current delta chain
@@ -698,10 +733,10 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    NodeType type;
-
-    // This holds low key, high key, and next node ID
+    // This holds low key, high key, next node ID, depth and item count
     NodeMetaData metadata;
+    
+    NodeType type;
    public:
 
     /*
@@ -712,22 +747,12 @@ class BwTree {
              const KeyNodeIDPair *p_high_key_p,
              int p_depth,
              int p_item_count) :
-      type{p_type},
       metadata{p_low_key_p,
                p_high_key_p,
                p_depth,
-               p_item_count}
+               p_item_count},
+      type{p_type}
     {}
-
-    /*
-     * Destructor
-     *
-     * Note that the destructor is not virtual which means we have to manually
-     * identify node type when destroying nodes, and call the destructor of
-     * the most derived types by converting it to the point type of the
-     * most derived type
-     */
-    ~BaseNode() {}
 
     /*
      * GetType() - Return the type of node
@@ -840,8 +865,6 @@ class BwTree {
       return *metadata.low_key_p;
     }
     
-    
-
     /*
      * GetNextNodeID() - Returns the next NodeID of the current node
      */
@@ -913,33 +936,6 @@ class BwTree {
                p_depth,
                p_item_count},
       child_node_p{p_child_node_p}
-    {}
-  };
-
-  /*
-   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
-   *
-   * We need this node since we want to sort pointers to such nodes using
-   * stable sorting algorithm
-   */
-  class InnerDataNode : public DeltaNode {
-   public:
-    KeyNodeIDPair item;
-
-    InnerDataNode(const KeyNodeIDPair &p_item,
-                  NodeType p_type,
-                  const BaseNode *p_child_node_p,
-                  const KeyNodeIDPair *p_low_key_p,
-                  const KeyNodeIDPair *p_high_key_p,
-                  int p_depth,
-                  int p_item_count) :
-      DeltaNode{p_type,
-                p_child_node_p,
-                p_low_key_p,
-                p_high_key_p,
-                p_depth,
-                p_item_count},
-      item{p_item}
     {}
   };
   
@@ -1353,6 +1349,33 @@ class BwTree {
   ///////////////////////////////////////////////////////////////////
 
   /*
+   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
+   *
+   * We need this node since we want to sort pointers to such nodes using
+   * stable sorting algorithm
+   */
+  class InnerDataNode : public DeltaNode {
+   public:
+    KeyNodeIDPair item;
+
+    InnerDataNode(const KeyNodeIDPair &p_item,
+                  NodeType p_type,
+                  const BaseNode *p_child_node_p,
+                  const KeyNodeIDPair *p_low_key_p,
+                  const KeyNodeIDPair *p_high_key_p,
+                  int p_depth,
+                  int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item}
+    {}
+  };
+
+  /*
    * class InnerNode - Inner node that holds separators
    */
   class InnerNode : public BaseNode {
@@ -1414,13 +1437,12 @@ class BwTree {
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = sep_list.begin();
-      std::advance(copy_start_it, split_item_index);
+      auto copy_start_it = sep_list.begin() + split_item_index;
 
       // We copy key-NodeID pairs till the end of the inner node
       auto copy_end_it = sep_list.end();
 
-      // This sets metddata inside BaseNode by calling SetMetaData()
+      // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
         new InnerNode{this->GetHighKeyPair(), // It will be copied into new node
@@ -2189,7 +2211,7 @@ retry_traverse:
 
     // This is the serialization point for reading/writing root node
     NodeID start_node_id = root_id.load();
-
+    
     // We need to call this even for root node since there could
     // be split delta posted on to root node
     LoadNodeID(start_node_id, context_p);
@@ -2263,20 +2285,32 @@ retry_traverse:
       goto abort_traverse;
     }
 
+    #ifdef BWTREE_DEBUG
+    
     bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
                context_p->abort_counter,
                context_p->current_level);
+               
+    #endif
 
     // If there is no abort then we could safely return
     return found_pair_p;
 
 abort_traverse:
+    #ifdef BWTREE_DEBUG
+    
     assert(context_p->current_level >= 0);
 
     context_p->current_level = -1;
+    
+    context_p->abort_counter++;
+    
+    #endif
+    
+    // This is used to identify root node
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
 
     context_p->abort_flag = false;
-    context_p->abort_counter++;
 
     goto retry_traverse;
 
@@ -4038,10 +4072,17 @@ abort_traverse:
 
     bwt_printf("Is leaf node? - %d\n", node_p->IsOnLeafDeltaChain());
 
+    #ifdef BWTREE_DEBUG
+    
     // This is used to record how many levels we have traversed
     context_p->current_level++;
+    
+    #endif
 
     // Copy assignment
+    // NOTE: For root node, the parent node contains garbage
+    // but current node ID is INVALID_NODE_ID
+    // So after this line parent node ID is INVALID_NODE_ID
     context_p->parent_snapshot = context_p->current_snapshot;
 
     context_p->current_snapshot.node_p = node_p;
@@ -4196,76 +4237,14 @@ before_switch:
       }
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
-        bwt_printf("Helping along remove node...\n");
-
-        // The right branch for merging is the child node under remove node
-        const BaseNode *merge_right_branch = \
-          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
-
-        // This will also be recorded in merge delta such that when
-        // we finish merge delta we could recycle the node id as well
-        // as the RemoveNode
-        NodeID deleted_node_id = snapshot_p->node_id;
-
-        JumpToLeftSibling(context_p);
-
-        // If this aborts then we propagate this to the state machine driver
-        if(context_p->abort_flag == true) {
-          bwt_printf("Jump to left sibling in Remove help along ABORT\n");
-
-          return;
-        }
-
-        // That is the left sibling's snapshot
-        NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
-
-        // Update snapshot pointer if we fall through to posting
-        // index term delete delta for merge node
-        snapshot_p = left_snapshot_p;
-
-        // This serves as the merge key (for left sibling there is always a
-        // valid high key)
-        const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
-
-        // This holds the merge node if installation is successful
-        // Not changed if CAS fails
-        const BaseNode *merge_node_p;
-
-        bool ret;
-
-        // If we are currently on leaf, just post leaf merge delta
-        if(left_snapshot_p->IsLeaf() == true) {
-          ret = \
-            PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         &merge_key,
-                                         merge_right_branch,
-                                         deleted_node_id,
-                                         &merge_node_p);
-        } else {
-          ret = \
-            PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          &merge_key,
-                                          merge_right_branch,
-                                          deleted_node_id,
-                                          &merge_node_p);
-        }
-
-        // If CAS fails just abort and return
-        if(ret == true) {
-          bwt_printf("Merge delta CAS succeeds. ABORT\n");
-
-          context_p->abort_flag = true;
-
-          return;
-        } else {
-          bwt_printf("Merge delta CAS fails. ABORT\n");
-
-          context_p->abort_flag = true;
-
-          return;
-        } // if ret == true
-
-        assert(false);
+        bwt_printf("Observed remove node; abort\n");
+        
+        // Since remove node is just a temporary measure, and if
+        // a thread proceeds to do its own job it must finish the remove
+        // SMO, posting InnerDeleteNode on the parent
+        context_p->abort_flag = true;
+        
+        return;
       } // case Inner/LeafRemoveType
       default: {
         return;
@@ -4273,6 +4252,34 @@ before_switch:
     } // switch
 
     assert(false);
+    return;
+  }
+  
+  /*
+   * TakeNodeSnapshotReadOptimized() - Take node snapshot without saving
+   *                                   parent node
+   *
+   * This implies that if there is remove delta on the path then
+   * the read thread will have to spin and wait. But finally it will
+   * complete the job since remove delta will not be present if the thread
+   * posting the remove delta finally proceeds to finish its job
+   */
+  void TakeNodeSnapshotReadOptimized(NodeID node_id,
+                                     Context *context_p) {
+    const BaseNode *node_p = GetNode(node_id);
+
+    bwt_printf("Is leaf node (RO)? - %d\n", node_p->IsOnLeafDeltaChain());
+
+    #ifdef BWTREE_DEBUG
+
+    // This is used to record how many levels we have traversed
+    context_p->current_level++;
+
+    #endif
+
+    context_p->current_snapshot.node_p = node_p;
+    context_p->current_snapshot.node_id = node_id;
+
     return;
   }
 
@@ -4288,7 +4295,7 @@ before_switch:
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
-    TakeNodeSnapshot(node_id, context_p);
+    TakeNodeSnapshotReadOptimized(node_id, context_p);
 
     FinishPartialSMOReadOptimized(context_p);
 
@@ -4374,9 +4381,13 @@ retry_traverse:
           goto abort_traverse;
         }
 
+        #ifdef BWTREE_DEBUG
+        
         bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
                    context_p->abort_counter,
                    context_p->current_level);
+
+        #endif
 
         // If there is no abort then we could safely return
         return;
@@ -4387,12 +4398,19 @@ retry_traverse:
     } // while(1)
 
 abort_traverse:
+    #ifdef BWTREE_DEBUG
+    
     assert(context_p->current_level >= 0);
 
     context_p->current_level = -1;
+    
+    context_p->abort_counter++;
+    
+    #endif
+    
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
 
     context_p->abort_flag = false;
-    context_p->abort_counter++;
 
     goto retry_traverse;
 
@@ -4773,7 +4791,9 @@ before_switch:
 
         assert(context_p->current_level >= 0);
 
-        if(context_p->current_level == 0) {
+        // If the parent snapshot has an invalid node ID then it must be the
+        // root node. We will initialize it to INVALID_NODE_ID
+        if(context_p->IsOnRootNode() == true) {
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
            ***********************************************************/
@@ -5341,7 +5361,7 @@ before_switch:
           return;
         } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
-        if(context_p->current_level == 0) {
+        if(context_p->IsOnRootNode() == true) {
           bwt_printf("Root underflow - let it be\n");
 
           return;
@@ -5532,7 +5552,7 @@ before_switch:
    * Note: This function does not abort. Any extra checking (e.g. whether
    * NodeIDs match, whether key is inside range) should be done by the caller
    */
-  inline const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
+  const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
                                                 const KeyType &search_key) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
@@ -6001,11 +6021,17 @@ before_switch:
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
 
         delete insert_node_p;
       }
 
+      #ifdef BWTREE_DEBUG
+      
       // Update abort counter
       // NOTE 1: We could not do this before return since the context
       // object is cleared at the end of loop
@@ -6013,6 +6039,8 @@ before_switch:
       // context.abort_counter might be larger than 1 when
       // LeafInsertNode installation fails
       insert_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert delta from the root\n");
@@ -6105,12 +6133,20 @@ before_switch:
       } else {
         bwt_printf("Leaf insert (cond.) delta CAS failed\n");
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
 
         delete insert_node_p;
       }
 
+      #ifdef BWTREE_DEBUG
+
       insert_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       bwt_printf("Retry installing leaf insert (cond.) delta from the root\n");
     }
@@ -6177,10 +6213,18 @@ before_switch:
 
         delete delete_node_p;
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
       }
 
+      #ifdef BWTREE_DEBUG
+
       delete_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
@@ -6249,10 +6293,18 @@ before_switch:
 
         delete delete_node_p;
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
       }
 
+      #ifdef BWTREE_DEBUG
+
       delete_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
