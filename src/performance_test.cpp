@@ -419,7 +419,7 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
  */
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
-  int iter = 10;
+  int iter = 1;
   
   std::chrono::time_point<std::chrono::system_clock> start, end;
 
