@@ -579,12 +579,12 @@ class BwTree {
     // Counts abort in one traversal
     int abort_counter;
 
-    #endif
-
     // Represents current level we are on the tree
     // root is level 0
     // On initialization this is set to -1
     int current_level;
+    
+    #endif
 
     // Whether to abort current traversal, and start a new one
     // after seeing this flag, all function should return without
@@ -597,7 +597,7 @@ class BwTree {
     /*
      * Constructor - Initialize a context object into initial state
      */
-    Context(const KeyType p_search_key) :
+    inline Context(const KeyType &p_search_key) :
       #ifdef BWTREE_PELOTON
 
       // Because earlier versions of g++ does not support
@@ -613,11 +613,18 @@ class BwTree {
       #ifdef BWTREE_DEBUG
       
       abort_counter{0},
+      current_level{-1},
       
       #endif
-      current_level{-1},
-      abort_flag{false}
-    {}
+      
+      abort_flag{false} {
+
+      // This is used to identify root nodes
+      // NOTE: We set current snapshot since in LoadNodeID() or read opt.
+      // version the parent node snapshot will be overwritten with this child
+      // node snapshot
+      current_snapshot.node_id = INVALID_NODE_ID;
+    }
 
     /*
      * Destructor - Cleanup
@@ -635,12 +642,26 @@ class BwTree {
     Context(Context &&p_context) = delete;
     Context &operator=(Context &&p_context) = delete;
 
+    #ifdef BWTREE_DEBUG
+    
     /*
      * HasParentNode() - Returns whether the current node (top of path list)
      *                   has a parent node
      */
     inline bool HasParentNode() const {
       return current_level >= 1;
+    }
+    
+    #endif
+    
+    /*
+     * IsOnRootNode() - Returns true if the current node is root
+     *
+     * Though root node might change during traversal, but once it has been
+     * fixed using LoadNodeID(), the identity of root node has also been fixed
+     */
+    inline bool IsOnRootNode() const {
+      return parent_snapshot.node_id == INVALID_NODE_ID;
     }
   };
 
@@ -2198,7 +2219,7 @@ retry_traverse:
 
     // This is the serialization point for reading/writing root node
     NodeID start_node_id = root_id.load();
-
+    
     // We need to call this even for root node since there could
     // be split delta posted on to root node
     LoadNodeID(start_node_id, context_p);
@@ -2284,17 +2305,20 @@ retry_traverse:
     return found_pair_p;
 
 abort_traverse:
+    #ifdef BWTREE_DEBUG
+    
     assert(context_p->current_level >= 0);
 
     context_p->current_level = -1;
-
-    context_p->abort_flag = false;
-    
-    #ifdef BWTREE_DEBUG
     
     context_p->abort_counter++;
-
+    
     #endif
+    
+    // This is used to identify root node
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+
+    context_p->abort_flag = false;
 
     goto retry_traverse;
 
@@ -4056,10 +4080,17 @@ abort_traverse:
 
     bwt_printf("Is leaf node? - %d\n", node_p->IsOnLeafDeltaChain());
 
+    #ifdef BWTREE_DEBUG
+    
     // This is used to record how many levels we have traversed
     context_p->current_level++;
+    
+    #endif
 
     // Copy assignment
+    // NOTE: For root node, the parent node contains garbage
+    // but current node ID is INVALID_NODE_ID
+    // So after this line parent node ID is INVALID_NODE_ID
     context_p->parent_snapshot = context_p->current_snapshot;
 
     context_p->current_snapshot.node_p = node_p;
@@ -4409,17 +4440,19 @@ retry_traverse:
     } // while(1)
 
 abort_traverse:
+    #ifdef BWTREE_DEBUG
+    
     assert(context_p->current_level >= 0);
 
     context_p->current_level = -1;
-
-    context_p->abort_flag = false;
-    
-    #ifdef BWTREE_DEBUG
     
     context_p->abort_counter++;
     
     #endif
+    
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+
+    context_p->abort_flag = false;
 
     goto retry_traverse;
 
@@ -4800,7 +4833,9 @@ before_switch:
 
         assert(context_p->current_level >= 0);
 
-        if(context_p->current_level == 0) {
+        // If the parent snapshot has an invalid node ID then it must be the
+        // root node. We will initialize it to INVALID_NODE_ID
+        if(context_p->IsOnRootNode() == true) {
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
            ***********************************************************/
@@ -5368,7 +5403,7 @@ before_switch:
           return;
         } // if CAS fails
       } else if(node_size <= INNER_NODE_SIZE_LOWER_THRESHOLD) {
-        if(context_p->current_level == 0) {
+        if(context_p->IsOnRootNode() == true) {
           bwt_printf("Root underflow - let it be\n");
 
           return;
