@@ -938,33 +938,6 @@ class BwTree {
       child_node_p{p_child_node_p}
     {}
   };
-
-  /*
-   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
-   *
-   * We need this node since we want to sort pointers to such nodes using
-   * stable sorting algorithm
-   */
-  class InnerDataNode : public DeltaNode {
-   public:
-    KeyNodeIDPair item;
-
-    InnerDataNode(const KeyNodeIDPair &p_item,
-                  NodeType p_type,
-                  const BaseNode *p_child_node_p,
-                  const KeyNodeIDPair *p_low_key_p,
-                  const KeyNodeIDPair *p_high_key_p,
-                  int p_depth,
-                  int p_item_count) :
-      DeltaNode{p_type,
-                p_child_node_p,
-                p_low_key_p,
-                p_high_key_p,
-                p_depth,
-                p_item_count},
-      item{p_item}
-    {}
-  };
   
   /*
    * class LeafDataNode - Holds LeafInsertNode and LeafDeleteNode's data
@@ -1376,6 +1349,33 @@ class BwTree {
   ///////////////////////////////////////////////////////////////////
 
   /*
+   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
+   *
+   * We need this node since we want to sort pointers to such nodes using
+   * stable sorting algorithm
+   */
+  class InnerDataNode : public DeltaNode {
+   public:
+    KeyNodeIDPair item;
+
+    InnerDataNode(const KeyNodeIDPair &p_item,
+                  NodeType p_type,
+                  const BaseNode *p_child_node_p,
+                  const KeyNodeIDPair *p_low_key_p,
+                  const KeyNodeIDPair *p_high_key_p,
+                  int p_depth,
+                  int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item}
+    {}
+  };
+
+  /*
    * class InnerNode - Inner node that holds separators
    */
   class InnerNode : public BaseNode {
@@ -1437,13 +1437,12 @@ class BwTree {
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = sep_list.begin();
-      std::advance(copy_start_it, split_item_index);
+      auto copy_start_it = sep_list.begin() + split_item_index;
 
       // We copy key-NodeID pairs till the end of the inner node
       auto copy_end_it = sep_list.end();
 
-      // This sets metddata inside BaseNode by calling SetMetaData()
+      // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
         new InnerNode{this->GetHighKeyPair(), // It will be copied into new node
@@ -4238,76 +4237,14 @@ before_switch:
       }
       case NodeType::LeafRemoveType:
       case NodeType::InnerRemoveType: {
-        bwt_printf("Helping along remove node...\n");
-
-        // The right branch for merging is the child node under remove node
-        const BaseNode *merge_right_branch = \
-          (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
-
-        // This will also be recorded in merge delta such that when
-        // we finish merge delta we could recycle the node id as well
-        // as the RemoveNode
-        NodeID deleted_node_id = snapshot_p->node_id;
-
-        JumpToLeftSibling(context_p);
-
-        // If this aborts then we propagate this to the state machine driver
-        if(context_p->abort_flag == true) {
-          bwt_printf("Jump to left sibling in Remove help along ABORT\n");
-
-          return;
-        }
-
-        // That is the left sibling's snapshot
-        NodeSnapshot *left_snapshot_p = GetLatestNodeSnapshot(context_p);
-
-        // Update snapshot pointer if we fall through to posting
-        // index term delete delta for merge node
-        snapshot_p = left_snapshot_p;
-
-        // This serves as the merge key (for left sibling there is always a
-        // valid high key)
-        const KeyType &merge_key = snapshot_p->node_p->GetHighKey();
-
-        // This holds the merge node if installation is successful
-        // Not changed if CAS fails
-        const BaseNode *merge_node_p;
-
-        bool ret;
-
-        // If we are currently on leaf, just post leaf merge delta
-        if(left_snapshot_p->IsLeaf() == true) {
-          ret = \
-            PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         &merge_key,
-                                         merge_right_branch,
-                                         deleted_node_id,
-                                         &merge_node_p);
-        } else {
-          ret = \
-            PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          &merge_key,
-                                          merge_right_branch,
-                                          deleted_node_id,
-                                          &merge_node_p);
-        }
-
-        // If CAS fails just abort and return
-        if(ret == true) {
-          bwt_printf("Merge delta CAS succeeds. ABORT\n");
-
-          context_p->abort_flag = true;
-
-          return;
-        } else {
-          bwt_printf("Merge delta CAS fails. ABORT\n");
-
-          context_p->abort_flag = true;
-
-          return;
-        } // if ret == true
-
-        assert(false);
+        bwt_printf("Observed remove node; abort\n");
+        
+        // Since remove node is just a temporary measure, and if
+        // a thread proceeds to do its own job it must finish the remove
+        // SMO, posting InnerDeleteNode on the parent
+        context_p->abort_flag = true;
+        
+        return;
       } // case Inner/LeafRemoveType
       default: {
         return;
@@ -4315,6 +4252,34 @@ before_switch:
     } // switch
 
     assert(false);
+    return;
+  }
+  
+  /*
+   * TakeNodeSnapshotReadOptimized() - Take node snapshot without saving
+   *                                   parent node
+   *
+   * This implies that if there is remove delta on the path then
+   * the read thread will have to spin and wait. But finally it will
+   * complete the job since remove delta will not be present if the thread
+   * posting the remove delta finally proceeds to finish its job
+   */
+  void TakeNodeSnapshotReadOptimized(NodeID node_id,
+                                     Context *context_p) {
+    const BaseNode *node_p = GetNode(node_id);
+
+    bwt_printf("Is leaf node (RO)? - %d\n", node_p->IsOnLeafDeltaChain());
+
+    #ifdef BWTREE_DEBUG
+
+    // This is used to record how many levels we have traversed
+    context_p->current_level++;
+
+    #endif
+
+    context_p->current_snapshot.node_p = node_p;
+    context_p->current_snapshot.node_id = node_id;
+
     return;
   }
 
@@ -4330,7 +4295,7 @@ before_switch:
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
-    TakeNodeSnapshot(node_id, context_p);
+    TakeNodeSnapshotReadOptimized(node_id, context_p);
 
     FinishPartialSMOReadOptimized(context_p);
 
