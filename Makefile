@@ -49,7 +49,7 @@ gprof:
 
 full-speed:
 	make clean
-	make OPT_FLAG=" -O3 -DNDEBUG -DBWTREE_NODEBUG"
+	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG"
 
 small-size:
 	make clean

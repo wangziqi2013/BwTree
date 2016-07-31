@@ -133,15 +133,15 @@ extern bool print_flag;
 #define MAPPING_TABLE_SIZE ((size_t)(1 << 20))
 
 // If the length of delta chain exceeds ( >= ) this then we consolidate the node
-#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)10)
+#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
 #define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
 
 // If node size goes above this then we split it
 #define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
-#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)64)
-#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)16)
+#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
+#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
 /*
  * class BwTree - Lock-free BwTree index implementation
@@ -2398,7 +2398,7 @@ abort_traverse:
    * and update path history. (Such jump may happen multiple times, so
    * do not make any assumption about how jump is performed)
    */
-  inline NodeID NavigateInnerNode(Context *context_p) {
+  NodeID NavigateInnerNode(Context *context_p) {
     // This will go to the right sibling until we have seen
     // a node whose range match the search key
     NavigateSiblingChain(context_p);
@@ -2577,8 +2577,8 @@ abort_traverse:
    * proceures where parent node is consolidated and scanned in order to find
    * a certain key.
    */
-  inline InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
-                                          int p_depth = 0) {
+  InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
+                                   int p_depth = 0) {
 
     // Note that in the recursive call node_p might change
     // but we should not change the metadata
@@ -2960,6 +2960,9 @@ abort_traverse:
       deleted_set{deleted_set_data_p,
                   value_eq_obj,
                   value_hash_obj};
+                  
+    int start_index = 0;
+    int end_index = -1;
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -2969,12 +2972,19 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
+          auto start_it = leaf_node_p->data_list.begin() + start_index;
+
+          // That is the end of searching
+          auto end_it = ((end_index == -1) ? \
+                         leaf_node_p->data_list.end() : \
+                         leaf_node_p->data_list.begin() + end_index);
+
           // Here we know the search key < high key of current node
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto copy_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(start_it,
+                             end_it,
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
@@ -3016,6 +3026,10 @@ abort_traverse:
                 value_list.push_back(insert_node_p->item.second);
               }
             }
+          } else if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
+            start_index = insert_node_p->GetIndexPair().first;
+          } else {
+            end_index = insert_node_p->GetIndexPair().first;
           }
 
           node_p = insert_node_p->child_node_p;
@@ -3030,7 +3044,11 @@ abort_traverse:
             if(present_set.Exists(delete_node_p->item.second) == false) {
               deleted_set.Insert(delete_node_p->item.second);
             }
-          } 
+          } else if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
+            start_index = delete_node_p->GetIndexPair().first;
+          } else {
+            end_index = delete_node_p->GetIndexPair().first;
+          }
           
           node_p = delete_node_p->child_node_p;
 
@@ -3294,7 +3312,7 @@ abort_traverse:
    * traverse the delta chain and leaf data node, and could not be
    * guaranteed a specific order
    */
-  inline const KeyValuePair *
+  const KeyValuePair *
   NavigateLeafNode(Context *context_p,
                    const ValueType &value,
                    std::pair<int, bool> *index_pair_p,
@@ -3476,7 +3494,7 @@ abort_traverse:
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
    */
-  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
     assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -4096,7 +4114,7 @@ abort_traverse:
    *
    * (3) Check current_level == 0 to determine whether we are on a root node
    */
-  inline void LoadNodeID(NodeID node_id, Context *context_p) {
+  void LoadNodeID(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -4112,11 +4130,8 @@ abort_traverse:
       return;
     }
 
+    // This does not abort
     TryConsolidateNode(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
-    }
 
     AdjustNodeSize(context_p);
 
@@ -4144,11 +4159,8 @@ abort_traverse:
       return;
     }
 
+    // This does not abort
     TryConsolidateNode(context_p);
-
-    if(context_p->abort_flag == true) {
-      return;
-    }
 
     AdjustNodeSize(context_p);
 
@@ -4272,7 +4284,7 @@ before_switch:
    * down. However, jumping to left sibling has the possibility to fail
    * so we still need to check abort flag after this function returns
    */
-  inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
+  void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -4298,8 +4310,8 @@ before_switch:
    * even if the thread is read only, since otherwise traversing down
    * would become impossible.
    */
-  inline void TraverseReadOptimized(Context *context_p,
-                                    std::vector<ValueType> *value_list_p) {
+  void TraverseReadOptimized(Context *context_p,
+                             std::vector<ValueType> *value_list_p) {
 retry_traverse:
     assert(context_p->abort_flag == false);
     assert(context_p->current_level == -1);
@@ -5508,17 +5520,17 @@ before_switch:
    * NavigateInnerNode() - Given a parent snapshot and a key, return the item
    *                       with the same key if that item exists
    *
-   * This function checks whether the split key is out of the range
-   * of the current parent node. This is possible as long as the split
-   * delta has been finished with InnerInsertNode posted, and then
-   * parent node splited and the insert sibling is the left most child
-   * in the parent split sibling. In this case the insert item is out of the
-   * range of the current parent node which should be prevented since
-   * we assume all delta nodes are within the valid range of the current node
-   * observed from the topmost node of the delta chain
+   * This function checks whether a given key exists in the current
+   * inner node delta chain. If it exists then return a pointer to the
+   * item, otherwise return nullptr.
    *
-   * Note: This function could abort, but whether to abort depends on
-   * the caller being split or merge
+   * This function is called when complating both split SMO and merge SMO
+   * For split SMO we need to check, key range and key existance, and
+   * NodeID value, to avoid mssing a few InnerDeleteNode on the parent node.
+   * However, for merge SMO, we only check key existence.
+   *
+   * Note: This function does not abort. Any extra checking (e.g. whether
+   * NodeIDs match, whether key is inside range) should be done by the caller
    */
   inline const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
                                                 const KeyType &search_key) {
@@ -5646,6 +5658,12 @@ before_switch:
    * NOTE: search_key is the low key of the current node for which we are
    * find the left sibling, not the search key of the current operation.
    * These two might differ in the case of cascading remove node delta
+   *
+   * NOTE 2: This function could not deal with InnerMergeNode since the merge
+   * node imposes a non-consecutive storage for adjacent keys. As an alternative
+   * way of finding left sibling, whenever an InnerMergeNode is observed,
+   * the node will be consolidated and we use the plain InnerNode to
+   * continue searching
    */
   inline NodeID FindLeftSibling(const KeyType &search_key,
                                 NodeSnapshot *snapshot_p) {
@@ -5989,7 +6007,7 @@ before_switch:
       }
 
       // Update abort counter
-      // NOTW 1: We could not do this before return since the context
+      // NOTE 1: We could not do this before return since the context
       // object is cleared at the end of loop
       // NOTE 2: Since Traverse() might abort due to other CAS failures
       // context.abort_counter might be larger than 1 when
