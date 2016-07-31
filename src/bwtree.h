@@ -54,6 +54,9 @@
 
 #endif
 
+// This must be declared before all include directives
+using NodeID = uint64_t;
+
 #include "sorted_small_set.h"
 #include "bloom_filter.h"
 #include "atomic_stack.h"
@@ -111,8 +114,6 @@ static void dummy(const char*, ...) {}
   } while (0);
 
 #endif
-
-using NodeID = uint64_t;
 
 // This could not be set as a macro since we will change the flag inside
 // the testing framework
@@ -2210,7 +2211,10 @@ retry_traverse:
     // NOTE: We set current snapshot since in LoadNodeID() or read opt.
     // version the parent node snapshot will be overwritten with this child
     // node snapshot
-    GetLatestNodeSnapshot(context_p)->node_id = INVALID_NODE_ID;
+    //
+    // NOTE 2: We could not use GetLatestNodeSnashot() here since it checks
+    // current_level, which is -1 at this point
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
     
     // We need to call this even for root node since there could
     // be split delta posted on to root node
