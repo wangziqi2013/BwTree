@@ -574,8 +574,12 @@ class BwTree {
     NodeSnapshot current_snapshot;
     NodeSnapshot parent_snapshot;
 
+    #ifdef BWTREE_DEBUG
+    
     // Counts abort in one traversal
     int abort_counter;
+
+    #endif
 
     // Represents current level we are on the tree
     // root is level 0
@@ -605,7 +609,12 @@ class BwTree {
       search_key{p_search_key},
 
       #endif
+      
+      #ifdef BWTREE_DEBUG
+      
       abort_counter{0},
+      
+      #endif
       current_level{-1},
       abort_flag{false}
     {}
@@ -2263,9 +2272,13 @@ retry_traverse:
       goto abort_traverse;
     }
 
+    #ifdef BWTREE_DEBUG
+    
     bwt_printf("Found leaf node. Abort count = %d, level = %d\n",
                context_p->abort_counter,
                context_p->current_level);
+               
+    #endif
 
     // If there is no abort then we could safely return
     return found_pair_p;
@@ -2276,7 +2289,12 @@ abort_traverse:
     context_p->current_level = -1;
 
     context_p->abort_flag = false;
+    
+    #ifdef BWTREE_DEBUG
+    
     context_p->abort_counter++;
+
+    #endif
 
     goto retry_traverse;
 
@@ -4374,9 +4392,13 @@ retry_traverse:
           goto abort_traverse;
         }
 
+        #ifdef BWTREE_DEBUG
+        
         bwt_printf("Found leaf node (RO). Abort count = %d, level = %d\n",
                    context_p->abort_counter,
                    context_p->current_level);
+
+        #endif
 
         // If there is no abort then we could safely return
         return;
@@ -4392,7 +4414,12 @@ abort_traverse:
     context_p->current_level = -1;
 
     context_p->abort_flag = false;
+    
+    #ifdef BWTREE_DEBUG
+    
     context_p->abort_counter++;
+    
+    #endif
 
     goto retry_traverse;
 
@@ -5532,7 +5559,7 @@ before_switch:
    * Note: This function does not abort. Any extra checking (e.g. whether
    * NodeIDs match, whether key is inside range) should be done by the caller
    */
-  inline const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
+  const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
                                                 const KeyType &search_key) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
@@ -6001,11 +6028,17 @@ before_switch:
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
 
         delete insert_node_p;
       }
 
+      #ifdef BWTREE_DEBUG
+      
       // Update abort counter
       // NOTE 1: We could not do this before return since the context
       // object is cleared at the end of loop
@@ -6013,6 +6046,8 @@ before_switch:
       // context.abort_counter might be larger than 1 when
       // LeafInsertNode installation fails
       insert_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert delta from the root\n");
@@ -6105,12 +6140,20 @@ before_switch:
       } else {
         bwt_printf("Leaf insert (cond.) delta CAS failed\n");
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
 
         delete insert_node_p;
       }
 
+      #ifdef BWTREE_DEBUG
+
       insert_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       bwt_printf("Retry installing leaf insert (cond.) delta from the root\n");
     }
@@ -6177,10 +6220,18 @@ before_switch:
 
         delete delete_node_p;
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
       }
 
+      #ifdef BWTREE_DEBUG
+
       delete_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
@@ -6249,10 +6300,18 @@ before_switch:
 
         delete delete_node_p;
 
+        #ifdef BWTREE_DEBUG
+
         context.abort_counter++;
+        
+        #endif
       }
 
+      #ifdef BWTREE_DEBUG
+
       delete_abort_count.fetch_add(context.abort_counter);
+      
+      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
