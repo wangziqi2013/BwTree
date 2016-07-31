@@ -2307,7 +2307,7 @@ abort_traverse:
    * If the traverse aborts then this function returns with abort_flag
    * setting to true.
    */
-  inline void NavigateSiblingChain(Context *context_p) {
+  void NavigateSiblingChain(Context *context_p) {
     do {
       // These two will be updated everytime we switch to
       // a new node
@@ -2398,7 +2398,7 @@ abort_traverse:
    * and update path history. (Such jump may happen multiple times, so
    * do not make any assumption about how jump is performed)
    */
-  inline NodeID NavigateInnerNode(Context *context_p) {
+  NodeID NavigateInnerNode(Context *context_p) {
     // This will go to the right sibling until we have seen
     // a node whose range match the search key
     NavigateSiblingChain(context_p);
@@ -2577,8 +2577,8 @@ abort_traverse:
    * proceures where parent node is consolidated and scanned in order to find
    * a certain key.
    */
-  inline InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
-                                          int p_depth = 0) {
+  InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
+                                   int p_depth = 0) {
 
     // Note that in the recursive call node_p might change
     // but we should not change the metadata
@@ -3312,7 +3312,7 @@ abort_traverse:
    * traverse the delta chain and leaf data node, and could not be
    * guaranteed a specific order
    */
-  inline const KeyValuePair *
+  const KeyValuePair *
   NavigateLeafNode(Context *context_p,
                    const ValueType &value,
                    std::pair<int, bool> *index_pair_p,
@@ -3494,7 +3494,7 @@ abort_traverse:
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
    */
-  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
     assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -4114,7 +4114,7 @@ abort_traverse:
    *
    * (3) Check current_level == 0 to determine whether we are on a root node
    */
-  inline void LoadNodeID(NodeID node_id, Context *context_p) {
+  void LoadNodeID(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -4284,7 +4284,7 @@ before_switch:
    * down. However, jumping to left sibling has the possibility to fail
    * so we still need to check abort flag after this function returns
    */
-  inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
+  void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -4310,8 +4310,8 @@ before_switch:
    * even if the thread is read only, since otherwise traversing down
    * would become impossible.
    */
-  inline void TraverseReadOptimized(Context *context_p,
-                                    std::vector<ValueType> *value_list_p) {
+  void TraverseReadOptimized(Context *context_p,
+                             std::vector<ValueType> *value_list_p) {
 retry_traverse:
     assert(context_p->abort_flag == false);
     assert(context_p->current_level == -1);
