@@ -617,14 +617,8 @@ class BwTree {
       
       #endif
       
-      abort_flag{false} {
-
-      // This is used to identify root nodes
-      // NOTE: We set current snapshot since in LoadNodeID() or read opt.
-      // version the parent node snapshot will be overwritten with this child
-      // node snapshot
-      current_snapshot.node_id = INVALID_NODE_ID;
-    }
+      abort_flag{false}
+    {}
 
     /*
      * Destructor - Cleanup
@@ -2211,6 +2205,12 @@ retry_traverse:
 
     // This is the serialization point for reading/writing root node
     NodeID start_node_id = root_id.load();
+    
+    // This is used to identify root nodes
+    // NOTE: We set current snapshot since in LoadNodeID() or read opt.
+    // version the parent node snapshot will be overwritten with this child
+    // node snapshot
+    GetLatestNodeSnapshot(context_p)->node_id = INVALID_NODE_ID;
     
     // We need to call this even for root node since there could
     // be split delta posted on to root node
