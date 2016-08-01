@@ -6615,16 +6615,34 @@ before_switch:
      * This function waits for the worker thread using join() method. After the
      * worker thread has exited, it synchronously clears all epochs that have
      * not been recycled by calling ClearEpoch()
+     *
+     * NOTE: If no internal GC is started then thread_p would be a nullptr
+     * and we neither wait nor free the pointer.
      */
     ~EpochManager() {
       // Set stop flag and let thread terminate
+      // Also if there is an external GC thread then it should
+      // check this flag everytime it does cleaning since otherwise
+      // the un-thread-safe function ClearEpoch() would be ran
+      // by more than 1 threads
       exited_flag = true;
 
-      bwt_printf("Waiting for thread\n");
-      thread_p->join();
+      // If thread pointer is nullptr then we know the GC thread
+      // is not started. In this case do not wait for the thread, and just
+      // call destructor
+      //
+      // NOTE: The destructor routine is not thread-safe, so if an external
+      // GC thread is being used then that thread should check for
+      // exited_flag everytime it wants to do GC
+      //
+      // If the external thread calls ThreadFunc() then it is safe
+      if(thread_p != nullptr) {
+        bwt_printf("Waiting for thread\n");
+        thread_p->join();
 
-      // Free memory
-      delete thread_p;
+        // Free memory
+        delete thread_p;
+      }
 
       // So that in the following function the comparison
       // would always fail, until we have cleaned all epoch nodes
