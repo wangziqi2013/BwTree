@@ -496,7 +496,7 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
     std::chrono::duration<double> elapsed_seconds = end - start;
 
     std::cout << "[Thread " << thread_id << " Done] @ "
-              << (key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << (key_num / num_thread) / (1024.0 * 1024.0) / elapsed_seconds.count()
               << " million insert/sec" << "\n";
 
     thread_time[thread_id] = elapsed_seconds.count();
@@ -512,7 +512,7 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
   }
 
   std::cout << num_thread << " Threads BwTree: overall "
-            << (key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
+            << (key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds
             << " million insert/sec" << "\n";
             
   return;
