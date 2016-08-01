@@ -180,17 +180,17 @@ int main(int argc, char **argv) {
     t1 = new TreeType{KeyComparator{1},
                       KeyEqualityChecker{1}};
 
-    int key_num = 1024 * 1024;
+    int key_num = 1024 * 1024 * 3;
     bwt_printf("Using key size = %d (%f million)\n",
                key_num,
                key_num / (1024.0 * 1024.0));
 
     print_flag = false;
 
-    TestStdMapInsertReadPerformance();
-    TestStdUnorderedMapInsertReadPerformance();
-    TestBTreeInsertReadPerformance();
-    TestBTreeMultimapInsertReadPerformance();
+    TestStdMapInsertReadPerformance(key_num);
+    TestStdUnorderedMapInsertReadPerformance(key_num);
+    TestBTreeInsertReadPerformance(key_num);
+    TestBTreeMultimapInsertReadPerformance(key_num);
     TestBwTreeInsertReadPerformance(t1, key_num);
 
     print_flag = true;
