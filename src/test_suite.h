@@ -20,6 +20,7 @@
 #include "bwtree.h"
 #include "../benchmark/btree.h"
 #include "../benchmark/btree_multimap.h"
+#include "../benchmark/cuckoohash_map.hh"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
@@ -171,10 +172,10 @@ extern int mixed_key_num;
 /*
  * Performance test suite
  */
-void TestStdMapInsertReadPerformance();
-void TestStdUnorderedMapInsertReadPerformance();
-void TestBTreeInsertReadPerformance();
-void TestBTreeMultimapInsertReadPerformance();
+void TestStdMapInsertReadPerformance(int key_size);
+void TestStdUnorderedMapInsertReadPerformance(int key_size);
+void TestBTreeInsertReadPerformance(int key_size);
+void TestBTreeMultimapInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
