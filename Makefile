@@ -55,7 +55,7 @@ small-size:
 	make clean
 	make OPT_FLAG=" -Os -DNDEBUG -DBWTREE_NODEBUG"
 
-benchmark-all: main ./benchmark/btree.h ./benchmark/btree_multimap.h
+benchmark-all: main 
 	$(PRELOAD_LIB) ./main --benchmark-all
 
 benchmark-bwtree: main
