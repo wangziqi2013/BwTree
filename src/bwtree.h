@@ -6372,6 +6372,42 @@ before_switch:
 
     return value_set;
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Garbage Collection Interface
+  ///////////////////////////////////////////////////////////////////
+  
+  /*
+   * NeedGarbageCollection() - Whether the tree needs garbage collection
+   *
+   * Ideally, if there is no modification workload on BwTree from the last
+   * time GC was called, then GC is unnecessary since read operation does not
+   * modify any data structure
+   *
+   * Currently we just leave the interface as a placeholder, which returns true
+   * everytime to force GC thred to at least take a look into the epoch
+   * counter.
+   */
+  bool NeedGarbageCollection() {
+    return true;
+  }
+  
+  /*
+   * PerformGarbageCollection() - Interface function for external users to
+   *                              force a garbage collection
+   *
+   * This function is a wrapper to the internal GC thread function. Since
+   * users could choose whether to let BwTree handle GC by itself or to
+   * control GC using external threads. This function is left as a convenient
+   * interface for external threads to do garbage collection.
+   */
+  void PerformGarbageCollection() {
+    // This function creates a new epoch node, and then checks
+    // epoch counter for exiatsing nodes.
+    epoch_manager.ThreadFunc();
+
+    return;
+  }
 
  /*
   * Private Method Implementation
