@@ -18,9 +18,9 @@
 #include <pthread.h>
 
 #include "bwtree.h"
-#include "../benchmark/btree.h"
-#include "../benchmark/btree_multimap.h"
-#include "../benchmark/cuckoohash_map.hh"
+#include "../benchmark/stx_btree/btree.h"
+#include "../benchmark/stx_btree/btree_multimap.h"
+#include "../benchmark/libcuckoo/cuckoohash_map.hh"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
