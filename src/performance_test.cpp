@@ -217,6 +217,60 @@ void TestBTreeMultimapInsertReadPerformance(int key_num) {
   return;
 }
 
+
+/*
+ * TestCuckooHashTableInsertReadPerformance() - Tests cuckoo hash table
+ */
+void TestCuckooHashTableInsertReadPerformance(int key_num) {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  // Initialize multimap with a key comparator that is not trivial
+  cuckoohash_map<long, long> test_map{};
+
+  start = std::chrono::system_clock::now();
+
+  // Insert 1 million keys into stx::btree_multimap
+  for(long i = 0;i < key_num;i++) {
+    test_map.insert(i, i);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "cuckoohash_map: " << (1.0 * key_num / (1024 * 1024)) / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  std::vector<long> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from stx::btree
+    for(int i = 0;i < key_num;i++) {
+      long int ret;
+      
+      test_map.find(i, ret);
+
+      v.push_back(ret);
+
+      v.clear();
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "cuckoohash_map " << (1.0 * iter * key_num / (1024 * 1024)) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
 /*
  * TestBwTreeInsertReadDeletePerformance() - As name suggests
  *

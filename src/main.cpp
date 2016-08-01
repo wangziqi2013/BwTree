@@ -191,6 +191,7 @@ int main(int argc, char **argv) {
     TestStdUnorderedMapInsertReadPerformance(key_num);
     TestBTreeInsertReadPerformance(key_num);
     TestBTreeMultimapInsertReadPerformance(key_num);
+    TestCuckooHashTableInsertReadPerformance(key_num);
     TestBwTreeInsertReadPerformance(t1, key_num);
 
     print_flag = true;

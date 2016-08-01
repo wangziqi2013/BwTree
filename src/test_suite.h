@@ -176,6 +176,7 @@ void TestStdMapInsertReadPerformance(int key_size);
 void TestStdUnorderedMapInsertReadPerformance(int key_size);
 void TestBTreeInsertReadPerformance(int key_size);
 void TestBTreeMultimapInsertReadPerformance(int key_size);
+void TestCuckooHashTableInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
