@@ -168,6 +168,9 @@ int main(int argc, char **argv) {
       
       // Use stree_multimap as a reference
       RandomBtreeMultimapInsertSpeedTest(key_num);
+      
+      // Use cuckoohash_map
+      RandomCuckooHashMapInsertSpeedTest(key_num);
     }
 
     print_flag = true;

@@ -196,6 +196,7 @@ void IteratorTest(TreeType *t);
  * Random test suite
  */
 void RandomBtreeMultimapInsertSpeedTest(size_t key_num);
+void RandomCuckooHashMapInsertSpeedTest(size_t key_num);
 void RandomInsertSpeedTest(TreeType *t, size_t key_num);
 void RandomInsertSeqReadSpeedTest(TreeType *t, size_t key_num);
 void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num);
