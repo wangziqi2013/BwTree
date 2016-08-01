@@ -1748,7 +1748,7 @@ class BwTree {
 
     bwt_printf("sizeof(NodeMetaData) = %lu is the overhead for each node\n",
                sizeof(NodeMetaData));
-    bwt_printf("sizeof(KeyType) = %lu is the size of wrapped key\n",
+    bwt_printf("sizeof(KeyType) = %lu is the size of key\n",
                sizeof(KeyType));
 
     bwt_printf("Starting epoch manager thread...\n");
