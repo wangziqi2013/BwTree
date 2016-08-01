@@ -521,7 +521,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   }
 
   std::cout << num_thread << " Threads BwTree: overall "
-            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read/sec" << "\n";
             
   ///////////////////////////////////////////////////////////////////
@@ -575,7 +575,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   }
 
   std::cout << num_thread << " Threads BwTree: overall "
-            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read (random)/sec" << "\n";
 
   return;
