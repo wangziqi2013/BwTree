@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
 
     if(run_benchmark_bwtree_full == true) {
       // First we rely on this test to fill bwtree with 30 million keys
-      TestBwTreeInsertReadPerformance(t1, key_num);
+      TestBwTreeMultiThreadInsertPerformance(t1, key_num);
 
       // And then do a multithreaded read
       TestBwTreeMultiThreadReadPerformance(t1, key_num);

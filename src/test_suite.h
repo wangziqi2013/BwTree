@@ -179,6 +179,7 @@ void TestBTreeMultimapInsertReadPerformance(int key_size);
 void TestCuckooHashTableInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
+void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
