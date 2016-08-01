@@ -6538,11 +6538,10 @@ before_switch:
     // acceptable that allocations are delayed to the next epoch
     EpochNode *current_epoch_p;
 
-    // This flag will be set to true sometime after the bwtree destructor is
-    // called - no synchronization is guaranteed, but it is acceptable
-    // since this flag is checked by the epoch thread periodically
-    // so even if it missed one, it will not miss the next
-    bool exited_flag;
+    // This flag indicates whether the destructor is running
+    // If it is true then GC thread should not clean
+    // Therefore, strict ordering is required
+    std::atomic<bool> exited_flag;
 
     std::thread *thread_p;
 
@@ -6590,7 +6589,7 @@ before_switch:
       thread_p = nullptr;
 
       // This is used to notify the cleaner thread that it has ended
-      exited_flag = false;
+      exited_flag.store(false);
 
       // Initialize atomic counter to record how many
       // freed has been called inside epoch manager
@@ -6625,7 +6624,7 @@ before_switch:
       // check this flag everytime it does cleaning since otherwise
       // the un-thread-safe function ClearEpoch() would be ran
       // by more than 1 threads
-      exited_flag = true;
+      exited_flag.store(true);
 
       // If thread pointer is nullptr then we know the GC thread
       // is not started. In this case do not wait for the thread, and just
