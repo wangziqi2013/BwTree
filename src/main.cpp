@@ -62,11 +62,7 @@ int main(int argc, char **argv) {
   TreeType *t1 = nullptr;
   
   if(run_mixed_test == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
-    print_flag = false;
+    t1 = GetEmptyTree();
 
     printf("Starting mixed testing...\n");
     LaunchParallelTestID(mixed_thread_num, MixedTest1, t1);
@@ -76,55 +72,28 @@ int main(int argc, char **argv) {
 
     MixedGetValueTest(t1);
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
   }
   
   if(run_email_test == true) {
-    print_flag = true;
-    auto t2 = new BwTree<std::string, long int>{};
-    print_flag = false;
+    auto t2 = new BwTree<std::string, long int>{true};
     
     TestBwTreeEmailInsertPerformance(t2, "emails_dump.txt");
     
     // t2 has already been deleted for memory reason
   }
-  
-  if(run_infinite_insert_test == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
-    print_flag = false;
-
-    InfiniteRandomInsertTest(t1);
-
-    print_flag = true;
-    delete t1;
-    print_flag = false;
-  }
 
   if(run_epoch_test == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
-    print_flag = false;
+    t1 = GetEmptyTree();
 
     TestEpochManager(t1);
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
   }
 
   if(run_benchmark_bwtree == true ||
      run_benchmark_bwtree_full == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
+    t1 = GetEmptyTree();
 
     int key_num = 3 * 1024 * 1024;
 
@@ -132,11 +101,9 @@ int main(int argc, char **argv) {
       key_num *= 10;
     }
 
-    bwt_printf("Using key size = %d (%f million)\n",
-               key_num,
-               key_num / (1024.0 * 1024.0));
-
-    print_flag = false;
+    printf("Using key size = %d (%f million)\n",
+           key_num,
+           key_num / (1024.0 * 1024.0));
 
     if(run_benchmark_bwtree_full == true) {
       // First we rely on this test to fill bwtree with 30 million keys
@@ -149,26 +116,20 @@ int main(int argc, char **argv) {
       // is empty after it returns
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
       
-      delete t1;
-      t1 = new TreeType{true,
-                        KeyComparator{1},
-                        KeyEqualityChecker{1}};
+      DestroyTree(t1, true);
+      t1 = GetEmptyTree(true);
       
       // Tests random insert using one thread
       RandomInsertSpeedTest(t1, key_num);
       
-      delete t1;
-      t1 = new TreeType{true,
-                        KeyComparator{1},
-                        KeyEqualityChecker{1}};
+      DestroyTree(t1, true);
+      t1 = GetEmptyTree(true);
       
       // Test random insert seq read
       RandomInsertSeqReadSpeedTest(t1, key_num);
       
-      delete t1;
-      t1 = new TreeType{true,
-                        KeyComparator{1},
-                        KeyEqualityChecker{1}};
+      DestroyTree(t1, true);
+      t1 = GetEmptyTree(true);
       
       // Test seq insert random read
       SeqInsertRandomReadSpeedTest(t1, key_num);
@@ -180,23 +141,16 @@ int main(int argc, char **argv) {
       RandomCuckooHashMapInsertSpeedTest(key_num);
     }
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
   }
 
   if(run_benchmark_all == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
+    t1 = GetEmptyTree();
 
     int key_num = 1024 * 1024 * 3;
-    bwt_printf("Using key size = %d (%f million)\n",
-               key_num,
-               key_num / (1024.0 * 1024.0));
-
-    print_flag = false;
+    printf("Using key size = %d (%f million)\n",
+           key_num,
+           key_num / (1024.0 * 1024.0));
 
     TestStdMapInsertReadPerformance(key_num);
     TestStdUnorderedMapInsertReadPerformance(key_num);
@@ -205,21 +159,17 @@ int main(int argc, char **argv) {
     TestCuckooHashTableInsertReadPerformance(key_num);
     TestBwTreeInsertReadPerformance(t1, key_num);
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
   }
 
   if(run_test == true) {
-    print_flag = true;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
-    print_flag = false;
 
-    //////////////
+    /////////////////////////////////////////////////////////////////
     // Test iterator
-    //////////////
+    /////////////////////////////////////////////////////////////////
+    
+    // This could print
+    t1 = GetEmptyTree();
 
     printf("Testing iterator...\n");
 
@@ -228,31 +178,29 @@ int main(int argc, char **argv) {
 
     printf("Finised testing iterator\n");
 
-    //////////////////////
+    /////////////////////////////////////////////////////////////////
     // Test random insert
-    //////////////////////
+    /////////////////////////////////////////////////////////////////
 
     printf("Testing random insert...\n");
 
     // Do not print here otherwise we could not see result
-    delete t1;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
+    t1 = GetEmptyTree(true);
 
     LaunchParallelTestID(8, RandomInsertTest, t1);
     RandomInsertVerify(t1);
     
     printf("Finished random insert testing. Delete the tree.\n");
     
-    delete t1;
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
+    // no print
+    DestroyTree(t1, true);
 
-    ////////////////////////////
+    /////////////////////////////////////////////////////////////////
     // Test mixed insert/delete
-    ////////////////////////////
+    /////////////////////////////////////////////////////////////////
+    
+    // no print
+    t1 = GetEmptyTree(true);
 
     LaunchParallelTestID(basic_test_thread_num, MixedTest1, t1);
     printf("Finished mixed testing\n");
@@ -260,6 +208,11 @@ int main(int argc, char **argv) {
     PrintStat(t1);
 
     MixedGetValueTest(t1);
+    
+    /////////////////////////////////////////////////////////////////
+    // Test Basic Insert/Delete/GetValue
+    //   with different patterns and multi thread
+    /////////////////////////////////////////////////////////////////
 
     LaunchParallelTestID(basic_test_thread_num, InsertTest2, t1);
     printf("Finished inserting all keys\n");
@@ -325,26 +278,23 @@ int main(int argc, char **argv) {
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
+  }
+  
+  if(run_infinite_insert_test == true) {
+    t1 = GetEmptyTree();
+
+    InfiniteRandomInsertTest(t1);
+
+    DestroyTree(t1);
   }
 
   if(run_stress == true) {
-    print_flag = true;
-    
-    // NOTE: For stress test we must start the GC thread in order
-    // to let the tree run indefinitely
-    t1 = new TreeType{true,
-                      KeyComparator{1},
-                      KeyEqualityChecker{1}};
-    print_flag = false;
+    t1 = GetEmptyTree();
 
     LaunchParallelTestID(8, StressTest, t1);
 
-    print_flag = true;
-    delete t1;
-    print_flag = false;
+    DestroyTree(t1);
   }
 
   return 0;
