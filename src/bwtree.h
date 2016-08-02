@@ -6651,10 +6651,13 @@ before_switch:
       // If the external thread calls ThreadFunc() then it is safe
       if(thread_p != nullptr) {
         bwt_printf("Waiting for thread\n");
+        
         thread_p->join();
 
         // Free memory
         delete thread_p;
+        
+        bwt_printf("Thread stops\n");
       }
 
       // So that in the following function the comparison
@@ -6686,7 +6689,7 @@ before_switch:
       }
 
       assert(head_epoch_p == nullptr);
-      bwt_printf("Clean up for garbage collector\n");
+      bwt_printf("Garbage Collector has finished freeing all garbage nodes\n");
 
       #ifdef BWTREE_DEBUG
       bwt_printf("Stat: Freed %lu nodes and %lu NodeID by epoch manager\n",
@@ -7116,7 +7119,7 @@ try_join_again:
       // We do not worry about race condition here
       // since even if we missed one we could always
       // hit the correct value on next try
-      while(exited_flag == false) {
+      while(exited_flag.load() == false) {
         //printf("Start new epoch cycle\n");
         ClearEpoch();
         CreateNewEpoch();
