@@ -6543,6 +6543,9 @@ before_switch:
     // Therefore, strict ordering is required
     std::atomic<bool> exited_flag;
 
+    // If GC is done with external thread then this should be set
+    // to nullptr
+    // Otherwise it points to a thread created by EpochManager internally
     std::thread *thread_p;
 
     // The counter that counts how many free is called
