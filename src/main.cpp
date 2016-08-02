@@ -177,6 +177,9 @@ int main(int argc, char **argv) {
     PrintStat(t1);
 
     printf("Finised testing iterator\n");
+    
+    // Do not forget to deletet the tree here
+    DestroyTree(t1, true);
 
     /////////////////////////////////////////////////////////////////
     // Test random insert
