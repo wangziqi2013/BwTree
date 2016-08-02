@@ -54,6 +54,9 @@
 
 #endif
 
+// This must be declared before all include directives
+using NodeID = uint64_t;
+
 #include "sorted_small_set.h"
 #include "bloom_filter.h"
 #include "atomic_stack.h"
@@ -111,8 +114,6 @@ static void dummy(const char*, ...) {}
   } while (0);
 
 #endif
-
-using NodeID = uint64_t;
 
 // This could not be set as a macro since we will change the flag inside
 // the testing framework
@@ -617,14 +618,8 @@ class BwTree {
       
       #endif
       
-      abort_flag{false} {
-
-      // This is used to identify root nodes
-      // NOTE: We set current snapshot since in LoadNodeID() or read opt.
-      // version the parent node snapshot will be overwritten with this child
-      // node snapshot
-      current_snapshot.node_id = INVALID_NODE_ID;
-    }
+      abort_flag{false}
+    {}
 
     /*
      * Destructor - Cleanup
@@ -1702,8 +1697,15 @@ class BwTree {
    *
    * Any tree instance must start with an intermediate node as root, together
    * with an empty leaf node as child
+   *
+   * Some properties of the tree should be specified in the argument.
+   *
+   *   start_gc_thread - If set to true then a separate gc thred will be
+   *                     started. Otherwise GC must be done by the user
+   *                     using PerformGarbageCollection() interface
    */
-  BwTree(KeyComparator p_key_cmp_obj = KeyComparator{},
+  BwTree(bool start_gc_thread = true,
+         KeyComparator p_key_cmp_obj = KeyComparator{},
          KeyEqualityChecker p_key_eq_obj = KeyEqualityChecker{},
          KeyHashFunc p_key_hash_obj = KeyHashFunc{},
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
@@ -1753,11 +1755,15 @@ class BwTree {
 
     bwt_printf("sizeof(NodeMetaData) = %lu is the overhead for each node\n",
                sizeof(NodeMetaData));
-    bwt_printf("sizeof(KeyType) = %lu is the size of wrapped key\n",
+    bwt_printf("sizeof(KeyType) = %lu is the size of key\n",
                sizeof(KeyType));
 
-    bwt_printf("Starting epoch manager thread...\n");
-    epoch_manager.StartThread();
+    // We could choose not to start GC thread inside the BwTree
+    // in that case GC must be done by calling the interface
+    if(start_gc_thread == true) {
+      bwt_printf("Starting epoch manager thread...\n");
+      epoch_manager.StartThread();
+    }
 
     dummy("Call it here to avoid compiler warning\n");
     
@@ -2211,6 +2217,15 @@ retry_traverse:
 
     // This is the serialization point for reading/writing root node
     NodeID start_node_id = root_id.load();
+    
+    // This is used to identify root nodes
+    // NOTE: We set current snapshot since in LoadNodeID() or read opt.
+    // version the parent node snapshot will be overwritten with this child
+    // node snapshot
+    //
+    // NOTE 2: We could not use GetLatestNodeSnashot() here since it checks
+    // current_level, which is -1 at this point
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
     
     // We need to call this even for root node since there could
     // be split delta posted on to root node
@@ -6368,6 +6383,42 @@ before_switch:
 
     return value_set;
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Garbage Collection Interface
+  ///////////////////////////////////////////////////////////////////
+  
+  /*
+   * NeedGarbageCollection() - Whether the tree needs garbage collection
+   *
+   * Ideally, if there is no modification workload on BwTree from the last
+   * time GC was called, then GC is unnecessary since read operation does not
+   * modify any data structure
+   *
+   * Currently we just leave the interface as a placeholder, which returns true
+   * everytime to force GC thred to at least take a look into the epoch
+   * counter.
+   */
+  bool NeedGarbageCollection() {
+    return true;
+  }
+  
+  /*
+   * PerformGarbageCollection() - Interface function for external users to
+   *                              force a garbage collection
+   *
+   * This function is a wrapper to the internal GC thread function. Since
+   * users could choose whether to let BwTree handle GC by itself or to
+   * control GC using external threads. This function is left as a convenient
+   * interface for external threads to do garbage collection.
+   */
+  void PerformGarbageCollection() {
+    // This function creates a new epoch node, and then checks
+    // epoch counter for exiatsing nodes.
+    epoch_manager.ThreadFunc();
+
+    return;
+  }
 
  /*
   * Private Method Implementation
@@ -6498,12 +6549,14 @@ before_switch:
     // acceptable that allocations are delayed to the next epoch
     EpochNode *current_epoch_p;
 
-    // This flag will be set to true sometime after the bwtree destructor is
-    // called - no synchronization is guaranteed, but it is acceptable
-    // since this flag is checked by the epoch thread periodically
-    // so even if it missed one, it will not miss the next
-    bool exited_flag;
+    // This flag indicates whether the destructor is running
+    // If it is true then GC thread should not clean
+    // Therefore, strict ordering is required
+    std::atomic<bool> exited_flag;
 
+    // If GC is done with external thread then this should be set
+    // to nullptr
+    // Otherwise it points to a thread created by EpochManager internally
     std::thread *thread_p;
 
     // The counter that counts how many free is called
@@ -6550,7 +6603,7 @@ before_switch:
       thread_p = nullptr;
 
       // This is used to notify the cleaner thread that it has ended
-      exited_flag = false;
+      exited_flag.store(false);
 
       // Initialize atomic counter to record how many
       // freed has been called inside epoch manager
@@ -6575,16 +6628,37 @@ before_switch:
      * This function waits for the worker thread using join() method. After the
      * worker thread has exited, it synchronously clears all epochs that have
      * not been recycled by calling ClearEpoch()
+     *
+     * NOTE: If no internal GC is started then thread_p would be a nullptr
+     * and we neither wait nor free the pointer.
      */
     ~EpochManager() {
       // Set stop flag and let thread terminate
-      exited_flag = true;
+      // Also if there is an external GC thread then it should
+      // check this flag everytime it does cleaning since otherwise
+      // the un-thread-safe function ClearEpoch() would be ran
+      // by more than 1 threads
+      exited_flag.store(true);
 
-      bwt_printf("Waiting for thread\n");
-      thread_p->join();
+      // If thread pointer is nullptr then we know the GC thread
+      // is not started. In this case do not wait for the thread, and just
+      // call destructor
+      //
+      // NOTE: The destructor routine is not thread-safe, so if an external
+      // GC thread is being used then that thread should check for
+      // exited_flag everytime it wants to do GC
+      //
+      // If the external thread calls ThreadFunc() then it is safe
+      if(thread_p != nullptr) {
+        bwt_printf("Waiting for thread\n");
+        
+        thread_p->join();
 
-      // Free memory
-      delete thread_p;
+        // Free memory
+        delete thread_p;
+        
+        bwt_printf("Thread stops\n");
+      }
 
       // So that in the following function the comparison
       // would always fail, until we have cleaned all epoch nodes
@@ -6615,7 +6689,7 @@ before_switch:
       }
 
       assert(head_epoch_p == nullptr);
-      bwt_printf("Clean up for garbage collector\n");
+      bwt_printf("Garbage Collector has finished freeing all garbage nodes\n");
 
       #ifdef BWTREE_DEBUG
       bwt_printf("Stat: Freed %lu nodes and %lu NodeID by epoch manager\n",
@@ -7045,7 +7119,7 @@ try_join_again:
       // We do not worry about race condition here
       // since even if we missed one we could always
       // hit the correct value on next try
-      while(exited_flag == false) {
+      while(exited_flag.load() == false) {
         //printf("Start new epoch cycle\n");
         ClearEpoch();
         CreateNewEpoch();

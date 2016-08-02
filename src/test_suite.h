@@ -18,8 +18,9 @@
 #include <pthread.h>
 
 #include "bwtree.h"
-#include "../benchmark/btree.h"
-#include "../benchmark/btree_multimap.h"
+#include "../benchmark/stx_btree/btree.h"
+#include "../benchmark/stx_btree/btree_multimap.h"
+#include "../benchmark/libcuckoo/cuckoohash_map.hh"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
@@ -138,6 +139,8 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
   }
 }
 
+TreeType *GetEmptyTree(bool no_print = false);
+void DestroyTree(TreeType *t, bool no_print = false);
 void PrintStat(TreeType *t);
 void PinToCore(size_t core_id);
 
@@ -171,12 +174,14 @@ extern int mixed_key_num;
 /*
  * Performance test suite
  */
-void TestStdMapInsertReadPerformance();
-void TestStdUnorderedMapInsertReadPerformance();
-void TestBTreeInsertReadPerformance();
-void TestBTreeMultimapInsertReadPerformance();
+void TestStdMapInsertReadPerformance(int key_size);
+void TestStdUnorderedMapInsertReadPerformance(int key_size);
+void TestBTreeInsertReadPerformance(int key_size);
+void TestBTreeMultimapInsertReadPerformance(int key_size);
+void TestCuckooHashTableInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
+void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num);
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
@@ -194,6 +199,7 @@ void IteratorTest(TreeType *t);
  * Random test suite
  */
 void RandomBtreeMultimapInsertSpeedTest(size_t key_num);
+void RandomCuckooHashMapInsertSpeedTest(size_t key_num);
 void RandomInsertSpeedTest(TreeType *t, size_t key_num);
 void RandomInsertSeqReadSpeedTest(TreeType *t, size_t key_num);
 void SeqInsertRandomReadSpeedTest(TreeType *t, size_t key_num);

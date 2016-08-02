@@ -67,6 +67,62 @@ void RandomBtreeMultimapInsertSpeedTest(size_t key_num) {
   return;
 }
 
+/*
+ * RandomCuckooHashMapInsertSpeedTest() - Tests cuckoohash_map with random
+ *                                        insert and read pattern
+ */
+void RandomCuckooHashMapInsertSpeedTest(size_t key_num) {
+  cuckoohash_map<long, long> test_map{};
+
+  std::random_device r{};
+  std::default_random_engine e1(r());
+  std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  start = std::chrono::system_clock::now();
+
+  // We loop for keynum * 2 because in average half of the insertion
+  // will hit an empty slot
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+
+    test_map.insert((long)key, (long)key);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "cuckoohash_map: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million random insertion/sec" << "\n";
+
+  // Then test random read after random insert
+  std::vector<long int> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  for(size_t i = 0;i < key_num * 2;i++) {
+    int key = uniform_dist(e1);
+    long int ret;
+    
+    test_map.find(key, ret);
+
+    v.push_back(ret);
+
+    v.clear();
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "cuckoohash_map: at least " << (key_num * 2.0 / (1024 * 1024)) / elapsed_seconds.count()
+            << " million read after random insert/sec" << "\n";
+
+  return;
+}
+
 
 /*
  * RandomInsertSpeedTest() - Tests how fast it is to insert keys randomly

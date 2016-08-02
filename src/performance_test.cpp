@@ -12,13 +12,13 @@
 /*
  * TestStdMapInsertReadPerformance() - As name suggests
  */
-void TestStdMapInsertReadPerformance() {
+void TestStdMapInsertReadPerformance(int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
   // Insert 1 million keys into std::map
   std::map<long, long> test_map{};
-  for(int i = 0;i < 1024 * 1024;i++) {
+  for(int i = 0;i < key_num;i++) {
     test_map[i] = i;
   }
 
@@ -26,7 +26,7 @@ void TestStdMapInsertReadPerformance() {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "std::map: " << 1.0 / elapsed_seconds.count()
+  std::cout << "std::map: " << 1.0 * key_num / (1024 * 1024) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
 
   ////////////////////////////////////////////
@@ -39,7 +39,7 @@ void TestStdMapInsertReadPerformance() {
   int iter = 10;
   for(int j = 0;j < iter;j++) {
     // Read 1 million keys from std::map
-    for(int i = 0;i < 1024 * 1024;i++) {
+    for(int i = 0;i < key_num;i++) {
       long t = test_map[i];
 
       v.push_back(t);
@@ -50,7 +50,7 @@ void TestStdMapInsertReadPerformance() {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "std::map: " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "std::map: " << (1.0 * iter * key_num) / (1024 * 1024) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
@@ -59,13 +59,13 @@ void TestStdMapInsertReadPerformance() {
 /*
  * TestStdUnorderedMapInsertReadPerformance() - As name suggests
  */
-void TestStdUnorderedMapInsertReadPerformance() {
+void TestStdUnorderedMapInsertReadPerformance(int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
   start = std::chrono::system_clock::now();
 
   // Insert 1 million keys into std::map
   std::unordered_map<long, long> test_map{};
-  for(int i = 0;i < 1024 * 1024;i++) {
+  for(int i = 0;i < key_num;i++) {
     test_map[i] = i;
   }
 
@@ -73,7 +73,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "std::unordered_map: " << 1.0 / elapsed_seconds.count()
+  std::cout << "std::unordered_map: " << 1.0 * key_num / (1024 * 1024) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
 
   ////////////////////////////////////////////
@@ -86,7 +86,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
   int iter = 10;
   for(int j = 0;j < iter;j++) {
     // Read 1 million keys from std::map
-    for(int i = 0;i < 1024 * 1024;i++) {
+    for(int i = 0;i < key_num;i++) {
       long t = test_map[i];
 
       v.push_back(t);
@@ -97,7 +97,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "std::unordered_map: " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "std::unordered_map: " << (1.0 * iter * key_num) / (1024 * 1024) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
@@ -106,7 +106,7 @@ void TestStdUnorderedMapInsertReadPerformance() {
 /*
  * TestBTreeInsertReadPerformance() - As name suggests
  */
-void TestBTreeInsertReadPerformance() {
+void TestBTreeInsertReadPerformance(int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
 
   // Insert 1 million keys into stx::btree
@@ -117,7 +117,7 @@ void TestBTreeInsertReadPerformance() {
 
   start = std::chrono::system_clock::now();
 
-  for(long i = 0;i < 1024 * 1024;i++) {
+  for(long i = 0;i < key_num;i++) {
     test_map.insert(i, i);
   }
 
@@ -125,7 +125,7 @@ void TestBTreeInsertReadPerformance() {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "stx::btree: " << 1.0 / elapsed_seconds.count()
+  std::cout << "stx::btree: " << 1.0 * key_num / (1024 * 1024) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
 
   ////////////////////////////////////////////
@@ -137,8 +137,8 @@ void TestBTreeInsertReadPerformance() {
 
   int iter = 10;
   for(int j = 0;j < iter;j++) {
-    // Read 1 million keys from stx::btree
-    for(int i = 0;i < 1024 * 1024;i++) {
+    // Read keys from stx::btree
+    for(int i = 0;i < key_num;i++) {
       auto it = test_map.find(i);
 
       v.push_back(it->second);
@@ -149,7 +149,7 @@ void TestBTreeInsertReadPerformance() {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "stx::btree " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "stx::btree " << (1.0 * iter * key_num) / (1024 * 1024) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
@@ -163,7 +163,7 @@ void TestBTreeInsertReadPerformance() {
  * into the vector. This requires getting the iterator pair first, and
  * then iterate on the interval, pushing values into the vector
  */
-void TestBTreeMultimapInsertReadPerformance() {
+void TestBTreeMultimapInsertReadPerformance(int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
 
   // Initialize multimap with a key comparator that is not trivial
@@ -172,7 +172,7 @@ void TestBTreeMultimapInsertReadPerformance() {
   start = std::chrono::system_clock::now();
 
   // Insert 1 million keys into stx::btree_multimap
-  for(long i = 0;i < 1024 * 1024;i++) {
+  for(long i = 0;i < key_num;i++) {
     test_map.insert(i, i);
   }
 
@@ -180,7 +180,7 @@ void TestBTreeMultimapInsertReadPerformance() {
 
   std::chrono::duration<double> elapsed_seconds = end - start;
 
-  std::cout << "stx::btree_multimap: " << 1.0 / elapsed_seconds.count()
+  std::cout << "stx::btree_multimap: " << (1.0 * key_num / (1024 * 1024)) / elapsed_seconds.count()
             << " million insertion/sec" << "\n";
 
   ////////////////////////////////////////////
@@ -193,7 +193,7 @@ void TestBTreeMultimapInsertReadPerformance() {
   int iter = 10;
   for(int j = 0;j < iter;j++) {
     // Read 1 million keys from stx::btree
-    for(int i = 0;i < 1024 * 1024;i++) {
+    for(int i = 0;i < key_num;i++) {
       auto it_pair = test_map.equal_range(i);
 
       // For multimap we need to write an external loop to
@@ -211,7 +211,61 @@ void TestBTreeMultimapInsertReadPerformance() {
   end = std::chrono::system_clock::now();
 
   elapsed_seconds = end - start;
-  std::cout << "stx::btree_multimap " << (1.0 * iter) / elapsed_seconds.count()
+  std::cout << "stx::btree_multimap " << (1.0 * iter * key_num / (1024 * 1024)) / elapsed_seconds.count()
+            << " million read/sec" << "\n";
+
+  return;
+}
+
+
+/*
+ * TestCuckooHashTableInsertReadPerformance() - Tests cuckoo hash table
+ */
+void TestCuckooHashTableInsertReadPerformance(int key_num) {
+  std::chrono::time_point<std::chrono::system_clock> start, end;
+
+  // Initialize multimap with a key comparator that is not trivial
+  cuckoohash_map<long, long> test_map{};
+
+  start = std::chrono::system_clock::now();
+
+  // Insert 1 million keys into stx::btree_multimap
+  for(long i = 0;i < key_num;i++) {
+    test_map.insert(i, i);
+  }
+
+  end = std::chrono::system_clock::now();
+
+  std::chrono::duration<double> elapsed_seconds = end - start;
+
+  std::cout << "cuckoohash_map: " << (1.0 * key_num / (1024 * 1024)) / elapsed_seconds.count()
+            << " million insertion/sec" << "\n";
+
+  ////////////////////////////////////////////
+  // Test read
+  std::vector<long> v{};
+  v.reserve(100);
+
+  start = std::chrono::system_clock::now();
+
+  int iter = 10;
+  for(int j = 0;j < iter;j++) {
+    // Read 1 million keys from stx::btree
+    for(int i = 0;i < key_num;i++) {
+      long int ret;
+      
+      test_map.find(i, ret);
+
+      v.push_back(ret);
+
+      v.clear();
+    }
+  }
+
+  end = std::chrono::system_clock::now();
+
+  elapsed_seconds = end - start;
+  std::cout << "cuckoohash_map " << (1.0 * iter * key_num / (1024 * 1024)) / elapsed_seconds.count()
             << " million read/sec" << "\n";
 
   return;
@@ -413,6 +467,58 @@ void TestBwTreeInsertReadPerformance(TreeType *t, int key_num) {
 }
 
 /*
+ * TestBwTreeMultiThreadInsertPerformance() - As name suggests
+ *
+ * This should be called in a multithreaded environment
+ */
+void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
+  const int num_thread = 8;
+
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+
+  auto func = [key_num, &thread_time](uint64_t thread_id, TreeType *t) {
+    long int start_key = key_num / num_thread * (long)thread_id;
+    long int end_key = start_key + key_num / num_thread;
+
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+
+    start = std::chrono::system_clock::now();
+
+    for(int i = start_key;i < end_key;i++) {
+      t->Insert(i, i);
+    }
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (key_num / num_thread) / (1024.0 * 1024.0) / elapsed_seconds.count()
+              << " million insert/sec" << "\n";
+
+    thread_time[thread_id] = elapsed_seconds.count();
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BwTree: overall "
+            << (key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds
+            << " million insert/sec" << "\n";
+            
+  return;
+}
+
+/*
  * TestBwTreeMultiThreadReadPerformance() - As name suggests
  *
  * This should be called in a multithreaded environment
@@ -421,9 +527,13 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   const int num_thread = 8;
   int iter = 1;
   
-  std::chrono::time_point<std::chrono::system_clock> start, end;
-
-  auto func = [key_num, iter](uint64_t thread_id, TreeType *t) {
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+  
+  auto func = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
     // First pin the thread to a core
     //PinToCore(thread_id);
 
@@ -449,27 +559,32 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     std::cout << "[Thread " << thread_id << " Done] @ "
               << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
               << " million read/sec" << "\n";
+              
+    thread_time[thread_id] = elapsed_seconds.count();
 
     return;
   };
 
-  start = std::chrono::system_clock::now();
   LaunchParallelTestID(num_thread, func, t);
-  end = std::chrono::system_clock::now();
+  
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
 
-  std::chrono::duration<double> elapsed_seconds = end - start;
   std::cout << num_thread << " Threads BwTree: overall "
-            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read/sec" << "\n";
             
   ///////////////////////////////////////////////////////////////////
   // Multithread random read performance
   ///////////////////////////////////////////////////////////////////
   
-  // Since it might be slow, we make it as 1
-  iter = 1;
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
   
-  auto func2 = [key_num, iter](uint64_t thread_id, TreeType *t) {
+  auto func2 = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
     std::vector<long> v{};
 
     v.reserve(100);
@@ -498,21 +613,145 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     std::cout << "[Thread " << thread_id << " Done] @ "
               << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
               << " million read (random)/sec" << "\n";
+              
+    thread_time[thread_id] = elapsed_seconds.count();
 
     return;
   };
 
-  start = std::chrono::system_clock::now();
   LaunchParallelTestID(num_thread, func2, t);
-  end = std::chrono::system_clock::now();
 
-  elapsed_seconds = end - start;
+  elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
   std::cout << num_thread << " Threads BwTree: overall "
-            << (iter * key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds.count()
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read (random)/sec" << "\n";
 
   return;
 }
+
+/*
+ * TestCuckooHashMapMultiThreadReadPerformance() - As name suggests
+ *
+ * This should be called in a multithreaded environment
+ */
+ /*
+void TestCuckooHashMapMultiThreadReadPerformance(int key_num) {
+  const int num_thread = 8;
+  int iter = 1;
+  
+  cuckoohash_map<long int, long int> test_map{};
+
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+
+  auto func = [key_num, iter, &thread_time, &test_map](uint64_t thread_id, TreeType *t) {
+    // First pin the thread to a core
+    //PinToCore(thread_id);
+
+    std::vector<long> v{};
+
+    v.reserve(100);
+
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+
+    start = std::chrono::system_clock::now();
+
+    for(int j = 0;j < iter;j++) {
+      for(int i = 0;i < key_num;i++) {
+        t->GetValue(i, v);
+
+        v.clear();
+      }
+    }
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million read/sec" << "\n";
+
+    thread_time[thread_id] = elapsed_seconds.count();
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BwTree: overall "
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
+            << " million read/sec" << "\n";
+
+  ///////////////////////////////////////////////////////////////////
+  // Multithread random read performance
+  ///////////////////////////////////////////////////////////////////
+
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+
+  auto func2 = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
+    std::vector<long> v{};
+
+    v.reserve(100);
+
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+
+    std::random_device r{};
+    std::default_random_engine e1(r());
+    std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+
+    start = std::chrono::system_clock::now();
+
+    for(int j = 0;j < iter;j++) {
+      for(int i = 0;i < key_num;i++) {
+        int key = uniform_dist(e1);
+
+        t->GetValue(key, v);
+
+        v.clear();
+      }
+    }
+
+    end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "[Thread " << thread_id << " Done] @ "
+              << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million read (random)/sec" << "\n";
+
+    thread_time[thread_id] = elapsed_seconds.count();
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func2, t);
+
+  elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BwTree: overall "
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
+            << " million read (random)/sec" << "\n";
+
+  return;
+}
+
+*/
 
 /*
  * TestBwTreeEmailInsertPerformance() - Tests insert performance on string
