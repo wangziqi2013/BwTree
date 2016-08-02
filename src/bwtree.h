@@ -1697,8 +1697,15 @@ class BwTree {
    *
    * Any tree instance must start with an intermediate node as root, together
    * with an empty leaf node as child
+   *
+   * Some properties of the tree should be specified in the argument.
+   *
+   *   start_gc_thread - If set to true then a separate gc thred will be
+   *                     started. Otherwise GC must be done by the user
+   *                     using PerformGarbageCollection() interface
    */
-  BwTree(KeyComparator p_key_cmp_obj = KeyComparator{},
+  BwTree(bool start_gc_thread = true,
+         KeyComparator p_key_cmp_obj = KeyComparator{},
          KeyEqualityChecker p_key_eq_obj = KeyEqualityChecker{},
          KeyHashFunc p_key_hash_obj = KeyHashFunc{},
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
@@ -1751,8 +1758,12 @@ class BwTree {
     bwt_printf("sizeof(KeyType) = %lu is the size of key\n",
                sizeof(KeyType));
 
-    bwt_printf("Starting epoch manager thread...\n");
-    epoch_manager.StartThread();
+    // We could choose not to start GC thread inside the BwTree
+    // in that case GC must be done by calling the interface
+    if(start_gc_thread == true) {
+      bwt_printf("Starting epoch manager thread...\n");
+      epoch_manager.StartThread();
+    }
 
     dummy("Call it here to avoid compiler warning\n");
     
