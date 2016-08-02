@@ -63,7 +63,8 @@ int main(int argc, char **argv) {
   
   if(run_mixed_test == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
@@ -92,7 +93,8 @@ int main(int argc, char **argv) {
   
   if(run_infinite_insert_test == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
@@ -105,7 +107,8 @@ int main(int argc, char **argv) {
 
   if(run_epoch_test == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
@@ -119,7 +122,8 @@ int main(int argc, char **argv) {
   if(run_benchmark_bwtree == true ||
      run_benchmark_bwtree_full == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
 
     int key_num = 3 * 1024 * 1024;
@@ -146,21 +150,24 @@ int main(int argc, char **argv) {
       TestBwTreeInsertReadDeletePerformance(t1, key_num);
       
       delete t1;
-      t1 = new TreeType{KeyComparator{1},
+      t1 = new TreeType{true,
+                        KeyComparator{1},
                         KeyEqualityChecker{1}};
       
       // Tests random insert using one thread
       RandomInsertSpeedTest(t1, key_num);
       
       delete t1;
-      t1 = new TreeType{KeyComparator{1},
+      t1 = new TreeType{true,
+                        KeyComparator{1},
                         KeyEqualityChecker{1}};
       
       // Test random insert seq read
       RandomInsertSeqReadSpeedTest(t1, key_num);
       
       delete t1;
-      t1 = new TreeType{KeyComparator{1},
+      t1 = new TreeType{true,
+                        KeyComparator{1},
                         KeyEqualityChecker{1}};
       
       // Test seq insert random read
@@ -180,7 +187,8 @@ int main(int argc, char **argv) {
 
   if(run_benchmark_all == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
 
     int key_num = 1024 * 1024 * 3;
@@ -204,7 +212,8 @@ int main(int argc, char **argv) {
 
   if(run_test == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
@@ -227,7 +236,8 @@ int main(int argc, char **argv) {
 
     // Do not print here otherwise we could not see result
     delete t1;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
 
     LaunchParallelTestID(8, RandomInsertTest, t1);
@@ -236,7 +246,8 @@ int main(int argc, char **argv) {
     printf("Finished random insert testing. Delete the tree.\n");
     
     delete t1;
-    t1 = new TreeType{KeyComparator{1},
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
 
     ////////////////////////////
@@ -321,7 +332,11 @@ int main(int argc, char **argv) {
 
   if(run_stress == true) {
     print_flag = true;
-    t1 = new TreeType{KeyComparator{1},
+    
+    // NOTE: For stress test we must start the GC thread in order
+    // to let the tree run indefinitely
+    t1 = new TreeType{true,
+                      KeyComparator{1},
                       KeyEqualityChecker{1}};
     print_flag = false;
 
