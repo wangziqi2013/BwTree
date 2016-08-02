@@ -139,6 +139,8 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
   }
 }
 
+TreeType *GetEmptyTree(bool no_print = false);
+void DestroyTree(TreeType *t, bool no_print = false);
 void PrintStat(TreeType *t);
 void PinToCore(size_t core_id);
 
