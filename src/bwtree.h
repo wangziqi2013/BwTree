@@ -7555,7 +7555,7 @@ try_join_again:
     bool is_end;
 
     /*
-     * LowerBound() - Load leaf page whose key > start_key
+     * LowerBound() - Load leaf page whose key >= start_key
      *
      * NOTE: Consider the case where there are two nodes [1, 2, 3] [4, 5, 6]
      * after we have scanned [1, 2, 3] (i.e. got its logical leaf node object)
@@ -7569,6 +7569,9 @@ try_join_again:
      * NOTE: If no argument is given then this function uses next_key_pair
      * and checks for INVALID_NODE_ID. Otherwise it uses the given key
      * as the starting point of iteration, and sets next_key_pair
+     *
+     * NOTE 2: A corner case is that a key that is bigger than all current keys
+     * in the system was given
      */
     void LowerBound(const KeyType *start_key_p = nullptr) {
       // Caller needs to guarantee this function not being called if
@@ -7576,13 +7579,18 @@ try_join_again:
       assert(is_end == false);
 
       while(1) {
-        // If we use the nexy_key_pair
+        // If we use the nexy_key_pair (this happens if start_key_p was
+        // given from the beginning, or at the second iteration in the
+        // while loop)
         if(start_key_p == nullptr) {
           // If there is no next key, then just return
           if(next_key_pair.second == INVALID_NODE_ID) {
             // If there is no next key then we are at the end of the iteration
             is_end = true;
 
+            // NOTE: If the leaf node p is valid at this point
+            // then the iterator carries a chunk of memory that needs to be
+            // destroied inside the destructor
             return;
           }
 
