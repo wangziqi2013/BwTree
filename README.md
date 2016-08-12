@@ -4,7 +4,7 @@ This is a street strength implementation of Bw-Tree, using ideas from the MSR's 
 BwTree is a general purpose, concurrent and lock-free B+-Tree index. It allows for multiple threads modifying and/or querying the tree concurrently without corrupting the tree or giving inconsistent results. However, BwTree only guarantees atomicity of operations, and is not a concurrency control agent. If both atomicity and isolation is required, an extra concurrency control layer must be implemented.
 
 This project is developed together with Peloton, a self-adaptive database system prototype by Carnegie Mellon University. Though we strive to maintain BwTree as a standalong module with maximum portability and easiness to use, the special properties of lock-free data structure and of BwTree itself renders some standarized interfaces difficult or impossible to implement (for sake of atomicity), or leads to very inefficient implementations. But still, switching from a C++ STL compliant container to BwTree usually requires only few lines of code change in most common cases, and we are working to simplify things for not-so-common uses.
- 
+
 Benchmark
 =========
 
