@@ -1,16 +1,20 @@
-# BwTree [![Build Status](https://travis-ci.org/wangziqi2013/BwTree.svg?branch=peloton)](https://travis-ci.org/wangziqi2013/BwTree)
-This is a street strength implementation of Bw-Tree, the Microsoft's implementation of which is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
+# BwTree [![Build Status](https://travis-ci.org/wangziqi2013/BwTree.svg?branch=peloton)](https://travis-ci.org/wangziqi2013/BwTree) [![Coverage Status](https://coveralls.io/repos/github/wangziqi2013/BwTree/badge.svg?branch=master)](https://coveralls.io/github/wangziqi2013/BwTree?branch=master)
+This is a street strength implementation of Bw-Tree, using ideas from the MSR's paper with some minor modifications. The official implementation of BwTree by Microsoft is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.
+
+BwTree is a general purpose, concurrent and lock-free B+-Tree index. It allows for multiple threads modifying and/or querying the tree concurrently without corrupting the tree or giving inconsistent results. However, BwTree only guarantees atomicity of operations, and is not a concurrency control agent. If both atomicity and isolation is required, an extra concurrency control layer must be implemented.
+
+This project is developed together with Peloton, a self-adaptive database system prototype by Carnegie Mellon University. Though we strive to maintain BwTree as a standalong module with maximum portability and easiness to use, the special properties of lock-free data structure and of BwTree itself renders some standarized interfaces difficult or impossible to implement (for sake of atomicity), or leads to very inefficient implementations. But still, switching from a C++ STL compliant container to BwTree usually requires only few lines of code change in most common cases, and we are working to simplify things for not-so-common uses.
 
 Benchmark
-=========
+========= 
 
 3 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
 
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19.png)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30.png)
 
 1 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
 
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19-2.png)
+![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30-2.png)
 
 27.55 Million String Key; 1 thread; Intel Xeon E5-2420 v2 @ 2.20GHz; 32K/256K/16M L1/L2/L3 cache
 
@@ -44,6 +48,13 @@ Besides that, when finishing a node split delta by posting index term insert nod
 
 But on the other hand, when dealing with node merge delta, it is mandatory that we check for the status of the parent node after taking the snapshot of the merge delta node. Because for merge delta node's help-along protocol, if we go back to the parent node, and could not find the separator key that is going to be deleted, we assume that it has already been finished by other threads, and thus will proceed with the current operation that might overwrite the merge delta before it is finished. Imagine the case where the snapshot was taken before an InnerInsertNode was posted. In this case, if we use the old parent node snapshot, then a wrong conslusion that the merge delta has already been finished will be reached.
 
+Known Problem
+=============
+
+The ABORT mechanism stated above renders BwTree non-wait-free, since it essentially locks the parent node of the node being removed, and one thread will spin on that ABORT node if it intends to post on the locked parent. Even worse, if the node posting ABORT node dies before it removes the ABORT, no remaining thread could succeed posting on the locked parent, and the data structure will become non-responsive (i.e. starvation to the extreme).
+
+Till now the size of the mapping table is fixed, and could not be extended in the case of an overflow. This problem could be alleviated by allocating a "large enough" mapping table that covers 99% of the cases, but no one could guarantee how large is "large enough", and when the size of the table will grow to the limit. For running benchmarks on data base systems this is fine, but for real world use cases it needs to be fixed, and I am open to any suggestion related to this issue.
+
 Compile and Run
 ===============
 | Command | Description |
@@ -64,4 +75,4 @@ Compile and Run
 Misc
 ====
 
-Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code.
+Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code. Using make command to compile and link these STL test cases.
