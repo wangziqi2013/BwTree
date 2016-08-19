@@ -39,4 +39,7 @@ main
 *.doc
 *.swp
 
+*.gcov
+
 bin
+build
