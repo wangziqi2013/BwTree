@@ -19,7 +19,7 @@ addons:
         packages:
             - gcc-5
             - g++-5
-            - gcov-5
+            - ggcov
 
 before_script:
     - ulimit -c unlimited -S
