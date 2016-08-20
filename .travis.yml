@@ -19,7 +19,6 @@ addons:
         packages:
             - gcc-5
             - g++-5
-            - ggcov
 
 before_script:
     - ulimit -c unlimited -S
@@ -36,4 +35,4 @@ script:
     - if [[ ${RESULT} != 0 ]]; then exit $RESULT ; fi;
 
 after_success:
-    - coveralls -t NZ5M6jFefl1w4w7aCVCLDuK4GfOWMFYiW
+    - coveralls --gcov=gcov-5 -t=NZ5M6jFefl1w4w7aCVCLDuK4GfOWMFYiW
