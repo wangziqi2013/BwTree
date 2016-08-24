@@ -5,7 +5,7 @@ BwTree is a general purpose, concurrent and lock-free B+-Tree index. It allows f
 
 This project is developed together with Peloton, a self-adaptive database system prototype by Carnegie Mellon University. Though we strive to maintain BwTree as a standalong module with maximum portability and easiness to use, the special properties of lock-free data structure and of BwTree itself renders some standarized interfaces difficult or impossible to implement (for sake of atomicity), or leads to very inefficient implementations. But still, switching from a C++ STL compliant container to BwTree usually requires only few lines of code change in most common cases, and we are working to simplify things for not-so-common uses.
 
-Benchmark
+Benchmark 
 ========= 
 
 3 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
