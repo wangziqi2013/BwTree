@@ -1,5 +1,5 @@
 
-CXX = g++
+CXX = g++ 
 CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16
 GMON_FLAG = 
 OPT_FLAG = -O2
