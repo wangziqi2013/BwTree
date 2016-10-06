@@ -151,6 +151,16 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
  */
 class SimpleInt64Hasher {
  public:
+  
+  // This gives a different number for different thread
+  uint64_t thread_id;
+  
+  /*
+   * Constructor - Adds variance for different threads
+   */
+  SimpleInt64Hasher(uint64_t id) :
+    thread_id{id}
+  {} 
    
   /*
    * operator()() - Mimics function call
@@ -166,8 +176,10 @@ class SimpleInt64Hasher {
     //   function-for-uint64-t-keys-ranging-from-0-to-its-max-value
     //
     value ^= value >> 33;
+    value += thread_id;
     value *= 0xff51afd7ed558ccd;
     value ^= value >> 33;
+    value += thread_id;
     value *= 0xc4ceb9fe1a85ec53;
     value ^= value >> 33;
 
