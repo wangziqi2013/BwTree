@@ -524,7 +524,7 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
  * This should be called in a multithreaded environment
  */
 void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
-  const int num_thread = 8;
+  const int num_thread = 40;
   int iter = 1;
   
   // This is used to record time taken for each individual thread
@@ -534,9 +534,6 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
   }
   
   auto func = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
-    // First pin the thread to a core
-    //PinToCore(thread_id);
-
     std::vector<long> v{};
 
     v.reserve(100);
@@ -588,19 +585,23 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     std::vector<long> v{};
 
     v.reserve(100);
+    
+    // This is the random number generator we use
+    SimpleInt64Hasher hash{};
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
     
-    std::random_device r{};
-    std::default_random_engine e1(r());
-    std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+    //std::random_device r{};
+    //std::default_random_engine e1(r());
+    //std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
 
     start = std::chrono::system_clock::now();
 
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
-        int key = uniform_dist(e1);
-        
+        //int key = uniform_dist(e1);
+        long int key = (long int)hash((uint64_t)i, thread_id) % key_num;
+
         t->GetValue(key, v);
 
         v.clear();
