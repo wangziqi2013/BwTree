@@ -588,18 +588,22 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     std::vector<long> v{};
 
     v.reserve(100);
+    
+    // This is the random number generator we use
+    SimpleInt64Hasher hash{};
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
     
-    std::random_device r{};
-    std::default_random_engine e1(r());
-    std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
+    //std::random_device r{};
+    //std::default_random_engine e1(r());
+    //std::uniform_int_distribution<int> uniform_dist(0, key_num - 1);
 
     start = std::chrono::system_clock::now();
 
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
-        int key = uniform_dist(e1);
+        //int key = uniform_dist(e1);
+        long int key = (long int)hash((uint64_t)i);
         
         t->GetValue(key, v);
 
