@@ -151,16 +151,6 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
  */
 class SimpleInt64Hasher {
  public:
-  
-  // This gives a different number for different thread
-  uint64_t thread_id;
-  
-  /*
-   * Constructor - Adds variance for different threads
-   */
-  SimpleInt64Hasher(uint64_t id) :
-    thread_id{id}
-  {} 
    
   /*
    * operator()() - Mimics function call
@@ -168,7 +158,7 @@ class SimpleInt64Hasher {
    * Note that this function must be denoted as const since in STL all
    * hashers are stored as a constant object
    */
-  inline uint64_t operator()(uint64_t value) const {
+  inline uint64_t operator()(uint64_t value, uint64_t thread_id) const {
     //
     // The following code segment is copied from MurmurHash3, and is used
     // as an answer on the Internet:

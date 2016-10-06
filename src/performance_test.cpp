@@ -590,7 +590,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     v.reserve(100);
     
     // This is the random number generator we use
-    SimpleInt64Hasher hash{thread_id};
+    SimpleInt64Hasher hash{};
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
     
@@ -603,8 +603,8 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
         //int key = uniform_dist(e1);
-        long int key = (long int)hash((uint64_t)i);
-        
+        long int key = (long int)hash((uint64_t)i, thread_id);
+
         t->GetValue(key, v);
 
         v.clear();
