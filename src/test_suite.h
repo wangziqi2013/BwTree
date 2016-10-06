@@ -140,16 +140,29 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
 }
 
 /*
- * class SimpleInt64Hasher - Simple hash function that hashes uint64_t
- *                           into a value that are distributed evenly
- *                           in the 0 and MAX interval
+ * class SimpleInt64Random - Simple paeudo-random number generator 
  *
- * Note that for an open addressing hash table, simply do a reflexive mapping
- * is not sufficient, since integer keys tend to group together in a very
- * narrow interval, using the ineteger itself as hashed value might cause
- * aggregation
+ * This generator does not have any performance bottlenect even under
+ * multithreaded environment, since it only uses local states. It hashes
+ * a given integer into a value between 0 - UINT64T_MAX, and in order to derive
+ * a number inside range [lower bound, upper bound) we should do a mod and 
+ * addition
+ *
+ * This function's hash method takes a seed for generating a hashing value,
+ * together with a salt which is used to distinguish different callers
+ * (e.g. threads). Each thread has a thread ID passed in the inlined hash
+ * method (so it does not pose any overhead since it is very likely to be 
+ * optimized as a register resident variable). After hashing finishes we just
+ * normalize the result which is evenly distributed between 0 and UINT64_T MAX
+ * to make it inside the actual range inside template argument (since the range
+ * is specified as template arguments, they could be unfold as constants during
+ * compilation)
+ *
+ * Please note that here upper is not inclusive (i.e. it will not appear as the 
+ * random number)
  */
-class SimpleInt64Hasher {
+template <uint64_t lower, uint64_t upper>
+class SimpleInt64Random {
  public:
    
   /*
@@ -158,22 +171,24 @@ class SimpleInt64Hasher {
    * Note that this function must be denoted as const since in STL all
    * hashers are stored as a constant object
    */
-  inline uint64_t operator()(uint64_t value, uint64_t thread_id) const {
+  inline uint64_t operator()(uint64_t value, uint64_t salt) const {
     //
     // The following code segment is copied from MurmurHash3, and is used
     // as an answer on the Internet:
     // http://stackoverflow.com/questions/5085915/what-is-the-best-hash-
     //   function-for-uint64-t-keys-ranging-from-0-to-its-max-value
     //
-    value ^= value >> 33;
-    value += thread_id;
+    // For small values this does not actually have any effect
+    // since after ">> 33" all its bits are zeros
+    //value ^= value >> 33;
+    value += salt;
     value *= 0xff51afd7ed558ccd;
     value ^= value >> 33;
-    value += thread_id;
+    value += salt;
     value *= 0xc4ceb9fe1a85ec53;
     value ^= value >> 33;
 
-    return value;
+    return lower + value % (upper - lower);
   }
 };
 
