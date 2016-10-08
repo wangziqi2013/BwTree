@@ -569,56 +569,17 @@ class BwTree {
    public:
     // We choose to keep the search key as a member rather than pointer
     // inside the context object
-    const KeyType search_key;
+    const KeyType &search_key;
 
     // We only need to keep current snapshot and parent snapshot
     NodeSnapshot current_snapshot;
     NodeSnapshot parent_snapshot;
 
-    #ifdef BWTREE_DEBUG
-    
-    // Counts abort in one traversal
-    int abort_counter;
-
-    // Represents current level we are on the tree
-    // root is level 0
-    // On initialization this is set to -1
-    int current_level;
-    
-    #endif
-
-    // Whether to abort current traversal, and start a new one
-    // after seeing this flag, all function should return without
-    // any further action, and let the main driver to perform abort
-    // and restart
-    // NOTE: Only the state machine driver could abort
-    // and other functions just return on seeing this flag
-    bool abort_flag;
-
     /*
      * Constructor - Initialize a context object into initial state
      */
     inline Context(const KeyType &p_search_key) :
-      #ifdef BWTREE_PELOTON
-
-      // Because earlier versions of g++ does not support
-      // initializer list so must use () form
-      search_key(p_search_key),
-
-      #else
-
       search_key{p_search_key},
-
-      #endif
-      
-      #ifdef BWTREE_DEBUG
-      
-      abort_counter{0},
-      current_level{-1},
-      
-      #endif
-      
-      abort_flag{false}
     {}
 
     /*
@@ -636,24 +597,7 @@ class BwTree {
     Context &operator=(const Context &p_context) = delete;
     Context(Context &&p_context) = delete;
     Context &operator=(Context &&p_context) = delete;
-
-    #ifdef BWTREE_DEBUG
-    
-    /*
-     * HasParentNode() - Returns whether the current node (top of path list)
-     *                   has a parent node
-     *
-     * NOTE: This function is only called under debug mode, since we should
-     * validate when there is a remove node on the delta chain. However, under
-     * release mode, this function is unnecessary (also current_level is not
-     * present) and is not compiled into the binary.
-     */
-    inline bool HasParentNode() const {
-      return current_level >= 1;
-    }
-    
-    #endif
-    
+ 
     /*
      * IsOnRootNode() - Returns true if the current node is root
      *
