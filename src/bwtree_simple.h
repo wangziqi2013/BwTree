@@ -559,95 +559,13 @@ class BwTree {
   }
 
   /*
-   * class Context - Stores per thread context data that is used during
-   *                 tree traversal
-   *
-   * NOTE: For each thread there could be only 1 instance of this object
-   * so we forbid copy construction and assignment and move
-   */
-  class Context {
-   public:
-    // We choose to keep the search key as a member rather than pointer
-    // inside the context object
-    const KeyType &search_key;
-
-    // We only need to keep current snapshot and parent snapshot
-    NodeSnapshot current_snapshot;
-    NodeSnapshot parent_snapshot;
-
-    /*
-     * Constructor - Initialize a context object into initial state
-     */
-    inline Context(const KeyType &p_search_key) :
-      search_key{p_search_key},
-    {}
-
-    /*
-     * Destructor - Cleanup
-     */
-    ~Context() {}
-
-    /*
-     * Copy constructor - deleted
-     * Assignment operator - deleted
-     * Move constructor - deleted
-     * Move assignment - deleted
-     */
-    Context(const Context &p_context) = delete;
-    Context &operator=(const Context &p_context) = delete;
-    Context(Context &&p_context) = delete;
-    Context &operator=(Context &&p_context) = delete;
- 
-    /*
-     * IsOnRootNode() - Returns true if the current node is root
-     *
-     * Though root node might change during traversal, but once it has been
-     * fixed using LoadNodeID(), the identity of root node has also been fixed
-     */
-    inline bool IsOnRootNode() const {
-      return parent_snapshot.node_id == INVALID_NODE_ID;
-    }
-  };
-
-  /*
    * class NodeMetaData - Holds node metadata in an object
-   *
-   * Node metadata includes a pointer to the range object, the depth
-   * of the current delta chain (NOTE: If there is a merge node then the
-   * depth is the sum of the length of its two children rather than
-   * the larger one)
-   *
-   * Since we need to query for high key and low key in every step of
-   * traversal down the tree (i.e. on each level we need to verify we
-   * are on the correct node). It would be wasteful if we traverse down the
-   * delta chain down to the bottom everytime to collect these metadata
-   * therefore as an optimization we store them inside each delta node
-   * and leaf/inner node to optimize for performance
-   *
-   * NOTE: We do not count node type as node metadata
    */
   class NodeMetaData {
    public:
-
-    // For all nodes including base node and data node and SMO nodes,
-    // the low key pointer always points to a KeyNodeIDPair structure
-    // inside the base node, which is either the first element of the
-    // node sep list (InnerNode), or a class member (LeafNode)
     const KeyNodeIDPair *low_key_p;
-
-    // high key points to the KeyNodeIDPair inside the LeafNode and InnerNode
-    // if there is neither SplitNode nor MergeNode. Otherwise it
-    // points to the item inside split node or merge right sibling branch
     const KeyNodeIDPair *high_key_p;
-
-    // This is the depth of current delta chain
-    // For merge delta node, the depth of the delta chain is the
-    // sum of its two children
     int depth;
-
-    // This counts the number of items alive inside the Node
-    // when consolidating nodes, we use this piece of information
-    // to reserve space for the new node
     int item_count;
 
     /*
@@ -669,13 +587,10 @@ class BwTree {
    *                  and delta node
    */
   class BaseNode {
-   // We hold its data structure as private to force using member functions
-   // for member access
    private:
-    // This holds low key, high key, next node ID, depth and item count
-    NodeMetaData metadata;
-    
+    NodeMetaData metadata;    
     NodeType type;
+    
    public:
 
     /*
@@ -738,30 +653,9 @@ class BwTree {
     }
 
     /*
-     * IsRemoveNode() - Returns true if the node is of inner/leaf remove type
-     *
-     * This is used in JumpToLeftSibling() as an assertion
-     */
-    inline bool IsRemoveNode() const {
-      return (type == NodeType::InnerRemoveType) || \
-             (type == NodeType::LeafRemoveType);
-    }
-
-    /*
      * IsOnLeafDeltaChain() - Return whether the node is part of
-     *                        leaf delta chain
-     *
-     * This is true even for NodeType::LeafType
-     *
-     * NOTE: WHEN ADDING NEW NODE TYPES PLEASE UPDATE THIS LIST
-     *
-     * Note 2: Avoid calling this in multiple places. Currently we only
-     * call this in TakeNodeSnapshot() or in the debugger
-     *
-     * This function makes use of the fact that leaf types occupy a
-     * continuous region of NodeType numerical space, so that we could
-     * the identity of leaf or Inner using only one comparison
-     *
+     *                        leaf delta chain£¬ including leaf node
+     *                        and delta nodes on leaf node 
      */
     inline bool IsOnLeafDeltaChain() const {
       return type < NodeType::LeafEnd;
@@ -769,10 +663,6 @@ class BwTree {
 
     /*
      * GetLowKey() - Returns the low key of the current base node
-     *
-     * NOTE: Since it is defined that for LeafNode the low key is undefined
-     * and pointers should be set to nullptr, accessing the low key of
-     * a leaf node would result in Segmentation Fault
      */
     inline const KeyType &GetLowKey() const {
       return metadata.low_key_p->first;
@@ -780,9 +670,6 @@ class BwTree {
 
     /*
      * GetHighKey() - Returns a reference to the high key of current node
-     *
-     * This function could be called for all node types including leaf nodes
-     * and inner nodes.
      */
     inline const KeyType &GetHighKey() const {
       return metadata.high_key_p->first;
@@ -813,9 +700,6 @@ class BwTree {
 
     /*
      * GetLowKeyNodeID() - Returns the NodeID for low key
-     *
-     * NOTE: This function should not be called for leaf nodes
-     * since the low key node ID for leaf node is not defined
      */
     inline NodeID GetLowKeyNodeID() const {
       assert(IsOnLeafDeltaChain() == false);
@@ -839,9 +723,6 @@ class BwTree {
 
     /*
      * SetLowKeyPair() - Sets the low key pair of metadata
-     *
-     * This is only called by InnerNode since for InnerNodes
-     * the low key cannot be known before vector reserve() returns
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       metadata.low_key_p = p_low_key_p;
