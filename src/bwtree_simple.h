@@ -251,33 +251,17 @@ class BwTree {
    */
   enum class NodeType {
     LeafStart = 0,
-    // Data page type
     LeafType = 1,
-
-    // Only valid for leaf
     LeafInsertType,
-    LeafSplitType,
     LeafDeleteType,
-    LeafRemoveType,
-    LeafMergeType,
 
     // This serves as sentinel
     LeafEnd,
-
-    // We separate leaf and inner into two different intervals
-    // to make it possible for compiler to optimize
-
     InnerStart,
 
     InnerType,
-
-    // Only valid for inner
     InnerInsertType,
-    InnerSplitType,
     InnerDeleteType,
-    InnerRemoveType,
-    InnerMergeType,
-    InnerAbortType, // Unconditional abort
 
     InnerEnd,
   };
@@ -767,12 +751,7 @@ class BwTree {
    */
   class LeafDataNode : public DeltaNode {
    public:
-
-    // This is the item being deleted or inserted
     KeyValuePair item;
-    
-    // This is the index of the node when inserting/deleting
-    // the item into the base leaf node
     std::pair<int, bool> index_pair;
 
     LeafDataNode(const KeyValuePair &p_item,
@@ -806,9 +785,6 @@ class BwTree {
 
   /*
    * class LeafNode - Leaf node that holds data
-   *
-   * There are 5 types of delta nodes that could be appended
-   * to a leaf node. 3 of them are SMOs, and 2 of them are data operation
    */
   class LeafNode : public BaseNode {
    public:
