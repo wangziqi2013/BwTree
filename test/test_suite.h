@@ -17,7 +17,7 @@
 
 #include <pthread.h>
 
-#include "bwtree.h"
+#include "../src/bwtree.h"
 #include "../benchmark/stx_btree/btree.h"
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
