@@ -55,6 +55,8 @@ The ABORT mechanism stated above renders BwTree non-wait-free, since it essentia
 
 Till now the size of the mapping table is fixed, and could not be extended in the case of an overflow. This problem could be alleviated by allocating a "large enough" mapping table that covers 99% of the cases, but no one could guarantee how large is "large enough", and when the size of the table will grow to the limit. For running benchmarks on data base systems this is fine, but for real world use cases it needs to be fixed, and I am open to any suggestion related to this issue.
 
+Random number generator was incorrect, in a sense that the default generator provided by C++11 is a bottleneck under multicore workload, with a stable throughput of 1.00 M op/second in our configuration. This has already been corrected recently, but we are still investigating into this issue trying to find out a better solution than the current patch.
+
 Another small issue is that coveralls data is not accurate, in a sense that lines inside header files are not detected at all. This should be attributed to gcov rather than BwTree
 
 Compile and Run
