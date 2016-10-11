@@ -12,7 +12,7 @@ Benchmark
 
 ![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30.png)
 
-1 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
+1 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache 
 
 ![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30-2.png)
 
