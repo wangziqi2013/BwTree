@@ -714,13 +714,13 @@ class BwTree {
      */
     NodeMetaData(const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
-                 short p_type,
-                 short p_depth,
+                 NodeType p_type,
+                 int p_depth,
                  int p_item_count) :
       low_key_p{p_low_key_p},
       high_key_p{p_high_key_p},
       type{p_type},
-      depth{p_depth},
+      depth{static_cast<short>(p_depth)},
       item_count{p_item_count}
     {}
   };
@@ -759,7 +759,7 @@ class BwTree {
      * This method does not allow overridding
      */
     inline NodeType GetType() const {
-      return type;
+      return metadata.type;
     }
 
     /*
@@ -778,8 +778,8 @@ class BwTree {
      * delta node type
      */
     inline bool IsDeltaNode() const {
-      if(type == NodeType::InnerType || \
-         type == NodeType::LeafType) {
+      if(GetType() == NodeType::InnerType || \
+         GetType() == NodeType::LeafType) {
         return false;
       } else {
         return true;
@@ -794,7 +794,7 @@ class BwTree {
      * and use the node directly
      */
     inline bool IsInnerNode() const {
-      return type == NodeType::InnerType;
+      return GetType() == NodeType::InnerType;
     }
 
     /*
@@ -803,8 +803,8 @@ class BwTree {
      * This is used in JumpToLeftSibling() as an assertion
      */
     inline bool IsRemoveNode() const {
-      return (type == NodeType::InnerRemoveType) || \
-             (type == NodeType::LeafRemoveType);
+      return (GetType() == NodeType::InnerRemoveType) || \
+             (GetType() == NodeType::LeafRemoveType);
     }
 
     /*
@@ -824,7 +824,7 @@ class BwTree {
      *
      */
     inline bool IsOnLeafDeltaChain() const {
-      return type < NodeType::LeafEnd;
+      return GetType() < NodeType::LeafEnd;
     }
 
     /*
