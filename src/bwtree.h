@@ -249,7 +249,7 @@ class BwTree {
   /*
    * enum class NodeType - Bw-Tree node type
    */
-  enum class NodeType {
+  enum class NodeType : short {
     LeafStart = 0,
     // Data page type
     LeafType = 1,
@@ -696,10 +696,13 @@ class BwTree {
     // points to the item inside split node or merge right sibling branch
     const KeyNodeIDPair *high_key_p;
 
+    // The type of the node; this is forced to be represented as a short type
+    NodeType type;
+
     // This is the depth of current delta chain
     // For merge delta node, the depth of the delta chain is the
     // sum of its two children
-    int depth;
+    short depth;
 
     // This counts the number of items alive inside the Node
     // when consolidating nodes, we use this piece of information
@@ -711,10 +714,12 @@ class BwTree {
      */
     NodeMetaData(const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
-                 int p_depth,
+                 short p_type,
+                 short p_depth,
                  int p_item_count) :
       low_key_p{p_low_key_p},
       high_key_p{p_high_key_p},
+      type{p_type},
       depth{p_depth},
       item_count{p_item_count}
     {}
@@ -728,10 +733,9 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    // This holds low key, high key, next node ID, depth and item count
+    // This holds low key, high key, next node ID, type, depth and item count
     NodeMetaData metadata;
-    
-    NodeType type;
+        
    public:
 
     /*
@@ -744,9 +748,9 @@ class BwTree {
              int p_item_count) :
       metadata{p_low_key_p,
                p_high_key_p,
+               p_type,
                p_depth,
-               p_item_count},
-      type{p_type}
+               p_item_count}
     {}
 
     /*
