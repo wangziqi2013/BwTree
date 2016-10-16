@@ -2477,9 +2477,7 @@ abort_traverse:
     // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
-    assert(snapshot_p->node_id != INVALID_NODE_ID);
-
-    
+    //assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
 
@@ -4297,7 +4295,7 @@ before_switch:
     #endif
 
     context_p->current_snapshot.node_p = node_p;
-    context_p->current_snapshot.node_id = node_id;
+    //context_p->current_snapshot.node_id = node_id;
 
     return;
   }
