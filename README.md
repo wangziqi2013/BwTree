@@ -76,7 +76,7 @@ Compile and Run
 |make email-test | Runs email test. This requires a special email input file that we will not provide for some reason|
 |make mixed-test | Runs insert-delete extremely high contention test. This test is the one that fails most implementations|
 
-Misc
+Misc 
 ====
 
 Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code. Using make command to compile and link these STL test cases.
