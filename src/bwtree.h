@@ -951,6 +951,37 @@ class BwTree {
       low_key{p_low_key},
       high_key{p_high_key}
     {}
+    
+    /*
+     * Begin() - Returns a begin iterator to its internal array
+     */
+    ElementType *Begin() {
+      return &start;
+    }
+    
+    /*
+     * End() - Returns an end iterator that is similar to the one for vector
+     */
+    ElementType *End() {
+      return end; 
+    }
+    
+    /*
+     * PushBack() - Push back an element
+     *
+     * This function takes an element type and copy-construct it on the array
+     * which is invisible to the compiler. Therefore we must call placement
+     * operator new to do the job
+     */
+    void PushBack(const ElementType &element) {
+      // Placement new + copy constructor using end pointer
+      new (end) ElementType{element};
+      
+      // Move it pointing to the enxt available slot, if not reached the end
+      end++;
+      
+      return;
+    }
   };
 
   /*
