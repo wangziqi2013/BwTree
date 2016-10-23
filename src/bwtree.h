@@ -996,14 +996,16 @@ class BwTree {
      * new to initialize it, such that the node could be freed using operator
      * delete later on
      */
-    static ElasticNode *Get(int size,
-                            NodeType p_type,
-                            int p_depth,
-                            int p_item_count,
-                            const KeyNodeIDPair &p_low_key,
-                            const KeyNodeIDPair &p_high_key) {
+    inline static ElasticNode *Get(int size,
+                                   NodeType p_type,
+                                   int p_depth,
+                                   int p_item_count,
+                                   const KeyNodeIDPair &p_low_key,
+                                   const KeyNodeIDPair &p_high_key) {
       // Allocte basic template + ElementType element size * (node size)
-      const ElasticNode *node_p = \
+      // Note: do not make it constant since it is going to be modified
+      // after being returned
+      ElasticNode *node_p = \
         malloc(sizeof(ElasticNode) + size * sizeof(ElementType));
         
       // Note that malloc() does not throw even if it fails
@@ -1016,6 +1018,8 @@ class BwTree {
                                p_item_count, 
                                p_low_key, 
                                p_high_key};
+                               
+      return node_p;
     }
   };
 
