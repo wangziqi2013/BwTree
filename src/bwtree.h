@@ -920,15 +920,22 @@ class BwTree {
    */
   template <typename ElementType>
   class ElasticNode : public BaseNode {
-   public:
-    
+   private:
+    // These two are the low key and high key of the node respectively
+    // since we could not add it in the inherited class (will clash with
+    // the array which is invisible to the compiler) so they must be added here
+    KeyNodeIDPair low_key;
+    KeyNodeIDPair high_key;
+     
     // This is the end of the elastic array
     // We explicitly store it here to avoid calculating the end of the array
     // everytime
     ElementType *end;
     
     // This is the starting point
-    ElementType start[0]; 
+    ElementType start[0];
+    
+    
   };
 
   /*
