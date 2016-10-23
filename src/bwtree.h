@@ -935,7 +935,22 @@ class BwTree {
     // This is the starting point
     ElementType start[0];
     
-    
+   public:
+    /*
+     * Constructor
+     *
+     * Note that this constructor uses the low key and high key stored as
+     * members to initialize the NodeMetadata object in class BaseNode
+     */ 
+    ElasticNode(NodeType p_type,
+                int p_depth,
+                int p_item_count,
+                KeyNodeIDPair &p_low_key,
+                KeyNodeIDPair &p_high_key) :
+      BaseNode{p_type, &low_key, &high_key, p_depth, p_item_count},
+      low_key{p_low_key},
+      high_key{p_high_key}
+    {}
   };
 
   /*
