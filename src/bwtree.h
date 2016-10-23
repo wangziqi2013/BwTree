@@ -996,10 +996,10 @@ class BwTree {
      * new to initialize it, such that the node could be freed using operator
      * delete later on
      */
-    inline static ElasticNode *Get(int size,
+    inline static ElasticNode *Get(int size,         // Number of elements
                                    NodeType p_type,
                                    int p_depth,
-                                   int p_item_count,
+                                   int p_item_count, // Usually equal to size
                                    const KeyNodeIDPair &p_low_key,
                                    const KeyNodeIDPair &p_high_key) {
       // Allocte basic template + ElementType element size * (node size)
@@ -1020,6 +1020,23 @@ class BwTree {
                                p_high_key};
                                
       return node_p;
+    }
+    
+    /*
+     * operator[] - Access element without bounds checking
+     */
+    inline ElementType &operator[](const int index) {
+      return *(Begin() + index);
+    }
+    
+    /*
+     * At() - Access element with bounds checking under debug mode
+     */
+    inline ElementType &At(const int index) {
+      // The index must be inside the valid range
+      assert(index < (End() - Begin()));
+      
+      return operator[](index);
     }
   };
 
