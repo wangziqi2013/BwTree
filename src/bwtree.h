@@ -949,20 +949,21 @@ class BwTree {
                 KeyNodeIDPair &p_high_key) :
       BaseNode{p_type, &low_key, &high_key, p_depth, p_item_count},
       low_key{p_low_key},
-      high_key{p_high_key}
+      high_key{p_high_key},
+      end{&start}
     {}
     
     /*
      * Begin() - Returns a begin iterator to its internal array
      */
-    ElementType *Begin() {
+    inline ElementType *Begin() {
       return &start;
     }
     
     /*
      * End() - Returns an end iterator that is similar to the one for vector
      */
-    ElementType *End() {
+    inline ElementType *End() {
       return end; 
     }
     
@@ -973,7 +974,7 @@ class BwTree {
      * which is invisible to the compiler. Therefore we must call placement
      * operator new to do the job
      */
-    void PushBack(const ElementType &element) {
+    inline void PushBack(const ElementType &element) {
       // Placement new + copy constructor using end pointer
       new (end) ElementType{element};
       
@@ -981,6 +982,40 @@ class BwTree {
       end++;
       
       return;
+    }
+    
+   public: 
+   
+    /*
+     * Get() - Static helper function that constructs a elastic node of
+     *         a certain size
+     *
+     * Note that since operator new is only capable of allocating a fixed 
+     * sized structure, we need to call malloc() directly to deal with variable
+     * lengthed node. However, after malloc() returns we use placement operator
+     * new to initialize it, such that the node could be freed using operator
+     * delete later on
+     */
+    static ElasticNode *Get(int size,
+                            NodeType p_type,
+                            int p_depth,
+                            int p_item_count,
+                            const KeyNodeIDPair &p_low_key,
+                            const KeyNodeIDPair &p_high_key) {
+      // Allocte basic template + ElementType element size * (node size)
+      const ElasticNode *node_p = \
+        malloc(sizeof(ElasticNode) + size * sizeof(ElementType));
+        
+      // Note that malloc() does not throw even if it fails
+      // in that case we will see GP error after this line under release mode
+      assert(node_p != nullptr);
+      
+      // Call placement new to initialize all that could be initialized
+      new (node_p) ElasticNode{p_type, 
+                               p_depth, 
+                               p_item_count, 
+                               p_low_key, 
+                               p_high_key};
     }
   };
 
