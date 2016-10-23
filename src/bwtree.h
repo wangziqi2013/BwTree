@@ -909,6 +909,27 @@ class BwTree {
       return;
     }
   };
+  
+  /*
+   * class ElasticNode - The base class for elastic node types, i.e. InnerNode
+   *                     and LeafNode
+   *
+   * Since for InnerNode and LeafNode, the number of elements is not a compile
+   * time known constant. However, for efficient tree traversal we must inline
+   * all elements to reduce cache misses with workload that's less predictable
+   */
+  template <typename ElementType>
+  class ElasticNode : public BaseNode {
+   public:
+    
+    // This is the end of the elastic array
+    // We explicitly store it here to avoid calculating the end of the array
+    // everytime
+    ElementType *end;
+    
+    // This is the starting point
+    ElementType start[0]; 
+  };
 
   /*
    * class DeltaNode - Common element in a delta node
