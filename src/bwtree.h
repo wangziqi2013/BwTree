@@ -6969,6 +6969,17 @@ try_join_again:
       // We know epoch_p is now being cleaned, so need to read the
       // current epoch again because it must have been moved
       if(prev_count < 0) {
+        // Consider the following sequence:
+        //   0. Start with counter = 0
+        //   1. Worker thread 1 fetch_add() -> return 0, OK
+        //   2. GC thread fetch_sub() -> return positive, abort!
+        //   3. Worker thread 2 fetch_add() -> return negative, retry!
+        //   4. GC thread fetch_add() and aborts
+        //   5. Worker thread 2 retries, and fetch_add() -> return 1, OK
+        // This way the second worker thread actually incremented the epoch
+        // counter twice
+        epoch_p->active_thread_count.fetch_sub(1);
+        
         goto try_join_again;
       }
 
