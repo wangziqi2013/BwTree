@@ -954,6 +954,21 @@ class BwTree {
     {}
     
     /*
+     * Destructor
+     */
+    ~ElasticNode() {
+      // Use two iterators to iterate through all existing elements
+      for(ElementType *element_p = Begin();
+          element_p != End();
+          element_p++) {
+        // Manually calls destructor when the node is destroyed
+        element_p->~ElementType();      
+      }
+      
+      return;
+    }
+    
+    /*
      * Begin() - Returns a begin iterator to its internal array
      */
     inline ElementType *Begin() {
