@@ -1005,6 +1005,13 @@ class BwTree {
     // next node ID is always set to INVALID_NODE_ID
     // we keep this for consistency
     KeyNodeIDPair low_key;
+    
+    // This is the end iterator of the KeyValuePair array
+    KeyValuePair *end;
+    
+    // This is the beginning address of the array, and malloc must allocate that
+    // much space
+    KeyValuePair data[0];
 
     /*
      * Constructor - Initialize bounds and next node ID
@@ -1387,6 +1394,14 @@ class BwTree {
     // The vector stores the separators, with the first element being the
     // low key-NodeID pair (low key is not used)
     std::vector<KeyNodeIDPair> sep_list;
+    
+    // This is the pointer to the end of KeyValuePair array pointing exactly to
+    // the element after the last valid one
+    KeyNodeIDPair *end;
+    
+    // This is the starting address of the KeyValueList
+    // Memory must be allocated to accomondate this
+    KeyNodeIDPair data[0];
 
     /*
      * Constructor
