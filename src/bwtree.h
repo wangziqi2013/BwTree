@@ -1002,6 +1002,10 @@ class BwTree {
                                    int p_item_count, // Usually equal to size
                                    const KeyNodeIDPair &p_low_key,
                                    const KeyNodeIDPair &p_high_key) {
+      // Currently this is always true - if we want a larger array then 
+      // just remove this line
+      assert(size == p_item_count);
+                                     
       // Allocte basic template + ElementType element size * (node size)
       // Note: do not make it constant since it is going to be modified
       // after being returned
