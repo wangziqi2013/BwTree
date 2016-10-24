@@ -4,8 +4,8 @@ CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16
 GMON_FLAG = 
 OPT_FLAG = -O2
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-SRC = ./test/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./test/test_suite.h ./test/test_suite.cpp ./test/random_pattern_test.cpp ./test/basic_test.cpp ./test/mixed_test.cpp ./test/performance_test.cpp ./test/stress_test.cpp ./test/iterator_test.cpp ./test/misc_test.cpp
-OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o ./build/stress_test.o ./build/iterator_test.o ./build/misc_test.o
+SRC = ./test/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./test/test_suite.h ./test/test_suite.cpp ./test/random_pattern_test.cpp ./test/basic_test.cpp ./test/mixed_test.cpp ./test/performance_test.cpp ./test/stress_test.cpp ./test/iterator_test.cpp ./test/misc_test.cpp ./test/benchmark_bwtree_full.cpp
+OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o ./build/stress_test.o ./build/iterator_test.o ./build/misc_test.o ./build/benchmark_bwtree_full.o
 
 all: main
 
@@ -32,6 +32,9 @@ main: $(OBJ)
 
 ./build/performance_test.o: ./test/performance_test.cpp ./src/bwtree.h
 	$(CXX) ./test/performance_test.cpp -c -o ./build/performance_test.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
+
+./build/benchmark_bwtree_full.o: ./test/benchmark_bwtree_full.cpp ./src/bwtree.h
+	$(CXX) ./test/benchmark_bwtree_full.cpp -c -o ./build/benchmark_bwtree_full.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
 	
 ./build/stress_test.o: ./test/stress_test.cpp ./src/bwtree.h
 	$(CXX) ./test/stress_test.cpp -c -o ./build/stress_test.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
