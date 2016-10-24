@@ -1214,18 +1214,18 @@ class BwTree {
      * is returned
      */
     int FindSplitPoint(const BwTree *t) const {
-      int central_index = static_cast<int>(data_list.size()) / 2;
+      int central_index = this->GetSize() / 2;
       assert(central_index > 1);
 
       // This will used as upper_bound and lower_bound key
-      const KeyValuePair &central_kvp = data_list[central_index];
+      const KeyValuePair &central_kvp = this->At(central_index);
 
       // Move it to the element before data_list
-      auto it = data_list.begin() + central_index - 1;
+      auto it = this->Begin() + central_index - 1;
 
       // If iterator has reached the begin then we know there could not
       // be any split points
-      while((it != data_list.begin()) && \
+      while((it != this->Begin()) && \
             (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it--;
       }
@@ -1234,26 +1234,26 @@ class BwTree {
       it++;
 
       // This size is exactly the index of the split point
-      int left_sibling_size = std::distance(data_list.begin(), it);
+      int left_sibling_size = std::distance(this->Begin(), it);
 
       if(left_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
         return left_sibling_size;
       }
 
       // Move it to the element after data_list
-      it = data_list.begin() + central_index + 1;
+      it = this->Begin() + central_index + 1;
 
       // If iterator has reached the end then we know there could not
       // be any split points
-      while((it != data_list.end()) && \
+      while((it != this->End()) && \
             (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it++;
       }
 
-      int right_sibling_size = std::distance(it, data_list.end());
+      int right_sibling_size = std::distance(it, this->End());
 
       if(right_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
-        return std::distance(data_list.begin(), it);
+        return std::distance(this->Begin(), it);
       }
 
       return -1;
