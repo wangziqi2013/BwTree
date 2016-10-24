@@ -1290,7 +1290,7 @@ class BwTree {
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
-      assert(static_cast<int>(data_list.size()) == this->GetItemCount());
+      assert(this->GetSize() == this->GetItemCount());
 
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
@@ -1308,25 +1308,35 @@ class BwTree {
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's
       // RandomAccessIterator
-      auto copy_start_it = data_list.begin() + split_item_index;
+      auto copy_start_it = this->Begin() + split_item_index;
 
       // This is the end point for later copy of data
-      auto copy_end_it = data_list.end();
+      auto copy_end_it = this->End();
 
       // This is the key part of the key-value pair, also the low key
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
       const KeyType &split_key = copy_start_it->first;
 
+      int sibling_size = \
+        static_cast<int>(std::distance(copy_start_it,
+                                       copy_end_it))
+
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
-        new LeafNode{std::make_pair(split_key, INVALID_NODE_ID),
-                     this->GetHighKeyPair(),
-                     static_cast<int>(std::distance(copy_start_it,
-                                                    copy_end_it))};
+        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+          Get(sibling_size, 
+              NodeType::LeafType,
+              0,
+              sibling_size,
+              std::make_pair(split_key, INVALID_NODE_ID),
+              this->GetHighKeyPair()));
 
-      // Copy data item into the new node using batch assign()
-      leaf_node_p->data_list.assign(copy_start_it, copy_end_it);
+      // Copy data item into the new node using PushBack()
+      leaf_node_p->PushBack(copy_start_it, copy_end_it);
+
+      assert(leaf_node_p->GetSize() == sibling_size);
+      assert(leaf_node_p->GetSize() == leaf_node_p->GetItemCount());
 
       return leaf_node_p;
     }
