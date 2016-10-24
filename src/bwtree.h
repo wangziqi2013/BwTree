@@ -5512,7 +5512,8 @@ before_switch:
         // New node has at least one item (this is the basic requirement)
         assert(new_inner_node_p->GetSize() > 0);
 
-        const KeyNodeIDPair &first_item = new_inner_node_p->sep_list[0];
+        const KeyNodeIDPair &first_item = new_inner_node_p->At(0);
+        
         // This points to the left most node on the right split sibling
         // If this node is being removed then we abort
         NodeID split_key_child_node_id = first_item.second;
@@ -5945,23 +5946,11 @@ before_switch:
           ///////////////////////////////////////////////////////////
 
           // This is the logical end of the array
-
-          typename decltype(inner_node_p->sep_list)::const_iterator end_it{};
-          
-          // If this is not the last node then we have to bound the search
-          // range using the current high key of the branch
-          //if(high_key_pair.second == INVALID_NODE_ID) {
-            end_it = inner_node_p->sep_list.end();
-          //} else {
-          //  end_it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
-          //                            inner_node_p->sep_list.end(),
-          //                            high_key_pair,
-          //                            key_node_id_pair_cmp_obj);
-          //}
+          KeyNodeIDPair *end_it = inner_node_p->End();
 
           // Since we know the search key must be one of the key inside
           // the inner node, lower bound is sufficient
-          auto it1 = std::upper_bound(inner_node_p->sep_list.begin() + 1,
+          auto it1 = std::upper_bound(inner_node_p->Begin() + 1,
                                       end_it,
                                       std::make_pair(search_key, INVALID_NODE_ID),
                                       key_node_id_pair_cmp_obj) - 1;
@@ -5992,7 +5981,7 @@ before_switch:
               counter++;
               
               continue;
-            } else if(it1 == inner_node_p->sep_list.begin()) {
+            } else if(it1 == inner_node_p->Begin()) {
               // We know the sss is not empty, so could always pop from it
               if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
                 left_item_p = &(sss.GetFront()->item);
