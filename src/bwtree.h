@@ -945,12 +945,12 @@ class BwTree {
     ElasticNode(NodeType p_type,
                 int p_depth,
                 int p_item_count,
-                KeyNodeIDPair &p_low_key,
-                KeyNodeIDPair &p_high_key) :
+                const KeyNodeIDPair &p_low_key,
+                const KeyNodeIDPair &p_high_key) :
       BaseNode{p_type, &low_key, &high_key, p_depth, p_item_count},
       low_key{p_low_key},
       high_key{p_high_key},
-      end{&start}
+      end{start}
     {}
     
     /*
@@ -972,7 +972,7 @@ class BwTree {
      * Begin() - Returns a begin iterator to its internal array
      */
     inline ElementType *Begin() {
-      return &start;
+      return start;
     }
     
     /*
