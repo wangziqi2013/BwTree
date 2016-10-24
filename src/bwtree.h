@@ -4977,7 +4977,7 @@ before_switch:
         assert(context_p->current_level >= 0);
 
         // If the parent snapshot has an invalid node ID then it must be the
-        // root node. We will initialize it to INVALID_NODE_ID
+        // root node. 
         if(context_p->IsOnRootNode() == true) {
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
@@ -4995,28 +4995,44 @@ before_switch:
           // constructor
           #ifdef BWTREE_PELOTON
 
-          InnerNode *inner_node_p = \
-            new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 2};
+          // This is the first item of the newly created InnerNode
+          // and also the low key for the new InnerNode
+          const KeyNodeIDPair first_item = std::make_pair(KeyType(),
+                                                          snapshot_p->node_id);
 
-          // NOTE: Since we never directly access the first element in the
-          // InnerNode object, it is OK to just put an empty KeyType
-          // object into the list
-          inner_node_p->sep_list.push_back(std::make_pair(KeyType(),
-                                                          snapshot_p->node_id));
+          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          InnerNode *inner_node_p = \
+            reinterpret_cast<InnerNode *>( \
+              ElasticNode::Get(2, 
+                               NodeType::InnerType, 
+                               0,
+                               2,
+                               first_item,
+                               std::make_pair(KeyType(), INVALID_NODE_ID)));
 
           #else
 
-          InnerNode *inner_node_p = \
-            new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
+          // This is the first item of the newly created InnerNode
+          // and also the low key for the new InnerNode
+          const KeyNodeIDPair first_item = std::make_pair(KeyType{},
+                                                          snapshot_p->node_id);
 
-          // NOTE: Since we never directly access the first element in the
-          // InnerNode object, it is OK to just put an empty KeyType
-          // object into the list
-          inner_node_p->sep_list.push_back(std::make_pair(KeyType{},
-                                                          snapshot_p->node_id));
+          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          InnerNode *inner_node_p = \
+            reinterpret_cast<InnerNode *>( \
+              ElasticNode::Get(2, 
+                               NodeType::InnerType, 
+                               0,
+                               2,
+                               first_item,
+                               std::make_pair(KeyType{}, INVALID_NODE_ID)));
+                               
           #endif
 
-          inner_node_p->sep_list.push_back(*insert_item_p);
+          // Add new element - one points to the current node (new second level
+          // left most inner node), another points to its split sibling
+          inner_node_p->PushBack(first_item);
+          inner_node_p->PushBack(*insert_item_p);
 
           // This needs to be done here to avoid some unfortunate thread
           // seeing an un-updated tree height and overflowed its stack
