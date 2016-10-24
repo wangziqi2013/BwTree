@@ -1190,10 +1190,21 @@ class BwTree {
   class LeafNode : public ElasticNode<KeyValuePair> {
    public:
     LeafNode() = delete;
-    LeafNode(const LeafNode &) = delete;
+    //LeafNode(const LeafNode &) = delete;  -> This should be implemented
     LeafNode(LeafNode &&) = delete;
     LeafNode &operator=(const LeafNode &) = delete;
     LeafNode &operator=(LeafNode &&) = delete;
+
+    /*
+     * Copy Constructor - This is needed to support iterators taking
+     *                    snapshot of the LeafNode
+     */
+    LeafNode(const LeafNode &other) :
+      ElasticNode{other} {
+      this->PushBack(other.Begin(), other.End());
+      
+      return;
+    }
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
