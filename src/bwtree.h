@@ -1200,9 +1200,10 @@ class BwTree {
      *                    snapshot of the LeafNode
      */
     LeafNode(const LeafNode &other) :
-      ElasticNode{other} {
+      ElasticNode<KeyValuePair>{other} {
+        printf("Before\n");
       this->PushBack(other.Begin(), other.End());
-      
+        printf("After\n");
       return;
     }
 
@@ -1331,7 +1332,7 @@ class BwTree {
 
       int sibling_size = \
         static_cast<int>(std::distance(copy_start_it,
-                                       copy_end_it))
+                                       copy_end_it));
 
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
@@ -3879,7 +3880,7 @@ abort_traverse:
             static_cast<const LeafNode *>(node_p);
 
           // We compute end iterator based on the high key
-          typename std::vector<KeyValuePair>::const_iterator copy_end_it{};
+          const KeyValuePair *copy_end_it;
 
           // If the high key is +Inf then all items could be copied
           if((high_key_pair.second == INVALID_NODE_ID)) {
@@ -3945,7 +3946,7 @@ abort_traverse:
             // First copy all items before the current index
             new_leaf_node_p->PushBack(
               leaf_node_p->Begin() + copy_start_index,
-              leaf_node_p->End() + current_index);
+              leaf_node_p->Begin() + current_index);
 
             // Update copy start index for next copy
             copy_start_index = current_index;
@@ -7695,7 +7696,7 @@ try_join_again:
     KeyNodeIDPair next_key_pair;
 
     // This is the actual iterator
-    typename std::vector<KeyValuePair>::const_iterator it;
+    const KeyValuePair *it;
 
     // We use this flag to indicate whether we have reached the end of
     // iteration.
