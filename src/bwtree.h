@@ -3747,19 +3747,14 @@ abort_traverse:
     // Prepare new node
     /////////////////////////////////////////////////////////////////
 
-    LeafNode *leaf_node_p = new LeafNode{node_p->GetLowKeyPair(),
-                                         node_p->GetHighKeyPair(),
-                                         // The item count of the consolidated
-                                         // leaf node is the set of items still
-                                         // present in the node
-                                         node_p->GetItemCount()};
-
-    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
-
-    // Reserve that much space for items to avoid allocation in the future
-    // Since the iterator from unordered_set is not a RamdomAccessIterator
-    // std::vector could not decide the size from these two iterators
-    data_list_p->reserve(node_p->GetItemCount());
+    LeafNode *leaf_node_p = \
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(node_p->GetItemCount(),
+            NodeType::LeafType,
+            0,
+            node_p->GetItemCount(),
+            node_p->GetLowKeyPair(),
+            node_p->GetHighKeyPair()));
     
     /////////////////////////////////////////////////////////////////
     // Prepare Delta Set
@@ -3828,8 +3823,7 @@ abort_traverse:
                                     leaf_node_p);
 
     // Item count would not change during consolidation
-    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
-           node_p->GetItemCount());
+    assert(leaf_node_p->GetSize() == node_p->GetItemCount());
 
     return leaf_node_p;
   }
