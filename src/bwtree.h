@@ -2231,16 +2231,24 @@ class BwTree {
     #ifdef BWTREE_PELOTON
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID),
-                   std::make_pair(KeyType(), INVALID_NODE_ID),
-                   0};
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(0,
+            NodeType::LeafType,
+            0,
+            0,
+            std::make_pair(KeyType(), INVALID_NODE_ID),
+            std::make_pair(KeyType(), INVALID_NODE_ID)));
 
     #else
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID),
-                   std::make_pair(KeyType{}, INVALID_NODE_ID),
-                   0};
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(0,
+            NodeType::LeafType,
+            0,
+            0,
+            std::make_pair(KeyType{}, INVALID_NODE_ID),
+            std::make_pair(KeyType{}, INVALID_NODE_ID)));
 
     #endif
 
