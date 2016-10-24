@@ -983,6 +983,16 @@ class BwTree {
     }
     
     /*
+     * GetSize() - Returns the size of the embedded list
+     *
+     * Note that the return type is integer since we use integer to represent
+     * the size of a node
+     */
+    inline int GetSize() {
+      return static_cast<int>(End() - Begin());
+    }
+    
+    /*
      * PushBack() - Push back an element
      *
      * This function takes an element type and copy-construct it on the array
@@ -1539,15 +1549,15 @@ class BwTree {
     /*
      * Constructor
      */
-    InnerNode(const KeyNodeIDPair &p_low_key_p,
-              const KeyNodeIDPair &p_high_key_p,
+    InnerNode(const KeyNodeIDPair &p_low_key,
+              const KeyNodeIDPair &p_high_key,
               int p_item_count,
               int p_depth = 0) :
       ElasticNode{NodeType::InnerType,
                   p_depth, 
                   p_item_count,
-                  p_low_key_p,
-                  p_high_key_p} 
+                  p_low_key,
+                  p_high_key} 
     {}
 
     /*
