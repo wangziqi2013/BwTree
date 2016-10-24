@@ -1016,6 +1016,9 @@ class BwTree {
      */
     inline void PushBack(const ElementType *copy_start_p,
                          const ElementType *copy_end_p) {
+      // Make sure the loop will come to an end
+      assert(copy_start_p <= copy_end_p);
+      
       // TODO: A better way might be just to use std::copy
       while(copy_start_p != copy_end_p) {
         PushBack(*copy_start_p);
@@ -1599,7 +1602,7 @@ class BwTree {
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = Begin() + split_item_index;
+      KeyNodeIDPair *copy_start_it = Begin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
       int sibling_size = static_cast<int>(std::distance(copy_start_it, 
@@ -1615,11 +1618,8 @@ class BwTree {
                                                        At(split_item_index),
                                                        GetHighKeyPair()));
 
-      // Push back element one by one
-      for(int i = 0;i < sibling_size;i++) {
-        inner_node_p->PushBack(*copy_start_it);
-        copy_start_it++;
-      }
+      // Call overloaded PushBack() to insert an array of elements
+      inner_node_p->PushBack(copy_start_it, End());
       
       // Since we copy exactly that many elements
       assert(copy_start_it == copy_end_it);
@@ -2935,8 +2935,10 @@ abort_traverse:
           // Find the end of copying
           auto sss_end_it = sss.GetEnd() - 1;
 
-          // If the next key is +Inf then sss_end_it is the real end of the
+          // If the high key is +Inf then sss_end_it is the real end of the
           // sorted array
+          // Otherwise need to find the end iterator of sss for the current
+          // InnerNode by using its high key
           if(high_key_pair.second != INVALID_NODE_ID) {
             // Corner case: If the first element is lower bound
             // then current_p will move outside
@@ -2967,11 +2969,9 @@ abort_traverse:
               break;
             } else if(sss_end_flag == true) {
               // If the sss has drained we continue to drain the array
-              // We use range insertion which inserts before the first argument
-              // with the range specified by the last two arguments
-              new_inner_node_p->sep_list.insert(new_inner_node_p->sep_list.end(),
-                                                copy_start_it,
-                                                copy_end_it);
+              // This version of PushBack() takes two iterators and
+              // insert from start to end - 1
+              new_inner_node_p->PushBack(copy_start_it, copy_end_it);
 
               break;
             } else if(array_end_flag == true) {
