@@ -1009,6 +1009,22 @@ class BwTree {
       return;
     }
     
+    /*
+     * PushBack() - Push back a series of elements
+     *
+     * The overloaded PushBack() could also push an array of elements
+     */
+    inline void PushBack(const ElementType *copy_start_p,
+                         const ElementType *copy_end_p) {
+      // TODO: A better way might be just to use std::copy
+      while(copy_start_p != copy_end_p) {
+        PushBack(*copy_start_p);
+        copy_start_p++; 
+      }
+      
+      return;
+    }
+    
    public: 
    
     /*
