@@ -1187,51 +1187,13 @@ class BwTree {
    * There are 5 types of delta nodes that could be appended
    * to a leaf node. 3 of them are SMOs, and 2 of them are data operation
    */
-  class LeafNode : public BaseNode {
+  class LeafNode : public ElasticNode<KeyValuePair> {
    public:
-    // This holds high key and the next node ID inside a pair
-    // so that they could be accessed in a compacted manner
-    KeyNodeIDPair high_key;
-    
-    // We always hold data within a vector of KeyValuePair
-    std::vector<KeyValuePair> data_list;
-    
-    // Since leaf nodes does not have low key as sep item,
-    // but we do need them when searching for the low key
-    // let's put it here as a class member
-    // NOTE: Only the key field is used
-    // next node ID is always set to INVALID_NODE_ID
-    // we keep this for consistency
-    KeyNodeIDPair low_key;
-    
-    // This is the end iterator of the KeyValuePair array
-    KeyValuePair *end;
-    
-    // This is the beginning address of the array, and malloc must allocate that
-    // much space
-    KeyValuePair data[0];
-
-    /*
-     * Constructor - Initialize bounds and next node ID
-     *
-     * NOTE: Since low key is not defined for LeafNode and its delta chain,
-     * the low key field of LeafNode and its delta chain is always nullptr
-     *
-     * NOTE 2: For leaf pages we could first assign a high key and them push
-     * items into the vector, since the high key does not come from vector
-     * items unlike the InnerNode
-     */
-    LeafNode(const KeyNodeIDPair &p_low_key_p,
-             const KeyNodeIDPair &p_high_key_p,
-             int p_item_count) :
-      BaseNode{NodeType::LeafType,
-               &low_key,         // Low key is not defined for leaf node
-               &high_key,        // The high key is stored inside leaf node
-               0,                // Depth of the node - always 0
-               p_item_count},
-      high_key{p_high_key_p},
-      low_key{p_low_key_p}
-    {}
+    LeafNode() = delete;
+    LeafNode(const LeafNode &) = delete;
+    LeafNode(LeafNode &&) = delete;
+    LeafNode &operator=(const LeafNode &) = delete;
+    LeafNode &operator=(LeafNode &&) = delete;
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
@@ -1592,9 +1554,9 @@ class BwTree {
      */
     InnerNode() = delete;
     InnerNode(const InnerNode &) = delete;
-    InnerNode(const InnerNode &&) = delete;
+    InnerNode(InnerNode &&) = delete;
     InnerNode &operator=(const InnerNode &) = delete;
-    InnerNode &operator=(const InnerNode &&) = delete;
+    InnerNode &operator=(InnerNode &&) = delete;
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
