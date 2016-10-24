@@ -2138,8 +2138,10 @@ class BwTree {
           // Free NodeID one by one stored in its separator list
           // Even if they are already freed (e.g. a split delta has not
           // been consolidated would share a NodeID with its parent)
-          for(auto &sep_item : inner_node_p->sep_list) {
-            freed_count += FreeNodeByNodeID(sep_item.second);
+          for(KeyNodeIDPair *it = inner_node_p->Begin();
+              it != inner_node_p->End();
+              it++) {
+            freed_count += FreeNodeByNodeID(it->second);
           }
 
           // Access its content first and then delete the node itself
@@ -2590,14 +2592,12 @@ abort_traverse:
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
                                      const InnerNode *inner_node_p) {
-    const std::vector<KeyNodeIDPair> *sep_list_p = &inner_node_p->sep_list;
-
     // Inner node could not be empty
-    assert(sep_list_p->size() != 0UL);
+    assert(inner_node_p->GetSize() != 0UL);
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(sep_list_p->begin() + 1,
-                               sep_list_p->end(),
+    auto it = std::upper_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj);
 
