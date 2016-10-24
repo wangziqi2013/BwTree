@@ -11,8 +11,10 @@
  *
  * This should be called in a multithreaded environment
  */
-void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
-  const int num_thread = 8;
+void TestBwTreeMultiThreadInsertPerformance(TreeType *t, 
+                                            int key_num, 
+                                            int thread_num) {
+  const int num_thread = thread_num;
 
   // This is used to record time taken for each individual thread
   double thread_time[num_thread];
@@ -20,7 +22,9 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
     thread_time[i] = 0.0;
   }
 
-  auto func = [key_num, &thread_time](uint64_t thread_id, TreeType *t) {
+  auto func = [key_num, 
+               &thread_time, 
+               num_thread](uint64_t thread_id, TreeType *t) {
     long int start_key = key_num / num_thread * (long)thread_id;
     long int end_key = start_key + key_num / num_thread;
 
@@ -61,8 +65,10 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num) {
  *
  * This should be called in a multithreaded environment
  */
-void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
-  const int num_thread = 40;
+void TestBwTreeMultiThreadReadPerformance(TreeType *t, 
+                                          int key_num,
+                                          int thread_num) {
+  const int num_thread = thread_num;
   int iter = 1;
   
   // This is used to record time taken for each individual thread
@@ -71,7 +77,10 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     thread_time[i] = 0.0;
   }
   
-  auto func = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
+  auto func = [key_num, 
+               iter, 
+               &thread_time, 
+               num_thread](uint64_t thread_id, TreeType *t) {
     std::vector<long> v{};
 
     v.reserve(1);
@@ -116,7 +125,10 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num) {
     thread_time[i] = 0.0;
   }
   
-  auto func2 = [key_num, iter, &thread_time](uint64_t thread_id, TreeType *t) {
+  auto func2 = [key_num, 
+                iter, 
+                &thread_time,
+                num_thread](uint64_t thread_id, TreeType *t) {
     std::vector<long> v{};
 
     v.reserve(1);

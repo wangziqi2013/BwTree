@@ -104,13 +104,22 @@ int main(int argc, char **argv) {
     printf("Using key size = %d (%f million)\n",
            key_num,
            key_num / (1024.0 * 1024.0));
+    
+    // By default use 40 threads
+    uint64_t thread_num = 40;
+    bool ret = Envp::GetValueAsUL("THREAD_NUM", &thread_num);
+    if(ret == false) {
+      throw "THREAD_NUM must be an unsigned ineteger!"; 
+    } else {
+      printf("Using thread_num = %lu\n", thread_num); 
+    }
 
     if(run_benchmark_bwtree_full == true) {
       // First we rely on this test to fill bwtree with 30 million keys
-      TestBwTreeMultiThreadInsertPerformance(t1, key_num);
+      TestBwTreeMultiThreadInsertPerformance(t1, key_num, (int)thread_num);
 
       // And then do a multithreaded read
-      TestBwTreeMultiThreadReadPerformance(t1, key_num);
+      TestBwTreeMultiThreadReadPerformance(t1, key_num, (int)thread_num);
     } else {
       // This function will delete all keys at the end, so the tree
       // is empty after it returns

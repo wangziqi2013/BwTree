@@ -253,6 +253,64 @@ class Timer {
   }
 };
 
+/*
+ * class Envp() - Reads environmental variables 
+ */
+class Envp {
+ public:
+  /*
+   * Get() - Returns a string representing the value of the given key
+   *
+   * If the key does not exist then just use empty string. Since the value of 
+   * an environmental key could not be empty string
+   */
+  static std::string Get(const std::string &key) {
+    char *ret = getenv(key.c_str());
+    if(ret == nullptr) {
+      return std::string{""}; 
+    } 
+    
+    return std::string{ret};
+  }
+  
+  /*
+   * operator() - This is called with an instance rather than class name
+   */
+  std::string operator()(const std::string &key) const {
+    return Envp::Get(key);
+  }
+  
+  /*
+   * GetValueAsUL() - Returns the value by argument as unsigned long
+   *
+   * If the env var is found and the value is parsed correctly then return true 
+   * If the env var is not found then retrun true, and value_p is not modified
+   * If the env var is found but value could not be parsed correctly then
+   *   return false and value is not modified 
+   */
+  static bool GetValueAsUL(const std::string &key, 
+                           unsigned long *value_p) {
+    const std::string value = Envp::Get(key);
+    
+    // Probe first character - if is '\0' then we know length == 0
+    if(value.c_str()[0] == '\0') {
+      return true;
+    }
+    
+    unsigned long result;
+    
+    try {
+      result = std::stoul(value);
+    } catch(...) {
+      return false; 
+    } 
+    
+    *value_p = result;
+    
+    return true;
+  }
+};
+
 TreeType *GetEmptyTree(bool no_print = false);
 void DestroyTree(TreeType *t, bool no_print = false);
 void PrintStat(TreeType *t);
@@ -295,8 +353,8 @@ void TestBTreeMultimapInsertReadPerformance(int key_size);
 void TestCuckooHashTableInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
-void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num);
-void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num);
+void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num, int thread_num);
+void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num, int thread_num);
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
 /*
