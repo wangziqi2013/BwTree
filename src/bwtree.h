@@ -975,10 +975,18 @@ class BwTree {
       return start;
     }
     
+    inline const ElementType *Begin() const {
+      return start; 
+    }
+    
     /*
      * End() - Returns an end iterator that is similar to the one for vector
      */
     inline ElementType *End() {
+      return end; 
+    }
+    
+    inline const ElementType *End() const {
       return end; 
     }
     
@@ -988,7 +996,7 @@ class BwTree {
      * Note that the return type is integer since we use integer to represent
      * the size of a node
      */
-    inline int GetSize() {
+    inline int GetSize() const {
       return static_cast<int>(End() - Begin());
     }
     
@@ -1078,12 +1086,23 @@ class BwTree {
       return *(Begin() + index);
     }
     
+    inline const ElementType &operator[](const int index) const {
+      return *(Begin() + index);
+    }
+    
     /*
      * At() - Access element with bounds checking under debug mode
      */
     inline ElementType &At(const int index) {
       // The index must be inside the valid range
-      assert(index < (End() - Begin()));
+      assert(index < GetSize());
+      
+      return operator[](index);
+    }
+    
+    inline const ElementType &At(const int index) const {
+      // The index must be inside the valid range
+      assert(index < GetSize());
       
       return operator[](index);
     }
@@ -1603,7 +1622,7 @@ class BwTree {
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      KeyNodeIDPair *copy_start_it = this->Begin() + split_item_index;
+      auto copy_start_it = this->Begin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
       int sibling_size = static_cast<int>(std::distance(copy_start_it, 
@@ -2141,7 +2160,7 @@ class BwTree {
           // Free NodeID one by one stored in its separator list
           // Even if they are already freed (e.g. a split delta has not
           // been consolidated would share a NodeID with its parent)
-          for(KeyNodeIDPair *it = inner_node_p->Begin();
+          for(auto it = inner_node_p->Begin();
               it != inner_node_p->End();
               it++) {
             freed_count += FreeNodeByNodeID(it->second);
@@ -2858,7 +2877,7 @@ abort_traverse:
     // We do this because for an InnerNode, its first separator key is just
     // a placeholder and never used (reading its content causes undefined 
     // behavior), because there is one more NodeID than separators
-    inner_node_p->PushBack(node_p->At(0));
+    inner_node_p->PushBack(node_p->GetLowKeyPair());
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
@@ -5767,7 +5786,7 @@ before_switch:
       } // InnerDeleteNode
       case NodeType::InnerType: {
         const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
-        KeyNodeIDPair *start_it = inner_node_p->Begin();
+        const KeyNodeIDPair *start_it = inner_node_p->Begin();
 
         // If we are on the leftmost branch of the inner node delta chain
         // if there is a merge delta, then we should start searching from
@@ -5777,10 +5796,11 @@ before_switch:
           start_it++;
         }
 
-        KeyNodeIDPair *it = std::lower_bound(start_it,
-                                             inner_node_p->End(),
-                                             std::make_pair(search_key, INVALID_NODE_ID),
-                                             key_node_id_pair_cmp_obj);
+        const KeyNodeIDPair *it = \
+          std::lower_bound(start_it,
+                           inner_node_p->End(),
+                           std::make_pair(search_key, INVALID_NODE_ID),
+                           key_node_id_pair_cmp_obj);
                                    
         if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
@@ -5900,7 +5920,7 @@ before_switch:
           ///////////////////////////////////////////////////////////
 
           // This is the logical end of the array
-          KeyNodeIDPair *end_it = inner_node_p->End();
+          const KeyNodeIDPair *end_it = inner_node_p->End();
 
           // Since we know the search key must be one of the key inside
           // the inner node, lower bound is sufficient
