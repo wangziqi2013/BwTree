@@ -1568,7 +1568,9 @@ class BwTree {
      * into the split sibling, and return the sibling node.
      */
     InnerNode *GetSplitSibling() const {
-      int key_num = static_cast<int>(sep_list.size());
+      // Call function in class ElasticNode to determine the size of the 
+      // inner node
+      int key_num = GetSize();
 
       // Inner node size must be > 2 to avoid empty split node
       assert(key_num >= 2);
@@ -1576,26 +1578,35 @@ class BwTree {
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      assert(static_cast<int>(sep_list.size()) == this->GetItemCount());
+      assert(key_num == GetItemCount());
 
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = sep_list.begin() + split_item_index;
-
-      // We copy key-NodeID pairs till the end of the inner node
-      auto copy_end_it = sep_list.end();
+      auto copy_start_it = Begin() + split_item_index;
+            
+      // We need this to allocate enough space for the embedded array
+      int sibling_size = static_cast<int>(std::distance(copy_start_it, 
+                                                        End()));
 
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        new InnerNode{this->GetHighKeyPair(), // It will be copied into new node
-                      static_cast<int>(std::distance(copy_start_it,
-                                                     copy_end_it))};
+        reinterpret_cast<InnerNode *>(ElasticNode::Get(sibling_size,
+                                                       NodeType::InnerType,
+                                                       0,
+                                                       sibling_size,
+                                                       At(split_item_index),
+                                                       GetHighKeyPair()));
 
-      // Batch copy from the current node to the new node
-      // It does not cause reallocation
-      inner_node_p->sep_list.assign(copy_start_it, copy_end_it);
+      // Push back element one by one
+      for(int i = 0;i < sibling_size;i++) {
+        inner_node_p->PushBack(*copy_start_it);
+        copy_start_it++;
+      }
+      
+      // Since we copy exactly that many elements
+      assert(copy_start_it == copy_end_it);
 
       return inner_node_p;
     }
