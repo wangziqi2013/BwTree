@@ -2987,7 +2987,7 @@ abort_traverse:
                 // and we just do not care
                 if(data_node_type == NodeType::InnerInsertType) {
                   // Pop the value here
-                  new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                  new_inner_node_p->PushBack(sss.PopFront()->item);
                 } else {
                   // And here (InnerDeleteNode after we have drained InnerNode
                   // is useless so just ignore it)
@@ -3001,18 +3001,20 @@ abort_traverse:
             // Next is the normal case: Both are not drained
             // we do a comparison of their leading elements
 
-            if(key_cmp_obj(copy_start_it->first, sss.GetFront()->item.first)) {
+            if(key_cmp_obj(copy_start_it->first, 
+                           sss.GetFront()->item.first) == true) {
               // If array element is less than data node list element
-              new_inner_node_p->sep_list.push_back(*copy_start_it);
+              new_inner_node_p->PushBack(*copy_start_it);
 
               copy_start_it++;
-            } else if(key_cmp_obj(sss.GetFront()->item.first, copy_start_it->first)) {
+            } else if(key_cmp_obj(sss.GetFront()->item.first, 
+                                  copy_start_it->first) == true) {
               NodeType data_node_type = (sss.GetFront())->GetType();
 
               // Delta Insert with array not having that element
               if(data_node_type == NodeType::InnerInsertType) {
                 // Pop the value here
-                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                new_inner_node_p->PushBack(sss.PopFront()->item);
               } else {
                 // This is possible
                 // InnerNode: [2, 3, 4, 5]
@@ -3027,7 +3029,7 @@ abort_traverse:
 
               // InsertDelta overrides InnerNode element
               if(data_node_type == NodeType::InnerInsertType) {
-                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                new_inner_node_p->PushBack(sss.PopFront()->item);
               } else {
                 // There is a value in InnerNode that does not exist
                 // in consolidated node. Just ignore
@@ -5496,7 +5498,7 @@ before_switch:
     } else {   // If this is an inner node
       const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
 
-      size_t node_size = inner_node_p->sep_list.size();
+      size_t node_size = inner_node_p->GetSize();
 
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
@@ -5508,7 +5510,7 @@ before_switch:
         const KeyType &split_key = new_inner_node_p->GetLowKey();
 
         // New node has at least one item (this is the basic requirement)
-        assert(new_inner_node_p->sep_list.size() > 0);
+        assert(new_inner_node_p->GetSize() > 0);
 
         const KeyNodeIDPair &first_item = new_inner_node_p->sep_list[0];
         // This points to the left most node on the right split sibling
