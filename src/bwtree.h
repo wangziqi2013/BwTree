@@ -2846,8 +2846,10 @@ abort_traverse:
                                    inner_node_p);
 
     // Since consolidation would not change item count they must be equal
+    // Also allocated space should be used exactly as described in the
+    // construction function
     assert(inner_node_p->GetSize() == node_p->GetItemCount());
-    assert(inner_node_p->GetSize() == node_p->GetItemCount());
+    assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
     return inner_node_p;
   }
@@ -2882,11 +2884,11 @@ abort_traverse:
 
           // These two will be set according to the high key and
           // low key
-          typename std::vector<KeyNodeIDPair>::const_iterator copy_end_it{};
-          typename std::vector<KeyNodeIDPair>::const_iterator copy_start_it{};
+          const KeyNodeIDPair *copy_end_it;
+          const KeyNodeIDPair *copy_start_it;
 
           if(high_key_pair.second == INVALID_NODE_ID) {
-            copy_end_it = inner_node_p->sep_list.end();
+            copy_end_it = inner_node_p->End();
           } else {
             // This search for the first key >= high key of the current node
             // being consolidated
@@ -2894,24 +2896,24 @@ abort_traverse:
             // The return value might be end() iterator, but it is also
             // consistent
             copy_end_it = \
-              std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                               inner_node_p->sep_list.end(),
+              std::lower_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
                                high_key_pair,     // This contains the high key
                                key_node_id_pair_cmp_obj);
           }
 
           // Since we want to access its first element
-          assert(static_cast<int>(inner_node_p->sep_list.size()) > 0);
+          assert(inner_node_p->GetSize() > 0);
 
           // If the first element in the sep list equals the low key pair's
           // NodeID then we are at the leftmost node of the merge tree
           // and we ignore the leftmost sep (since it could be -Inf)
           // For other nodes, the leftmost item inside sep list has a valid
           // key and could thus be pushed directly
-          if(inner_node_p->sep_list[0].second == low_key_node_id) {
-            copy_start_it = inner_node_p->sep_list.begin() + 1;
+          if(inner_node_p->At(0).second == low_key_node_id) {
+            copy_start_it = inner_node_p->Begin() + 1;
           } else {
-            copy_start_it = inner_node_p->sep_list.begin();
+            copy_start_it = inner_node_p->Begin();
           }
 
           // Find the end of copying
