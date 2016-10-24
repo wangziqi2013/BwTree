@@ -1586,18 +1586,15 @@ class BwTree {
    public:
 
     /*
-     * Constructor
+     * Constructor - Deleted
+     *
+     * All construction of InnerNode should be through ElasticNode interface
      */
-    InnerNode(const KeyNodeIDPair &p_low_key,
-              const KeyNodeIDPair &p_high_key,
-              int p_item_count,
-              int p_depth = 0) :
-      ElasticNode<KeyNodeIDPair>{NodeType::InnerType,
-                  p_depth, 
-                  p_item_count,
-                  p_low_key,
-                  p_high_key} 
-    {}
+    InnerNode() = delete;
+    InnerNode(const InnerNode &) = delete;
+    InnerNode(const InnerNode &&) = delete;
+    InnerNode &operator=(const InnerNode &) = delete;
+    InnerNode &operator=(const InnerNode &&) = delete;
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
