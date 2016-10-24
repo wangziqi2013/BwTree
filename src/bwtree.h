@@ -1533,51 +1533,22 @@ class BwTree {
   /*
    * class InnerNode - Inner node that holds separators
    */
-  class InnerNode : public BaseNode {
+  class InnerNode : public ElasticNode<KeyNodeIDPair> {
    public:
-    // This stores the high key of the node
-    // We store high key as the first member element to make
-    // speculative read and prefetching easier
-    KeyNodeIDPair high_key;
-    
-    // The vector stores the separators, with the first element being the
-    // low key-NodeID pair (low key is not used)
-    std::vector<KeyNodeIDPair> sep_list;
-    
-    // This is the pointer to the end of KeyValuePair array pointing exactly to
-    // the element after the last valid one
-    KeyNodeIDPair *end;
-    
-    // This is the starting address of the KeyValueList
-    // Memory must be allocated to accomondate this
-    KeyNodeIDPair data[0];
 
     /*
      * Constructor
      */
-    InnerNode(const KeyNodeIDPair &p_high_key_p,
+    InnerNode(const KeyNodeIDPair &p_low_key_p,
+              const KeyNodeIDPair &p_high_key_p,
               int p_item_count,
               int p_depth = 0) :
-      BaseNode{NodeType::InnerType,
-               nullptr,        // Low key should be initialized after reserve()
-               &high_key,      // High key is stored inside InnerNode
-               p_depth,        // Depth of InnerNode defaults to 0
-               p_item_count},  // We use this to reserve storage
-      high_key{p_high_key_p} {
-      // First reserve that much space (it should not be changed once set)
-      // The first element is the low key, and we maintain a pointer to it
-      // So it is important that the vector does not reallocate its internal
-      // memory segment otherwise the pointer to low key is invalidated
-      sep_list.reserve(p_item_count);
-
-      // Then direct high key and low key pointer to the first and last element
-      // NOTE: Once the vector reallocates its memory, this pointer is
-      // invalidated. So we should avoid that
-      // NOTE 2: Should use "this" pointer to call the low key pair
-      this->SetLowKeyPair(&sep_list[0]);
-
-      return;
-    }
+      ElasticNode{NodeType::InnerType,
+                  p_depth, 
+                  p_item_count,
+                  p_low_key_p,
+                  p_high_key_p} 
+    {}
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
