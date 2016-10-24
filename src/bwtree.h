@@ -2822,17 +2822,21 @@ abort_traverse:
       sss{data_node_list, f1, f2};
 
     // The effect of this function is a consolidation into inner node
-    InnerNode *inner_node_p = new InnerNode{node_p->GetHighKeyPair(),
-                                            node_p->GetItemCount(),
-                                            p_depth};
-
-    // Save some typing
-    auto sep_list_p = &inner_node_p->sep_list;
+    InnerNode *inner_node_p = \
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode::Get(node_p->GetItemCount(),
+                         NodeType::InnerType,
+                         p_depth,
+                         node_p->GetItemCount(),
+                         node_p->GetLowKeyPair(),
+                         node_p->GetHighKeyPair()));
 
     // The first element is always the low key
-    // In the recursive call below we should take care not to insert the low
-    // key again (it is always the first element in data list)
-    sep_list_p->push_back(node_p->GetLowKeyPair());
+    // since we know it will never be deleted
+    // We do this because for an InnerNode, its first separator key is just
+    // a placeholder and never used (reading its content causes undefined 
+    // behavior), because there is one more NodeID than separators
+    inner_node_p->PushBack(node_p->At(0));
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
@@ -2842,7 +2846,8 @@ abort_traverse:
                                    inner_node_p);
 
     // Since consolidation would not change item count they must be equal
-    assert(static_cast<int>(sep_list_p->size()) == node_p->GetItemCount());
+    assert(inner_node_p->GetSize() == node_p->GetItemCount());
+    assert(inner_node_p->GetSize() == node_p->GetItemCount());
 
     return inner_node_p;
   }
