@@ -899,12 +899,18 @@ class BwTree {
 
     /*
      * SetLowKeyPair() - Sets the low key pair of metadata
-     *
-     * This is only called by InnerNode since for InnerNodes
-     * the low key cannot be known before vector reserve() returns
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       metadata.low_key_p = p_low_key_p;
+
+      return;
+    }
+    
+    /*
+     * SetHighKeyPair() - Sets the high key pair of metdtata
+     */
+    inline void SetHighKeyPair(const KeyNodeIDPair *p_high_key_p) {
+      metadata.high_key_p = p_high_key_p;
 
       return;
     }
@@ -952,6 +958,23 @@ class BwTree {
       high_key{p_high_key},
       end{start}
     {}
+    
+    /*
+     * Copy() - Copy constructs another instance
+     */
+    static ElasticNode *Copy(const ElasticNode &other) {
+      ElasticNode *node_p = \
+        ElasticNode::Get(other.GetItemCount(),
+                         other.GetType(),
+                         other.GetDepth(),
+                         other.GetItemCount(),
+                         other.GetLowKeyPair(),
+                         other.GetHighKeyPair());
+                         
+      node_p->PushBack(other.Begin(), other.End()); 
+      
+      return node_p;  
+    }
     
     /*
      * Destructor
@@ -1200,12 +1223,8 @@ class BwTree {
      *                    snapshot of the LeafNode
      */
     LeafNode(const LeafNode &other) :
-      ElasticNode<KeyValuePair>{other} {
-        printf("Before\n");
-      this->PushBack(other.Begin(), other.End());
-        printf("After\n");
-      return;
-    }
+      ElasticNode<KeyValuePair>{other}
+    {}
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
@@ -7158,7 +7177,7 @@ try_join_again:
             return;
           default:
             // This does not include INNER ABORT node
-            bwt_printf("Unknown node type: %d\n", (int)type);
+            printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
             return;
@@ -7452,7 +7471,7 @@ try_join_again:
     ForwardIterator(const ForwardIterator &other) :
       tree_p{other.tree_p},
       // This copy constructs all members recursively by default
-      leaf_node_p{new LeafNode{*other.leaf_node_p}},
+      leaf_node_p{reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p))},
       next_key_pair{other.next_key_pair},
       is_end{other.is_end} {
 
@@ -7479,7 +7498,7 @@ try_join_again:
 
       // For an empty iterator this branch is necessary
       if(leaf_node_p == nullptr) {
-        leaf_node_p = new LeafNode{*other.leaf_node_p};
+        leaf_node_p = reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p));
       } else {
         // First copy the logical node into current instance
         // DO NOT NEED new and delete; JUST DO A VALUE COPY
