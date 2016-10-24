@@ -2180,7 +2180,13 @@ class BwTree {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 1};
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode::Get(1, 
+                         NodeType::InnerType, 
+                         0, 
+                         1, 
+                         std::make_pair(KeyType(), first_leaf_id),
+                         std::make_pair(KeyType(), INVALID_NODE_ID)));
 
     #else
 
@@ -2193,11 +2199,17 @@ class BwTree {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 1};
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode::Get(1, 
+                         NodeType::InnerType, 
+                         0, 
+                         1, 
+                         first_sep,    // Copy this as the first key
+                         std::make_pair(KeyType{}, INVALID_NODE_ID)));
 
     #endif
 
-    root_node_p->sep_list.push_back(first_sep);
+    root_node_p->PushBack(first_sep);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -5717,7 +5729,7 @@ before_switch:
    * inner node delta chain. If it exists then return a pointer to the
    * item, otherwise return nullptr.
    *
-   * This function is called when complating both split SMO and merge SMO
+   * This function is called when completing both split SMO and merge SMO
    * For split SMO we need to check, key range and key existance, and
    * NodeID value, to avoid mssing a few InnerDeleteNode on the parent node.
    * However, for merge SMO, we only check key existence.
@@ -5726,7 +5738,7 @@ before_switch:
    * NodeIDs match, whether key is inside range) should be done by the caller
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
-                                                const KeyType &search_key) {
+                                         const KeyType &search_key) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
