@@ -1888,9 +1888,7 @@ class BwTree {
       key_value_pair_cmp_obj{this},
       key_value_pair_eq_obj{this},
       key_value_pair_hash_obj{this},
-
-      tree_height{2UL},
-
+      
       // NodeID counter
       next_unused_node_id{1},
 
@@ -5034,10 +5032,6 @@ before_switch:
           inner_node_p->PushBack(first_item);
           inner_node_p->PushBack(*insert_item_p);
 
-          // This needs to be done here to avoid some unfortunate thread
-          // seeing an un-updated tree height and overflowed its stack
-          tree_height.fetch_add(1);
-
           // First we need to install the new node with NodeID
           // This makes it visible
           InstallNewNode(new_root_id, inner_node_p);
@@ -5045,8 +5039,7 @@ before_switch:
                                      new_root_id);
 
           if(ret == true) {
-            bwt_printf("Install root CAS succeeds. Height = %lu\n",
-                       tree_height.load());
+            bwt_printf("Install root CAS succeeds\n");
 
             // After installing new root we abort in order to load
             // the new root
@@ -5055,9 +5048,6 @@ before_switch:
             return;
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
-
-            // If install fails we just sub 1 from the tree height
-            tree_height.fetch_sub(1);
 
             // We need to make a new remove node and send it into EpochManager
             // for recycling the NodeID
@@ -6647,10 +6637,6 @@ before_switch:
   const KeyValuePairComparator key_value_pair_cmp_obj;
   const KeyValuePairEqualityChecker key_value_pair_eq_obj;
   const KeyValuePairHashFunc key_value_pair_hash_obj;
-
-  // This is used to preallocate space for vector to avoid reallocation
-  // for NodeSnapshot
-  std::atomic<size_t> tree_height;
 
   // This value is atomic and will change
   std::atomic<NodeID> root_id;
