@@ -3227,12 +3227,12 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
-          auto start_it = leaf_node_p->data_list.begin() + start_index;
+          auto start_it = leaf_node_p->Begin() + start_index;
 
           // That is the end of searching
           auto end_it = ((end_index == -1) ? \
-                         leaf_node_p->data_list.end() : \
-                         leaf_node_p->data_list.begin() + end_index);
+                         leaf_node_p->End() : \
+                         leaf_node_p->Begin() + end_index);
 
           // Here we know the search key < high key of current node
           // NOTE: We only compare keys here, so it will get to the first
@@ -3244,7 +3244,7 @@ abort_traverse:
                              key_value_pair_cmp_obj);
 
           // If there is something to copy
-          while((copy_start_it != leaf_node_p->data_list.end()) && \
+          while((copy_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(search_key, copy_start_it->first))) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
@@ -3419,13 +3419,13 @@ abort_traverse:
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto scan_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(leaf_node_p->Begin(),
+                             leaf_node_p->End(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
           // Search all values with the search key
-          while((scan_start_it != leaf_node_p->data_list.end()) && \
+          while((scan_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(scan_start_it->first, search_key))) {
                   
             // If there is a value matching the search value then return true
@@ -3437,7 +3437,7 @@ abort_traverse:
               // we set exist flag to false to indicate that the value
               // has been invalidated
               index_pair_p->first = \
-                scan_start_it - leaf_node_p->data_list.begin();
+                scan_start_it - leaf_node_p->Begin();
               index_pair_p->second = true;
               
               // Return a pointer to the item inside LeafNode;
@@ -3452,7 +3452,7 @@ abort_traverse:
           // exist will reach here
           // Since only Insert() will use the index we set exist flag to false
           index_pair_p->first = \
-                scan_start_it - leaf_node_p->data_list.begin();
+                scan_start_it - leaf_node_p->Begin();
           index_pair_p->second = false;
 
           return nullptr;
@@ -3612,12 +3612,12 @@ abort_traverse:
             static_cast<const LeafNode *>(node_p);
 
           auto copy_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(leaf_node_p->Begin(),
+                             leaf_node_p->End(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
-          while((copy_start_it != leaf_node_p->data_list.end()) && \
+          while((copy_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(search_key, copy_start_it->first))) {
             if(deleted_set.Exists(copy_start_it->second) == false) {
               if(present_set.Exists(copy_start_it->second) == false) {
@@ -3643,7 +3643,7 @@ abort_traverse:
           // leaf delete node, since the delete node must have deleted a
           // value that does not exist in leaf base node, so that inserted value
           // must have the same index)
-          index_pair_p->first = copy_start_it - leaf_node_p->data_list.begin();
+          index_pair_p->first = copy_start_it - leaf_node_p->Begin();
           // Value does not exist
           index_pair_p->second = false;
 
@@ -3883,13 +3883,13 @@ abort_traverse:
 
           // If the high key is +Inf then all items could be copied
           if((high_key_pair.second == INVALID_NODE_ID)) {
-            copy_end_it = leaf_node_p->data_list.end();
+            copy_end_it = leaf_node_p->End();
           } else {
             // This points copy_end_it to the first element >= current high key
             // If no such element exists then copy_end_it is end() iterator
             // which is also consistent behavior
-            copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
-                                           leaf_node_p->data_list.end(),
+            copy_end_it = std::lower_bound(leaf_node_p->Begin(),
+                                           leaf_node_p->End(),
                                            // It only compares key so we
                                            // just use high key pair
                                            std::make_pair(high_key_pair.first, ValueType{}),
@@ -3898,7 +3898,7 @@ abort_traverse:
           
           // This is the index of the copy end it
           int copy_end_index = \
-            static_cast<int>(copy_end_it - leaf_node_p->data_list.begin());
+            static_cast<int>(copy_end_it - leaf_node_p->Begin());
           int copy_start_index = 0;
 
           ///////////////////////////////////////////////////////////
@@ -3943,9 +3943,9 @@ abort_traverse:
             assert(current_index <= copy_end_index);
             
             // First copy all items before the current index
-            new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
-                                              leaf_node_p->data_list.begin() + copy_start_index,
-                                              leaf_node_p->data_list.begin() + current_index);
+            new_leaf_node_p->PushBack(
+              leaf_node_p->Begin() + copy_start_index,
+              leaf_node_p->End() + current_index);
 
             // Update copy start index for next copy
             copy_start_index = current_index;
@@ -3960,7 +3960,7 @@ abort_traverse:
               // and ignore all LeafDeleteNode
               if(sss.GetFront()->GetType() == NodeType::LeafInsertType) {
                 // We remove the element from sss here
-                new_leaf_node_p->data_list.push_back(sss.PopFront()->item);
+                new_leaf_node_p->PushBack(sss.PopFront()->item);
               } else {
                 assert(sss.GetFront()->GetType() == NodeType::LeafDeleteType);
 
@@ -3982,9 +3982,8 @@ abort_traverse:
           } // while sss has not reached the copy end
           
           // Also need to insert all other elements if there are some
-          new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
-                                            leaf_node_p->data_list.begin() + copy_start_index,
-                                            leaf_node_p->data_list.begin() + copy_end_index);
+          new_leaf_node_p->PushBack(leaf_node_p->Begin() + copy_start_index,
+                                    leaf_node_p->Begin() + copy_end_index);
 
           return;
         } // case LeafType
@@ -5330,13 +5329,13 @@ before_switch:
         }
 
         // Since we would like to access its first element to get the low key
-        assert(new_leaf_node_p->data_list.size() > 0UL);
+        assert(new_leaf_node_p->GetSize() > 0);
 
         // The split key must be a valid key
         // Note that the lowkey for leaf node is not defined, so in the
         // case that it is required we must manually goto its data list
         // and find the low key in its leftmost element
-        const KeyType &split_key = new_leaf_node_p->data_list[0].first;
+        const KeyType &split_key = new_leaf_node_p->At(0).first;
 
         // If leaf split fails this should be recyced using a fake remove node
         NodeID new_node_id = GetNextNodeID();
@@ -7407,11 +7406,11 @@ try_join_again:
       // Consolidate the current node (this does not change high key)
       leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
 
-      it = leaf_node_p->data_list.begin();
+      it = leaf_node_p->Begin();
 
       // Corner case: if the vector is itself empty
       // then we should set the flag manually
-      if(leaf_node_p->data_list.size() == 0UL) {
+      if(leaf_node_p->GetSize() == 0) {
         is_end = true;
       }
 
@@ -7457,8 +7456,8 @@ try_join_again:
       is_end{other.is_end} {
 
       // Move the iterator ahead
-      it = leaf_node_p->data_list.begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+      it = leaf_node_p->Begin() + \
+           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
 
       return;
     }
@@ -7496,8 +7495,8 @@ try_join_again:
       is_end = other.is_end;
 
       // Move the iterator ahead
-      it = leaf_node_p->data_list.begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+      it = leaf_node_p->Begin() + \
+           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
 
       return *this;
     }
@@ -7795,14 +7794,14 @@ try_join_again:
         // Find the lower bound of the current start search key
         // NOTE: Do not use start_key_p since it has been changed by the
         // assignment to next_key_pair
-        it = std::lower_bound(leaf_node_p->data_list.begin(),
-                              leaf_node_p->data_list.end(),
+        it = std::lower_bound(leaf_node_p->Begin(),
+                              leaf_node_p->End(),
                               std::make_pair(start_key, ValueType{}),
                               this->tree_p->key_value_pair_cmp_obj);
 
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
-        if(it != leaf_node_p->data_list.end()) {
+        if(it != leaf_node_p->End()) {
           return;
         }
 
@@ -7831,7 +7830,7 @@ try_join_again:
       // then just try to load the next key. This has the possibility
       // that the is_end flag is set, but we do not care about it, and
       // directly returns after LowerBound() returns
-      if(it == leaf_node_p->data_list.end()) {
+      if(it == leaf_node_p->End()) {
         LowerBound();
       }
 
