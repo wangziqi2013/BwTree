@@ -1054,7 +1054,8 @@ class BwTree {
       // Note: do not make it constant since it is going to be modified
       // after being returned
       ElasticNode *node_p = \
-        malloc(sizeof(ElasticNode) + size * sizeof(ElementType));
+        static_cast<ElasticNode *>(
+          malloc(sizeof(ElasticNode) + size * sizeof(ElementType)));
         
       // Note that malloc() does not throw even if it fails
       // in that case we will see GP error after this line under release mode
@@ -1572,7 +1573,7 @@ class BwTree {
               const KeyNodeIDPair &p_high_key,
               int p_item_count,
               int p_depth = 0) :
-      ElasticNode{NodeType::InnerType,
+      ElasticNode<KeyNodeIDPair>{NodeType::InnerType,
                   p_depth, 
                   p_item_count,
                   p_low_key,
@@ -1589,7 +1590,7 @@ class BwTree {
     InnerNode *GetSplitSibling() const {
       // Call function in class ElasticNode to determine the size of the 
       // inner node
-      int key_num = GetSize();
+      int key_num = this->GetSize();
 
       // Inner node size must be > 2 to avoid empty split node
       assert(key_num >= 2);
@@ -1597,32 +1598,34 @@ class BwTree {
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      assert(key_num == GetItemCount());
+      assert(key_num == this->GetItemCount());
 
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      KeyNodeIDPair *copy_start_it = Begin() + split_item_index;
+      KeyNodeIDPair *copy_start_it = this->Begin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
       int sibling_size = static_cast<int>(std::distance(copy_start_it, 
-                                                        End()));
+                                                        this->End()));
 
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        reinterpret_cast<InnerNode *>(ElasticNode::Get(sibling_size,
-                                                       NodeType::InnerType,
-                                                       0,
-                                                       sibling_size,
-                                                       At(split_item_index),
-                                                       GetHighKeyPair()));
+        reinterpret_cast<InnerNode *>(ElasticNode<KeyNodeIDPair>::\
+          Get(sibling_size,
+              NodeType::InnerType,
+              0,
+              sibling_size,
+              this->At(split_item_index),
+              this->GetHighKeyPair()));
 
       // Call overloaded PushBack() to insert an array of elements
-      inner_node_p->PushBack(copy_start_it, End());
+      inner_node_p->PushBack(copy_start_it, this->End());
       
       // Since we copy exactly that many elements
-      assert(copy_start_it == copy_end_it);
+      assert(inner_node_p->GetSize() == sibling_size);
+      assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
       return inner_node_p;
     }
@@ -2197,12 +2200,13 @@ class BwTree {
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
       reinterpret_cast<InnerNode *>( \
-        ElasticNode::Get(1, 
-                         NodeType::InnerType, 
-                         0, 
-                         1, 
-                         std::make_pair(KeyType(), first_leaf_id),
-                         std::make_pair(KeyType(), INVALID_NODE_ID)));
+        ElasticNode<KeyNodeIDPair>::\
+          Get(1, 
+              NodeType::InnerType, 
+              0, 
+              1, 
+              first_sep,
+              std::make_pair(KeyType(), INVALID_NODE_ID)));
 
     #else
 
@@ -2216,12 +2220,13 @@ class BwTree {
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
       reinterpret_cast<InnerNode *>( \
-        ElasticNode::Get(1, 
-                         NodeType::InnerType, 
-                         0, 
-                         1, 
-                         first_sep,    // Copy this as the first key
-                         std::make_pair(KeyType{}, INVALID_NODE_ID)));
+        ElasticNode<KeyNodeIDPair>::\
+          Get(1, 
+              NodeType::InnerType, 
+              0, 
+              1, 
+              first_sep,    // Copy this as the first key
+              std::make_pair(KeyType{}, INVALID_NODE_ID)));
 
     #endif
 
@@ -2840,12 +2845,13 @@ abort_traverse:
     // The effect of this function is a consolidation into inner node
     InnerNode *inner_node_p = \
       reinterpret_cast<InnerNode *>( \
-        ElasticNode::Get(node_p->GetItemCount(),
-                         NodeType::InnerType,
-                         p_depth,
-                         node_p->GetItemCount(),
-                         node_p->GetLowKeyPair(),
-                         node_p->GetHighKeyPair()));
+        ElasticNode<KeyNodeIDPair>::\
+          Get(node_p->GetItemCount(),
+              NodeType::InnerType,
+              p_depth,
+              node_p->GetItemCount(),
+              node_p->GetLowKeyPair(),
+              node_p->GetHighKeyPair()));
 
     // The first element is always the low key
     // since we know it will never be deleted
@@ -4178,59 +4184,6 @@ abort_traverse:
       return;
     }
 
-/*
-    // We either consolidate the parent node to get an inner node
-    // or directly use the parent node_p if it is already inner node
-    const InnerNode *inner_node_p = \
-      static_cast<const InnerNode *>(parent_snapshot_p->node_p);
-
-    // If the parent node is not inner node (i.e. has delta chain)
-    // then consolidate it to get an inner node
-    if(parent_snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = \
-        CollectAllSepsOnInner(parent_snapshot_p,
-                              parent_snapshot_p->node_p->GetDepth() + 1);
-
-        epoch_manager.AddGarbageNode(inner_node_p);
-    }
-
-    // This returns the first iterator >= current low key
-    // Note that we start searching on the second element
-    auto it = std::find_if(inner_node_p->sep_list.begin() + 1,
-                           inner_node_p->sep_list.end(),
-                           [removed_node_id](const KeyNodeIDPair &knp) {
-                             return knp.second == removed_node_id;
-                           });
-
-    // The removed node ID must be found inside the inner node since
-    // we are certain that at this point we did not miss any InnerInsertNode
-    // which was posted between taking parent's snapshot and taking snapshot
-    // of the removed node
-    //
-    // i.e. if there is a split delta, then either it is finished before taking
-    // the parent node snapshot, which will be part of the snapshot
-    // or it is finished and consolidated between taking parent and child node
-    // snapshot which will be found by the previous pointer check
-    //
-    // If it is finished (or even consolidated) only after taking the
-    // snapshot of the child node, then the current thread will have tried to
-    // finish that SMO and will not reach here since it would abort due to
-    // failed SMO
-    assert(it != inner_node_p->sep_list.end());
-
-    // it points to the current node (must be an exact match),
-    // so it-- points to its possible left sibling
-    it--;
-
-    // Note that after this point the inner node is still being used since
-    // we have iterator referring to the internal structure of the inner node
-    // So we could not try CAS here
-
-    // This is our starting point to traverse right
-    NodeID left_sibling_id = it->second;
-*/
-
-
     NodeID left_sibling_id = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
                                              parent_snapshot_p);
 
@@ -5026,12 +4979,13 @@ before_switch:
           // Allocate a new InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
             reinterpret_cast<InnerNode *>( \
-              ElasticNode::Get(2, 
-                               NodeType::InnerType, 
-                               0,
-                               2,
-                               first_item,
-                               std::make_pair(KeyType(), INVALID_NODE_ID)));
+              ElasticNode<KeyNodeIDPair>::\
+                Get(2, 
+                    NodeType::InnerType, 
+                    0,
+                    2,
+                    first_item,
+                    std::make_pair(KeyType(), INVALID_NODE_ID)));
 
           #else
 
@@ -5043,12 +4997,13 @@ before_switch:
           // Allocate a new InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
             reinterpret_cast<InnerNode *>( \
-              ElasticNode::Get(2, 
-                               NodeType::InnerType, 
-                               0,
-                               2,
-                               first_item,
-                               std::make_pair(KeyType{}, INVALID_NODE_ID)));
+              ElasticNode<KeyNodeIDPair>::\
+                Get(2, 
+                NodeType::InnerType, 
+                0,
+                2,
+                first_item,
+                std::make_pair(KeyType{}, INVALID_NODE_ID)));
                                
           #endif
 
@@ -5811,24 +5766,23 @@ before_switch:
         break;
       } // InnerDeleteNode
       case NodeType::InnerType: {
-        auto sep_list_p = &static_cast<const InnerNode *>(node_p)->sep_list;
+        const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
+        KeyNodeIDPair *start_it = inner_node_p->Begin();
 
         // If we are on the leftmost branch of the inner node delta chain
         // if there is a merge delta, then we should start searching from
         // the second element. Otherwise always start search from the first
         // element
-        auto start_it = sep_list_p->begin();
-
-        if(low_key_pair.second == (*sep_list_p)[0].second) {
+        if(low_key_pair.second == inner_node_p->At(0).second) {
           start_it++;
         }
 
-        auto it = std::lower_bound(start_it,
-                                   sep_list_p->end(),
-                                   std::make_pair(search_key, INVALID_NODE_ID),
-                                   key_node_id_pair_cmp_obj);
+        KeyNodeIDPair *it = std::lower_bound(start_it,
+                                             inner_node_p->End(),
+                                             std::make_pair(search_key, INVALID_NODE_ID),
+                                             key_node_id_pair_cmp_obj);
                                    
-        if(it == sep_list_p->end()) {
+        if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
           // If the key does not exist then return nullptr
           return nullptr;
@@ -5839,7 +5793,7 @@ before_switch:
         } else {
           // If found the lower bound and the key matches
           // return the key
-          return &(*it);
+          return it;
         }
 
         assert(false);
