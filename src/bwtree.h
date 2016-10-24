@@ -249,7 +249,7 @@ class BwTree {
   /*
    * enum class NodeType - Bw-Tree node type
    */
-  enum class NodeType {
+  enum class NodeType : short {
     LeafStart = 0,
     // Data page type
     LeafType = 1,
@@ -696,10 +696,13 @@ class BwTree {
     // points to the item inside split node or merge right sibling branch
     const KeyNodeIDPair *high_key_p;
 
+    // The type of the node; this is forced to be represented as a short type
+    NodeType type;
+
     // This is the depth of current delta chain
     // For merge delta node, the depth of the delta chain is the
     // sum of its two children
-    int depth;
+    short depth;
 
     // This counts the number of items alive inside the Node
     // when consolidating nodes, we use this piece of information
@@ -711,11 +714,13 @@ class BwTree {
      */
     NodeMetaData(const KeyNodeIDPair *p_low_key_p,
                  const KeyNodeIDPair *p_high_key_p,
+                 NodeType p_type,
                  int p_depth,
                  int p_item_count) :
       low_key_p{p_low_key_p},
       high_key_p{p_high_key_p},
-      depth{p_depth},
+      type{p_type},
+      depth{static_cast<short>(p_depth)},
       item_count{p_item_count}
     {}
   };
@@ -728,10 +733,9 @@ class BwTree {
    // We hold its data structure as private to force using member functions
    // for member access
    private:
-    // This holds low key, high key, next node ID, depth and item count
+    // This holds low key, high key, next node ID, type, depth and item count
     NodeMetaData metadata;
-    
-    NodeType type;
+        
    public:
 
     /*
@@ -744,9 +748,9 @@ class BwTree {
              int p_item_count) :
       metadata{p_low_key_p,
                p_high_key_p,
+               p_type,
                p_depth,
-               p_item_count},
-      type{p_type}
+               p_item_count}
     {}
 
     /*
@@ -755,7 +759,7 @@ class BwTree {
      * This method does not allow overridding
      */
     inline NodeType GetType() const {
-      return type;
+      return metadata.type;
     }
 
     /*
@@ -774,8 +778,8 @@ class BwTree {
      * delta node type
      */
     inline bool IsDeltaNode() const {
-      if(type == NodeType::InnerType || \
-         type == NodeType::LeafType) {
+      if(GetType() == NodeType::InnerType || \
+         GetType() == NodeType::LeafType) {
         return false;
       } else {
         return true;
@@ -790,7 +794,7 @@ class BwTree {
      * and use the node directly
      */
     inline bool IsInnerNode() const {
-      return type == NodeType::InnerType;
+      return GetType() == NodeType::InnerType;
     }
 
     /*
@@ -799,8 +803,8 @@ class BwTree {
      * This is used in JumpToLeftSibling() as an assertion
      */
     inline bool IsRemoveNode() const {
-      return (type == NodeType::InnerRemoveType) || \
-             (type == NodeType::LeafRemoveType);
+      return (GetType() == NodeType::InnerRemoveType) || \
+             (GetType() == NodeType::LeafRemoveType);
     }
 
     /*
@@ -820,7 +824,7 @@ class BwTree {
      *
      */
     inline bool IsOnLeafDeltaChain() const {
-      return type < NodeType::LeafEnd;
+      return GetType() < NodeType::LeafEnd;
     }
 
     /*
@@ -895,14 +899,235 @@ class BwTree {
 
     /*
      * SetLowKeyPair() - Sets the low key pair of metadata
-     *
-     * This is only called by InnerNode since for InnerNodes
-     * the low key cannot be known before vector reserve() returns
      */
     inline void SetLowKeyPair(const KeyNodeIDPair *p_low_key_p) {
       metadata.low_key_p = p_low_key_p;
 
       return;
+    }
+    
+    /*
+     * SetHighKeyPair() - Sets the high key pair of metdtata
+     */
+    inline void SetHighKeyPair(const KeyNodeIDPair *p_high_key_p) {
+      metadata.high_key_p = p_high_key_p;
+
+      return;
+    }
+  };
+  
+  /*
+   * class ElasticNode - The base class for elastic node types, i.e. InnerNode
+   *                     and LeafNode
+   *
+   * Since for InnerNode and LeafNode, the number of elements is not a compile
+   * time known constant. However, for efficient tree traversal we must inline
+   * all elements to reduce cache misses with workload that's less predictable
+   */
+  template <typename ElementType>
+  class ElasticNode : public BaseNode {
+   private:
+    // These two are the low key and high key of the node respectively
+    // since we could not add it in the inherited class (will clash with
+    // the array which is invisible to the compiler) so they must be added here
+    KeyNodeIDPair low_key;
+    KeyNodeIDPair high_key;
+     
+    // This is the end of the elastic array
+    // We explicitly store it here to avoid calculating the end of the array
+    // everytime
+    ElementType *end;
+    
+    // This is the starting point
+    ElementType start[0];
+    
+   public:
+    /*
+     * Constructor
+     *
+     * Note that this constructor uses the low key and high key stored as
+     * members to initialize the NodeMetadata object in class BaseNode
+     */ 
+    ElasticNode(NodeType p_type,
+                int p_depth,
+                int p_item_count,
+                const KeyNodeIDPair &p_low_key,
+                const KeyNodeIDPair &p_high_key) :
+      BaseNode{p_type, &low_key, &high_key, p_depth, p_item_count},
+      low_key{p_low_key},
+      high_key{p_high_key},
+      end{start}
+    {}
+    
+    /*
+     * Copy() - Copy constructs another instance
+     */
+    static ElasticNode *Copy(const ElasticNode &other) {
+      ElasticNode *node_p = \
+        ElasticNode::Get(other.GetItemCount(),
+                         other.GetType(),
+                         other.GetDepth(),
+                         other.GetItemCount(),
+                         other.GetLowKeyPair(),
+                         other.GetHighKeyPair());
+                         
+      node_p->PushBack(other.Begin(), other.End()); 
+      
+      return node_p;  
+    }
+    
+    /*
+     * Destructor
+     */
+    ~ElasticNode() {
+      // Use two iterators to iterate through all existing elements
+      for(ElementType *element_p = Begin();
+          element_p != End();
+          element_p++) {
+        // Manually calls destructor when the node is destroyed
+        element_p->~ElementType();      
+      }
+      
+      return;
+    }
+    
+    /*
+     * Begin() - Returns a begin iterator to its internal array
+     */
+    inline ElementType *Begin() {
+      return start;
+    }
+    
+    inline const ElementType *Begin() const {
+      return start; 
+    }
+    
+    /*
+     * End() - Returns an end iterator that is similar to the one for vector
+     */
+    inline ElementType *End() {
+      return end; 
+    }
+    
+    inline const ElementType *End() const {
+      return end; 
+    }
+    
+    /*
+     * GetSize() - Returns the size of the embedded list
+     *
+     * Note that the return type is integer since we use integer to represent
+     * the size of a node
+     */
+    inline int GetSize() const {
+      return static_cast<int>(End() - Begin());
+    }
+    
+    /*
+     * PushBack() - Push back an element
+     *
+     * This function takes an element type and copy-construct it on the array
+     * which is invisible to the compiler. Therefore we must call placement
+     * operator new to do the job
+     */
+    inline void PushBack(const ElementType &element) {
+      // Placement new + copy constructor using end pointer
+      new (end) ElementType{element};
+      
+      // Move it pointing to the enxt available slot, if not reached the end
+      end++;
+      
+      return;
+    }
+    
+    /*
+     * PushBack() - Push back a series of elements
+     *
+     * The overloaded PushBack() could also push an array of elements
+     */
+    inline void PushBack(const ElementType *copy_start_p,
+                         const ElementType *copy_end_p) {
+      // Make sure the loop will come to an end
+      assert(copy_start_p <= copy_end_p);
+      
+      // TODO: A better way might be just to use std::copy
+      while(copy_start_p != copy_end_p) {
+        PushBack(*copy_start_p);
+        copy_start_p++; 
+      }
+      
+      return;
+    }
+    
+   public: 
+   
+    /*
+     * Get() - Static helper function that constructs a elastic node of
+     *         a certain size
+     *
+     * Note that since operator new is only capable of allocating a fixed 
+     * sized structure, we need to call malloc() directly to deal with variable
+     * lengthed node. However, after malloc() returns we use placement operator
+     * new to initialize it, such that the node could be freed using operator
+     * delete later on
+     */
+    inline static ElasticNode *Get(int size,         // Number of elements
+                                   NodeType p_type,
+                                   int p_depth,
+                                   int p_item_count, // Usually equal to size
+                                   const KeyNodeIDPair &p_low_key,
+                                   const KeyNodeIDPair &p_high_key) {
+      // Currently this is always true - if we want a larger array then 
+      // just remove this line
+      assert(size == p_item_count);
+                                     
+      // Allocte basic template + ElementType element size * (node size)
+      // Note: do not make it constant since it is going to be modified
+      // after being returned
+      ElasticNode *node_p = \
+        static_cast<ElasticNode *>(
+          malloc(sizeof(ElasticNode) + size * sizeof(ElementType)));
+        
+      // Note that malloc() does not throw even if it fails
+      // in that case we will see GP error after this line under release mode
+      assert(node_p != nullptr);
+      
+      // Call placement new to initialize all that could be initialized
+      new (node_p) ElasticNode{p_type, 
+                               p_depth, 
+                               p_item_count, 
+                               p_low_key, 
+                               p_high_key};
+                               
+      return node_p;
+    }
+    
+    /*
+     * operator[] - Access element without bounds checking
+     */
+    inline ElementType &operator[](const int index) {
+      return *(Begin() + index);
+    }
+    
+    inline const ElementType &operator[](const int index) const {
+      return *(Begin() + index);
+    }
+    
+    /*
+     * At() - Access element with bounds checking under debug mode
+     */
+    inline ElementType &At(const int index) {
+      // The index must be inside the valid range
+      assert(index < GetSize());
+      
+      return operator[](index);
+    }
+    
+    inline const ElementType &At(const int index) const {
+      // The index must be inside the valid range
+      assert(index < GetSize());
+      
+      return operator[](index);
     }
   };
 
@@ -985,43 +1210,20 @@ class BwTree {
    * There are 5 types of delta nodes that could be appended
    * to a leaf node. 3 of them are SMOs, and 2 of them are data operation
    */
-  class LeafNode : public BaseNode {
+  class LeafNode : public ElasticNode<KeyValuePair> {
    public:
-    // This holds high key and the next node ID inside a pair
-    // so that they could be accessed in a compacted manner
-    KeyNodeIDPair high_key;
-    
-    // We always hold data within a vector of KeyValuePair
-    std::vector<KeyValuePair> data_list;
-    
-    // Since leaf nodes does not have low key as sep item,
-    // but we do need them when searching for the low key
-    // let's put it here as a class member
-    // NOTE: Only the key field is used
-    // next node ID is always set to INVALID_NODE_ID
-    // we keep this for consistency
-    KeyNodeIDPair low_key;
+    LeafNode() = delete;
+    //LeafNode(const LeafNode &) = delete;  -> This should be implemented
+    LeafNode(LeafNode &&) = delete;
+    LeafNode &operator=(const LeafNode &) = delete;
+    LeafNode &operator=(LeafNode &&) = delete;
 
     /*
-     * Constructor - Initialize bounds and next node ID
-     *
-     * NOTE: Since low key is not defined for LeafNode and its delta chain,
-     * the low key field of LeafNode and its delta chain is always nullptr
-     *
-     * NOTE 2: For leaf pages we could first assign a high key and them push
-     * items into the vector, since the high key does not come from vector
-     * items unlike the InnerNode
+     * Copy Constructor - This is needed to support iterators taking
+     *                    snapshot of the LeafNode
      */
-    LeafNode(const KeyNodeIDPair &p_low_key_p,
-             const KeyNodeIDPair &p_high_key_p,
-             int p_item_count) :
-      BaseNode{NodeType::LeafType,
-               &low_key,         // Low key is not defined for leaf node
-               &high_key,        // The high key is stored inside leaf node
-               0,                // Depth of the node - always 0
-               p_item_count},
-      high_key{p_high_key_p},
-      low_key{p_low_key_p}
+    LeafNode(const LeafNode &other) :
+      ElasticNode<KeyValuePair>{other}
     {}
 
     /*
@@ -1043,18 +1245,18 @@ class BwTree {
      * is returned
      */
     int FindSplitPoint(const BwTree *t) const {
-      int central_index = static_cast<int>(data_list.size()) / 2;
+      int central_index = this->GetSize() / 2;
       assert(central_index > 1);
 
       // This will used as upper_bound and lower_bound key
-      const KeyValuePair &central_kvp = data_list[central_index];
+      const KeyValuePair &central_kvp = this->At(central_index);
 
       // Move it to the element before data_list
-      auto it = data_list.begin() + central_index - 1;
+      auto it = this->Begin() + central_index - 1;
 
       // If iterator has reached the begin then we know there could not
       // be any split points
-      while((it != data_list.begin()) && \
+      while((it != this->Begin()) && \
             (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it--;
       }
@@ -1063,26 +1265,26 @@ class BwTree {
       it++;
 
       // This size is exactly the index of the split point
-      int left_sibling_size = std::distance(data_list.begin(), it);
+      int left_sibling_size = std::distance(this->Begin(), it);
 
       if(left_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
         return left_sibling_size;
       }
 
       // Move it to the element after data_list
-      it = data_list.begin() + central_index + 1;
+      it = this->Begin() + central_index + 1;
 
       // If iterator has reached the end then we know there could not
       // be any split points
-      while((it != data_list.end()) && \
+      while((it != this->End()) && \
             (t->KeyCmpEqual(it->first, central_kvp.first) == true)) {
         it++;
       }
 
-      int right_sibling_size = std::distance(it, data_list.end());
+      int right_sibling_size = std::distance(it, this->End());
 
       if(right_sibling_size > static_cast<int>(LEAF_NODE_SIZE_LOWER_THRESHOLD)) {
-        return std::distance(data_list.begin(), it);
+        return std::distance(this->Begin(), it);
       }
 
       return -1;
@@ -1119,7 +1321,7 @@ class BwTree {
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
-      assert(static_cast<int>(data_list.size()) == this->GetItemCount());
+      assert(this->GetSize() == this->GetItemCount());
 
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
@@ -1137,25 +1339,35 @@ class BwTree {
       // This is an iterator pointing to the split point in the vector
       // note that std::advance() operates efficiently on std::vector's
       // RandomAccessIterator
-      auto copy_start_it = data_list.begin() + split_item_index;
+      auto copy_start_it = this->Begin() + split_item_index;
 
       // This is the end point for later copy of data
-      auto copy_end_it = data_list.end();
+      auto copy_end_it = this->End();
 
       // This is the key part of the key-value pair, also the low key
       // of the new node and new high key of the current node (will be
       // reflected in split delta later in its caller)
       const KeyType &split_key = copy_start_it->first;
 
+      int sibling_size = \
+        static_cast<int>(std::distance(copy_start_it,
+                                       copy_end_it));
+
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
-        new LeafNode{std::make_pair(split_key, INVALID_NODE_ID),
-                     this->GetHighKeyPair(),
-                     static_cast<int>(std::distance(copy_start_it,
-                                                    copy_end_it))};
+        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+          Get(sibling_size, 
+              NodeType::LeafType,
+              0,
+              sibling_size,
+              std::make_pair(split_key, INVALID_NODE_ID),
+              this->GetHighKeyPair()));
 
-      // Copy data item into the new node using batch assign()
-      leaf_node_p->data_list.assign(copy_start_it, copy_end_it);
+      // Copy data item into the new node using PushBack()
+      leaf_node_p->PushBack(copy_start_it, copy_end_it);
+
+      assert(leaf_node_p->GetSize() == sibling_size);
+      assert(leaf_node_p->GetSize() == leaf_node_p->GetItemCount());
 
       return leaf_node_p;
     }
@@ -1373,43 +1585,19 @@ class BwTree {
   /*
    * class InnerNode - Inner node that holds separators
    */
-  class InnerNode : public BaseNode {
+  class InnerNode : public ElasticNode<KeyNodeIDPair> {
    public:
-    // This stores the high key of the node
-    // We store high key as the first member element to make
-    // speculative read and prefetching easier
-    KeyNodeIDPair high_key;
-    
-    // The vector stores the separators, with the first element being the
-    // low key-NodeID pair (low key is not used)
-    std::vector<KeyNodeIDPair> sep_list;
 
     /*
-     * Constructor
+     * Constructor - Deleted
+     *
+     * All construction of InnerNode should be through ElasticNode interface
      */
-    InnerNode(const KeyNodeIDPair &p_high_key_p,
-              int p_item_count,
-              int p_depth = 0) :
-      BaseNode{NodeType::InnerType,
-               nullptr,        // Low key should be initialized after reserve()
-               &high_key,      // High key is stored inside InnerNode
-               p_depth,        // Depth of InnerNode defaults to 0
-               p_item_count},  // We use this to reserve storage
-      high_key{p_high_key_p} {
-      // First reserve that much space (it should not be changed once set)
-      // The first element is the low key, and we maintain a pointer to it
-      // So it is important that the vector does not reallocate its internal
-      // memory segment otherwise the pointer to low key is invalidated
-      sep_list.reserve(p_item_count);
-
-      // Then direct high key and low key pointer to the first and last element
-      // NOTE: Once the vector reallocates its memory, this pointer is
-      // invalidated. So we should avoid that
-      // NOTE 2: Should use "this" pointer to call the low key pair
-      this->SetLowKeyPair(&sep_list[0]);
-
-      return;
-    }
+    InnerNode() = delete;
+    InnerNode(const InnerNode &) = delete;
+    InnerNode(InnerNode &&) = delete;
+    InnerNode &operator=(const InnerNode &) = delete;
+    InnerNode &operator=(InnerNode &&) = delete;
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -1419,7 +1607,9 @@ class BwTree {
      * into the split sibling, and return the sibling node.
      */
     InnerNode *GetSplitSibling() const {
-      int key_num = static_cast<int>(sep_list.size());
+      // Call function in class ElasticNode to determine the size of the 
+      // inner node
+      int key_num = this->GetSize();
 
       // Inner node size must be > 2 to avoid empty split node
       assert(key_num >= 2);
@@ -1427,26 +1617,34 @@ class BwTree {
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      assert(static_cast<int>(sep_list.size()) == this->GetItemCount());
+      assert(key_num == this->GetItemCount());
 
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = sep_list.begin() + split_item_index;
-
-      // We copy key-NodeID pairs till the end of the inner node
-      auto copy_end_it = sep_list.end();
+      auto copy_start_it = this->Begin() + split_item_index;
+            
+      // We need this to allocate enough space for the embedded array
+      int sibling_size = static_cast<int>(std::distance(copy_start_it, 
+                                                        this->End()));
 
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        new InnerNode{this->GetHighKeyPair(), // It will be copied into new node
-                      static_cast<int>(std::distance(copy_start_it,
-                                                     copy_end_it))};
+        reinterpret_cast<InnerNode *>(ElasticNode<KeyNodeIDPair>::\
+          Get(sibling_size,
+              NodeType::InnerType,
+              0,
+              sibling_size,
+              this->At(split_item_index),
+              this->GetHighKeyPair()));
 
-      // Batch copy from the current node to the new node
-      // It does not cause reallocation
-      inner_node_p->sep_list.assign(copy_start_it, copy_end_it);
+      // Call overloaded PushBack() to insert an array of elements
+      inner_node_p->PushBack(copy_start_it, this->End());
+      
+      // Since we copy exactly that many elements
+      assert(inner_node_p->GetSize() == sibling_size);
+      assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
       return inner_node_p;
     }
@@ -1728,9 +1926,7 @@ class BwTree {
       key_value_pair_cmp_obj{this},
       key_value_pair_eq_obj{this},
       key_value_pair_hash_obj{this},
-
-      tree_height{2UL},
-
+      
       // NodeID counter
       next_unused_node_id{1},
 
@@ -1964,8 +2160,10 @@ class BwTree {
           // Free NodeID one by one stored in its separator list
           // Even if they are already freed (e.g. a split delta has not
           // been consolidated would share a NodeID with its parent)
-          for(auto &sep_item : inner_node_p->sep_list) {
-            freed_count += FreeNodeByNodeID(sep_item.second);
+          for(auto it = inner_node_p->Begin();
+              it != inner_node_p->End();
+              it++) {
+            freed_count += FreeNodeByNodeID(it->second);
           }
 
           // Access its content first and then delete the node itself
@@ -2020,7 +2218,14 @@ class BwTree {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 1};
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode<KeyNodeIDPair>::\
+          Get(1, 
+              NodeType::InnerType, 
+              0, 
+              1, 
+              first_sep,
+              std::make_pair(KeyType(), INVALID_NODE_ID)));
 
     #else
 
@@ -2033,11 +2238,18 @@ class BwTree {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 1};
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode<KeyNodeIDPair>::\
+          Get(1, 
+              NodeType::InnerType, 
+              0, 
+              1, 
+              first_sep,    // Copy this as the first key
+              std::make_pair(KeyType{}, INVALID_NODE_ID)));
 
     #endif
 
-    root_node_p->sep_list.push_back(first_sep);
+    root_node_p->PushBack(first_sep);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -2050,16 +2262,24 @@ class BwTree {
     #ifdef BWTREE_PELOTON
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType(), INVALID_NODE_ID),
-                   std::make_pair(KeyType(), INVALID_NODE_ID),
-                   0};
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(0,
+            NodeType::LeafType,
+            0,
+            0,
+            std::make_pair(KeyType(), INVALID_NODE_ID),
+            std::make_pair(KeyType(), INVALID_NODE_ID)));
 
     #else
 
     LeafNode *left_most_leaf = \
-      new LeafNode{std::make_pair(KeyType{}, INVALID_NODE_ID),
-                   std::make_pair(KeyType{}, INVALID_NODE_ID),
-                   0};
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(0,
+            NodeType::LeafType,
+            0,
+            0,
+            std::make_pair(KeyType{}, INVALID_NODE_ID),
+            std::make_pair(KeyType{}, INVALID_NODE_ID)));
 
     #endif
 
@@ -2404,14 +2624,12 @@ abort_traverse:
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
                                      const InnerNode *inner_node_p) {
-    const std::vector<KeyNodeIDPair> *sep_list_p = &inner_node_p->sep_list;
-
     // Inner node could not be empty
-    assert(sep_list_p->size() != 0UL);
+    assert(inner_node_p->GetSize() != 0UL);
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(sep_list_p->begin() + 1,
-                               sep_list_p->end(),
+    auto it = std::upper_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj);
 
@@ -2473,9 +2691,7 @@ abort_traverse:
     // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
-    assert(snapshot_p->node_id != INVALID_NODE_ID);
-
-    
+    //assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
 
@@ -2654,17 +2870,22 @@ abort_traverse:
       sss{data_node_list, f1, f2};
 
     // The effect of this function is a consolidation into inner node
-    InnerNode *inner_node_p = new InnerNode{node_p->GetHighKeyPair(),
-                                            node_p->GetItemCount(),
-                                            p_depth};
-
-    // Save some typing
-    auto sep_list_p = &inner_node_p->sep_list;
+    InnerNode *inner_node_p = \
+      reinterpret_cast<InnerNode *>( \
+        ElasticNode<KeyNodeIDPair>::\
+          Get(node_p->GetItemCount(),
+              NodeType::InnerType,
+              p_depth,
+              node_p->GetItemCount(),
+              node_p->GetLowKeyPair(),
+              node_p->GetHighKeyPair()));
 
     // The first element is always the low key
-    // In the recursive call below we should take care not to insert the low
-    // key again (it is always the first element in data list)
-    sep_list_p->push_back(node_p->GetLowKeyPair());
+    // since we know it will never be deleted
+    // We do this because for an InnerNode, its first separator key is just
+    // a placeholder and never used (reading its content causes undefined 
+    // behavior), because there is one more NodeID than separators
+    inner_node_p->PushBack(node_p->GetLowKeyPair());
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
@@ -2674,7 +2895,10 @@ abort_traverse:
                                    inner_node_p);
 
     // Since consolidation would not change item count they must be equal
-    assert(static_cast<int>(sep_list_p->size()) == node_p->GetItemCount());
+    // Also allocated space should be used exactly as described in the
+    // construction function
+    assert(inner_node_p->GetSize() == node_p->GetItemCount());
+    assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
     return inner_node_p;
   }
@@ -2709,11 +2933,11 @@ abort_traverse:
 
           // These two will be set according to the high key and
           // low key
-          typename std::vector<KeyNodeIDPair>::const_iterator copy_end_it{};
-          typename std::vector<KeyNodeIDPair>::const_iterator copy_start_it{};
+          const KeyNodeIDPair *copy_end_it;
+          const KeyNodeIDPair *copy_start_it;
 
           if(high_key_pair.second == INVALID_NODE_ID) {
-            copy_end_it = inner_node_p->sep_list.end();
+            copy_end_it = inner_node_p->End();
           } else {
             // This search for the first key >= high key of the current node
             // being consolidated
@@ -2721,31 +2945,33 @@ abort_traverse:
             // The return value might be end() iterator, but it is also
             // consistent
             copy_end_it = \
-              std::lower_bound(inner_node_p->sep_list.begin() + 1,
-                               inner_node_p->sep_list.end(),
+              std::lower_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
                                high_key_pair,     // This contains the high key
                                key_node_id_pair_cmp_obj);
           }
 
           // Since we want to access its first element
-          assert(static_cast<int>(inner_node_p->sep_list.size()) > 0);
+          assert(inner_node_p->GetSize() > 0);
 
           // If the first element in the sep list equals the low key pair's
           // NodeID then we are at the leftmost node of the merge tree
           // and we ignore the leftmost sep (since it could be -Inf)
           // For other nodes, the leftmost item inside sep list has a valid
           // key and could thus be pushed directly
-          if(inner_node_p->sep_list[0].second == low_key_node_id) {
-            copy_start_it = inner_node_p->sep_list.begin() + 1;
+          if(inner_node_p->At(0).second == low_key_node_id) {
+            copy_start_it = inner_node_p->Begin() + 1;
           } else {
-            copy_start_it = inner_node_p->sep_list.begin();
+            copy_start_it = inner_node_p->Begin();
           }
 
           // Find the end of copying
           auto sss_end_it = sss.GetEnd() - 1;
 
-          // If the next key is +Inf then sss_end_it is the real end of the
+          // If the high key is +Inf then sss_end_it is the real end of the
           // sorted array
+          // Otherwise need to find the end iterator of sss for the current
+          // InnerNode by using its high key
           if(high_key_pair.second != INVALID_NODE_ID) {
             // Corner case: If the first element is lower bound
             // then current_p will move outside
@@ -2776,11 +3002,9 @@ abort_traverse:
               break;
             } else if(sss_end_flag == true) {
               // If the sss has drained we continue to drain the array
-              // We use range insertion which inserts before the first argument
-              // with the range specified by the last two arguments
-              new_inner_node_p->sep_list.insert(new_inner_node_p->sep_list.end(),
-                                                copy_start_it,
-                                                copy_end_it);
+              // This version of PushBack() takes two iterators and
+              // insert from start to end - 1
+              new_inner_node_p->PushBack(copy_start_it, copy_end_it);
 
               break;
             } else if(array_end_flag == true) {
@@ -2796,7 +3020,7 @@ abort_traverse:
                 // and we just do not care
                 if(data_node_type == NodeType::InnerInsertType) {
                   // Pop the value here
-                  new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                  new_inner_node_p->PushBack(sss.PopFront()->item);
                 } else {
                   // And here (InnerDeleteNode after we have drained InnerNode
                   // is useless so just ignore it)
@@ -2810,18 +3034,20 @@ abort_traverse:
             // Next is the normal case: Both are not drained
             // we do a comparison of their leading elements
 
-            if(key_cmp_obj(copy_start_it->first, sss.GetFront()->item.first)) {
+            if(key_cmp_obj(copy_start_it->first, 
+                           sss.GetFront()->item.first) == true) {
               // If array element is less than data node list element
-              new_inner_node_p->sep_list.push_back(*copy_start_it);
+              new_inner_node_p->PushBack(*copy_start_it);
 
               copy_start_it++;
-            } else if(key_cmp_obj(sss.GetFront()->item.first, copy_start_it->first)) {
+            } else if(key_cmp_obj(sss.GetFront()->item.first, 
+                                  copy_start_it->first) == true) {
               NodeType data_node_type = (sss.GetFront())->GetType();
 
               // Delta Insert with array not having that element
               if(data_node_type == NodeType::InnerInsertType) {
                 // Pop the value here
-                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                new_inner_node_p->PushBack(sss.PopFront()->item);
               } else {
                 // This is possible
                 // InnerNode: [2, 3, 4, 5]
@@ -2836,7 +3062,7 @@ abort_traverse:
 
               // InsertDelta overrides InnerNode element
               if(data_node_type == NodeType::InnerInsertType) {
-                new_inner_node_p->sep_list.push_back(sss.PopFront()->item);
+                new_inner_node_p->PushBack(sss.PopFront()->item);
               } else {
                 // There is a value in InnerNode that does not exist
                 // in consolidated node. Just ignore
@@ -3021,12 +3247,12 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
-          auto start_it = leaf_node_p->data_list.begin() + start_index;
+          auto start_it = leaf_node_p->Begin() + start_index;
 
           // That is the end of searching
           auto end_it = ((end_index == -1) ? \
-                         leaf_node_p->data_list.end() : \
-                         leaf_node_p->data_list.begin() + end_index);
+                         leaf_node_p->End() : \
+                         leaf_node_p->Begin() + end_index);
 
           // Here we know the search key < high key of current node
           // NOTE: We only compare keys here, so it will get to the first
@@ -3038,7 +3264,7 @@ abort_traverse:
                              key_value_pair_cmp_obj);
 
           // If there is something to copy
-          while((copy_start_it != leaf_node_p->data_list.end()) && \
+          while((copy_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(search_key, copy_start_it->first))) {
             // If the value has not been deleted then just insert
             // Note that here we use ValueSet, so need to extract value from
@@ -3213,13 +3439,13 @@ abort_traverse:
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto scan_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(leaf_node_p->Begin(),
+                             leaf_node_p->End(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
           // Search all values with the search key
-          while((scan_start_it != leaf_node_p->data_list.end()) && \
+          while((scan_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(scan_start_it->first, search_key))) {
                   
             // If there is a value matching the search value then return true
@@ -3231,7 +3457,7 @@ abort_traverse:
               // we set exist flag to false to indicate that the value
               // has been invalidated
               index_pair_p->first = \
-                scan_start_it - leaf_node_p->data_list.begin();
+                scan_start_it - leaf_node_p->Begin();
               index_pair_p->second = true;
               
               // Return a pointer to the item inside LeafNode;
@@ -3246,7 +3472,7 @@ abort_traverse:
           // exist will reach here
           // Since only Insert() will use the index we set exist flag to false
           index_pair_p->first = \
-                scan_start_it - leaf_node_p->data_list.begin();
+                scan_start_it - leaf_node_p->Begin();
           index_pair_p->second = false;
 
           return nullptr;
@@ -3406,12 +3632,12 @@ abort_traverse:
             static_cast<const LeafNode *>(node_p);
 
           auto copy_start_it = \
-            std::lower_bound(leaf_node_p->data_list.begin(),
-                             leaf_node_p->data_list.end(),
+            std::lower_bound(leaf_node_p->Begin(),
+                             leaf_node_p->End(),
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
-          while((copy_start_it != leaf_node_p->data_list.end()) && \
+          while((copy_start_it != leaf_node_p->End()) && \
                 (KeyCmpEqual(search_key, copy_start_it->first))) {
             if(deleted_set.Exists(copy_start_it->second) == false) {
               if(present_set.Exists(copy_start_it->second) == false) {
@@ -3437,7 +3663,7 @@ abort_traverse:
           // leaf delete node, since the delete node must have deleted a
           // value that does not exist in leaf base node, so that inserted value
           // must have the same index)
-          index_pair_p->first = copy_start_it - leaf_node_p->data_list.begin();
+          index_pair_p->first = copy_start_it - leaf_node_p->Begin();
           // Value does not exist
           index_pair_p->second = false;
 
@@ -3552,19 +3778,14 @@ abort_traverse:
     // Prepare new node
     /////////////////////////////////////////////////////////////////
 
-    LeafNode *leaf_node_p = new LeafNode{node_p->GetLowKeyPair(),
-                                         node_p->GetHighKeyPair(),
-                                         // The item count of the consolidated
-                                         // leaf node is the set of items still
-                                         // present in the node
-                                         node_p->GetItemCount()};
-
-    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
-
-    // Reserve that much space for items to avoid allocation in the future
-    // Since the iterator from unordered_set is not a RamdomAccessIterator
-    // std::vector could not decide the size from these two iterators
-    data_list_p->reserve(node_p->GetItemCount());
+    LeafNode *leaf_node_p = \
+      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+        Get(node_p->GetItemCount(),
+            NodeType::LeafType,
+            0,
+            node_p->GetItemCount(),
+            node_p->GetLowKeyPair(),
+            node_p->GetHighKeyPair()));
     
     /////////////////////////////////////////////////////////////////
     // Prepare Delta Set
@@ -3633,8 +3854,7 @@ abort_traverse:
                                     leaf_node_p);
 
     // Item count would not change during consolidation
-    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
-           node_p->GetItemCount());
+    assert(leaf_node_p->GetSize() == node_p->GetItemCount());
 
     return leaf_node_p;
   }
@@ -3679,17 +3899,17 @@ abort_traverse:
             static_cast<const LeafNode *>(node_p);
 
           // We compute end iterator based on the high key
-          typename std::vector<KeyValuePair>::const_iterator copy_end_it{};
+          const KeyValuePair *copy_end_it;
 
           // If the high key is +Inf then all items could be copied
           if((high_key_pair.second == INVALID_NODE_ID)) {
-            copy_end_it = leaf_node_p->data_list.end();
+            copy_end_it = leaf_node_p->End();
           } else {
             // This points copy_end_it to the first element >= current high key
             // If no such element exists then copy_end_it is end() iterator
             // which is also consistent behavior
-            copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
-                                           leaf_node_p->data_list.end(),
+            copy_end_it = std::lower_bound(leaf_node_p->Begin(),
+                                           leaf_node_p->End(),
                                            // It only compares key so we
                                            // just use high key pair
                                            std::make_pair(high_key_pair.first, ValueType{}),
@@ -3698,7 +3918,7 @@ abort_traverse:
           
           // This is the index of the copy end it
           int copy_end_index = \
-            static_cast<int>(copy_end_it - leaf_node_p->data_list.begin());
+            static_cast<int>(copy_end_it - leaf_node_p->Begin());
           int copy_start_index = 0;
 
           ///////////////////////////////////////////////////////////
@@ -3743,9 +3963,9 @@ abort_traverse:
             assert(current_index <= copy_end_index);
             
             // First copy all items before the current index
-            new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
-                                              leaf_node_p->data_list.begin() + copy_start_index,
-                                              leaf_node_p->data_list.begin() + current_index);
+            new_leaf_node_p->PushBack(
+              leaf_node_p->Begin() + copy_start_index,
+              leaf_node_p->Begin() + current_index);
 
             // Update copy start index for next copy
             copy_start_index = current_index;
@@ -3760,7 +3980,7 @@ abort_traverse:
               // and ignore all LeafDeleteNode
               if(sss.GetFront()->GetType() == NodeType::LeafInsertType) {
                 // We remove the element from sss here
-                new_leaf_node_p->data_list.push_back(sss.PopFront()->item);
+                new_leaf_node_p->PushBack(sss.PopFront()->item);
               } else {
                 assert(sss.GetFront()->GetType() == NodeType::LeafDeleteType);
 
@@ -3782,9 +4002,8 @@ abort_traverse:
           } // while sss has not reached the copy end
           
           // Also need to insert all other elements if there are some
-          new_leaf_node_p->data_list.insert(new_leaf_node_p->data_list.end(),
-                                            leaf_node_p->data_list.begin() + copy_start_index,
-                                            leaf_node_p->data_list.begin() + copy_end_index);
+          new_leaf_node_p->PushBack(leaf_node_p->Begin() + copy_start_index,
+                                    leaf_node_p->Begin() + copy_end_index);
 
           return;
         } // case LeafType
@@ -3984,59 +4203,6 @@ abort_traverse:
       
       return;
     }
-
-/*
-    // We either consolidate the parent node to get an inner node
-    // or directly use the parent node_p if it is already inner node
-    const InnerNode *inner_node_p = \
-      static_cast<const InnerNode *>(parent_snapshot_p->node_p);
-
-    // If the parent node is not inner node (i.e. has delta chain)
-    // then consolidate it to get an inner node
-    if(parent_snapshot_p->node_p->IsInnerNode() == false) {
-      inner_node_p = \
-        CollectAllSepsOnInner(parent_snapshot_p,
-                              parent_snapshot_p->node_p->GetDepth() + 1);
-
-        epoch_manager.AddGarbageNode(inner_node_p);
-    }
-
-    // This returns the first iterator >= current low key
-    // Note that we start searching on the second element
-    auto it = std::find_if(inner_node_p->sep_list.begin() + 1,
-                           inner_node_p->sep_list.end(),
-                           [removed_node_id](const KeyNodeIDPair &knp) {
-                             return knp.second == removed_node_id;
-                           });
-
-    // The removed node ID must be found inside the inner node since
-    // we are certain that at this point we did not miss any InnerInsertNode
-    // which was posted between taking parent's snapshot and taking snapshot
-    // of the removed node
-    //
-    // i.e. if there is a split delta, then either it is finished before taking
-    // the parent node snapshot, which will be part of the snapshot
-    // or it is finished and consolidated between taking parent and child node
-    // snapshot which will be found by the previous pointer check
-    //
-    // If it is finished (or even consolidated) only after taking the
-    // snapshot of the child node, then the current thread will have tried to
-    // finish that SMO and will not reach here since it would abort due to
-    // failed SMO
-    assert(it != inner_node_p->sep_list.end());
-
-    // it points to the current node (must be an exact match),
-    // so it-- points to its possible left sibling
-    it--;
-
-    // Note that after this point the inner node is still being used since
-    // we have iterator referring to the internal structure of the inner node
-    // So we could not try CAS here
-
-    // This is our starting point to traverse right
-    NodeID left_sibling_id = it->second;
-*/
-
 
     NodeID left_sibling_id = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
                                              parent_snapshot_p);
@@ -4293,7 +4459,7 @@ before_switch:
     #endif
 
     context_p->current_snapshot.node_p = node_p;
-    context_p->current_snapshot.node_id = node_id;
+    //context_p->current_snapshot.node_id = node_id;
 
     return;
   }
@@ -4807,7 +4973,7 @@ before_switch:
         assert(context_p->current_level >= 0);
 
         // If the parent snapshot has an invalid node ID then it must be the
-        // root node. We will initialize it to INVALID_NODE_ID
+        // root node. 
         if(context_p->IsOnRootNode() == true) {
           /***********************************************************
            * Root splits (don't have to consolidate parent node)
@@ -4825,32 +4991,46 @@ before_switch:
           // constructor
           #ifdef BWTREE_PELOTON
 
-          InnerNode *inner_node_p = \
-            new InnerNode{std::make_pair(KeyType(), INVALID_NODE_ID), 2};
+          // This is the first item of the newly created InnerNode
+          // and also the low key for the new InnerNode
+          const KeyNodeIDPair first_item = std::make_pair(KeyType(),
+                                                          snapshot_p->node_id);
 
-          // NOTE: Since we never directly access the first element in the
-          // InnerNode object, it is OK to just put an empty KeyType
-          // object into the list
-          inner_node_p->sep_list.push_back(std::make_pair(KeyType(),
-                                                          snapshot_p->node_id));
+          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          InnerNode *inner_node_p = \
+            reinterpret_cast<InnerNode *>( \
+              ElasticNode<KeyNodeIDPair>::\
+                Get(2, 
+                    NodeType::InnerType, 
+                    0,
+                    2,
+                    first_item,
+                    std::make_pair(KeyType(), INVALID_NODE_ID)));
 
           #else
 
-          InnerNode *inner_node_p = \
-            new InnerNode{std::make_pair(KeyType{}, INVALID_NODE_ID), 2};
+          // This is the first item of the newly created InnerNode
+          // and also the low key for the new InnerNode
+          const KeyNodeIDPair first_item = std::make_pair(KeyType{},
+                                                          snapshot_p->node_id);
 
-          // NOTE: Since we never directly access the first element in the
-          // InnerNode object, it is OK to just put an empty KeyType
-          // object into the list
-          inner_node_p->sep_list.push_back(std::make_pair(KeyType{},
-                                                          snapshot_p->node_id));
+          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          InnerNode *inner_node_p = \
+            reinterpret_cast<InnerNode *>( \
+              ElasticNode<KeyNodeIDPair>::\
+                Get(2, 
+                NodeType::InnerType, 
+                0,
+                2,
+                first_item,
+                std::make_pair(KeyType{}, INVALID_NODE_ID)));
+                               
           #endif
 
-          inner_node_p->sep_list.push_back(*insert_item_p);
-
-          // This needs to be done here to avoid some unfortunate thread
-          // seeing an un-updated tree height and overflowed its stack
-          tree_height.fetch_add(1);
+          // Add new element - one points to the current node (new second level
+          // left most inner node), another points to its split sibling
+          inner_node_p->PushBack(first_item);
+          inner_node_p->PushBack(*insert_item_p);
 
           // First we need to install the new node with NodeID
           // This makes it visible
@@ -4859,8 +5039,7 @@ before_switch:
                                      new_root_id);
 
           if(ret == true) {
-            bwt_printf("Install root CAS succeeds. Height = %lu\n",
-                       tree_height.load());
+            bwt_printf("Install root CAS succeeds\n");
 
             // After installing new root we abort in order to load
             // the new root
@@ -4869,9 +5048,6 @@ before_switch:
             return;
           } else {
             bwt_printf("Install root CAS failed. ABORT\n");
-
-            // If install fails we just sub 1 from the tree height
-            tree_height.fetch_sub(1);
 
             // We need to make a new remove node and send it into EpochManager
             // for recycling the NodeID
@@ -5173,13 +5349,13 @@ before_switch:
         }
 
         // Since we would like to access its first element to get the low key
-        assert(new_leaf_node_p->data_list.size() > 0UL);
+        assert(new_leaf_node_p->GetSize() > 0);
 
         // The split key must be a valid key
         // Note that the lowkey for leaf node is not defined, so in the
         // case that it is required we must manually goto its data list
         // and find the low key in its leftmost element
-        const KeyType &split_key = new_leaf_node_p->data_list[0].first;
+        const KeyType &split_key = new_leaf_node_p->At(0).first;
 
         // If leaf split fails this should be recyced using a fake remove node
         NodeID new_node_id = GetNextNodeID();
@@ -5297,7 +5473,7 @@ before_switch:
     } else {   // If this is an inner node
       const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
 
-      size_t node_size = inner_node_p->sep_list.size();
+      size_t node_size = inner_node_p->GetSize();
 
       if(node_size >= INNER_NODE_SIZE_UPPER_THRESHOLD) {
         bwt_printf("Node size >= inner upper threshold. Split\n");
@@ -5309,9 +5485,10 @@ before_switch:
         const KeyType &split_key = new_inner_node_p->GetLowKey();
 
         // New node has at least one item (this is the basic requirement)
-        assert(new_inner_node_p->sep_list.size() > 0);
+        assert(new_inner_node_p->GetSize() > 0);
 
-        const KeyNodeIDPair &first_item = new_inner_node_p->sep_list[0];
+        const KeyNodeIDPair &first_item = new_inner_node_p->At(0);
+        
         // This points to the left most node on the right split sibling
         // If this node is being removed then we abort
         NodeID split_key_child_node_id = first_item.second;
@@ -5559,7 +5736,7 @@ before_switch:
    * inner node delta chain. If it exists then return a pointer to the
    * item, otherwise return nullptr.
    *
-   * This function is called when complating both split SMO and merge SMO
+   * This function is called when completing both split SMO and merge SMO
    * For split SMO we need to check, key range and key existance, and
    * NodeID value, to avoid mssing a few InnerDeleteNode on the parent node.
    * However, for merge SMO, we only check key existence.
@@ -5568,7 +5745,7 @@ before_switch:
    * NodeIDs match, whether key is inside range) should be done by the caller
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
-                                                const KeyType &search_key) {
+                                         const KeyType &search_key) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
@@ -5609,24 +5786,24 @@ before_switch:
         break;
       } // InnerDeleteNode
       case NodeType::InnerType: {
-        auto sep_list_p = &static_cast<const InnerNode *>(node_p)->sep_list;
+        const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
+        const KeyNodeIDPair *start_it = inner_node_p->Begin();
 
         // If we are on the leftmost branch of the inner node delta chain
         // if there is a merge delta, then we should start searching from
         // the second element. Otherwise always start search from the first
         // element
-        auto start_it = sep_list_p->begin();
-
-        if(low_key_pair.second == (*sep_list_p)[0].second) {
+        if(low_key_pair.second == inner_node_p->At(0).second) {
           start_it++;
         }
 
-        auto it = std::lower_bound(start_it,
-                                   sep_list_p->end(),
-                                   std::make_pair(search_key, INVALID_NODE_ID),
-                                   key_node_id_pair_cmp_obj);
+        const KeyNodeIDPair *it = \
+          std::lower_bound(start_it,
+                           inner_node_p->End(),
+                           std::make_pair(search_key, INVALID_NODE_ID),
+                           key_node_id_pair_cmp_obj);
                                    
-        if(it == sep_list_p->end()) {
+        if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
           // If the key does not exist then return nullptr
           return nullptr;
@@ -5637,7 +5814,7 @@ before_switch:
         } else {
           // If found the lower bound and the key matches
           // return the key
-          return &(*it);
+          return it;
         }
 
         assert(false);
@@ -5744,23 +5921,11 @@ before_switch:
           ///////////////////////////////////////////////////////////
 
           // This is the logical end of the array
-
-          typename decltype(inner_node_p->sep_list)::const_iterator end_it{};
-          
-          // If this is not the last node then we have to bound the search
-          // range using the current high key of the branch
-          //if(high_key_pair.second == INVALID_NODE_ID) {
-            end_it = inner_node_p->sep_list.end();
-          //} else {
-          //  end_it = std::lower_bound(inner_node_p->sep_list.begin() + 1,
-          //                            inner_node_p->sep_list.end(),
-          //                            high_key_pair,
-          //                            key_node_id_pair_cmp_obj);
-          //}
+          const KeyNodeIDPair *end_it = inner_node_p->End();
 
           // Since we know the search key must be one of the key inside
           // the inner node, lower bound is sufficient
-          auto it1 = std::upper_bound(inner_node_p->sep_list.begin() + 1,
+          auto it1 = std::upper_bound(inner_node_p->Begin() + 1,
                                       end_it,
                                       std::make_pair(search_key, INVALID_NODE_ID),
                                       key_node_id_pair_cmp_obj) - 1;
@@ -5791,7 +5956,7 @@ before_switch:
               counter++;
               
               continue;
-            } else if(it1 == inner_node_p->sep_list.begin()) {
+            } else if(it1 == inner_node_p->Begin()) {
               // We know the sss is not empty, so could always pop from it
               if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
                 left_item_p = &(sss.GetFront()->item);
@@ -6462,10 +6627,6 @@ before_switch:
   const KeyValuePairEqualityChecker key_value_pair_eq_obj;
   const KeyValuePairHashFunc key_value_pair_hash_obj;
 
-  // This is used to preallocate space for vector to avoid reallocation
-  // for NodeSnapshot
-  std::atomic<size_t> tree_height;
-
   // This value is atomic and will change
   std::atomic<NodeID> root_id;
 
@@ -6803,6 +6964,17 @@ try_join_again:
       // We know epoch_p is now being cleaned, so need to read the
       // current epoch again because it must have been moved
       if(prev_count < 0) {
+        // Consider the following sequence:
+        //   0. Start with counter = 0
+        //   1. Worker thread 1 fetch_add() -> return 0, OK
+        //   2. GC thread fetch_sub() -> return positive, abort!
+        //   3. Worker thread 2 fetch_add() -> return negative, retry!
+        //   4. GC thread fetch_add() and aborts
+        //   5. Worker thread 2 retries, and fetch_add() -> return 1, OK
+        // This way the second worker thread actually incremented the epoch
+        // counter twice
+        epoch_p->active_thread_count.fetch_sub(1);
+        
         goto try_join_again;
       }
 
@@ -7005,7 +7177,7 @@ try_join_again:
             return;
           default:
             // This does not include INNER ABORT node
-            bwt_printf("Unknown node type: %d\n", (int)type);
+            printf("Unknown node type: %d\n", (int)type);
 
             assert(false);
             return;
@@ -7254,11 +7426,11 @@ try_join_again:
       // Consolidate the current node (this does not change high key)
       leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
 
-      it = leaf_node_p->data_list.begin();
+      it = leaf_node_p->Begin();
 
       // Corner case: if the vector is itself empty
       // then we should set the flag manually
-      if(leaf_node_p->data_list.size() == 0UL) {
+      if(leaf_node_p->GetSize() == 0) {
         is_end = true;
       }
 
@@ -7299,13 +7471,13 @@ try_join_again:
     ForwardIterator(const ForwardIterator &other) :
       tree_p{other.tree_p},
       // This copy constructs all members recursively by default
-      leaf_node_p{new LeafNode{*other.leaf_node_p}},
+      leaf_node_p{reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p))},
       next_key_pair{other.next_key_pair},
       is_end{other.is_end} {
 
       // Move the iterator ahead
-      it = leaf_node_p->data_list.begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+      it = leaf_node_p->Begin() + \
+           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
 
       return;
     }
@@ -7326,7 +7498,7 @@ try_join_again:
 
       // For an empty iterator this branch is necessary
       if(leaf_node_p == nullptr) {
-        leaf_node_p = new LeafNode{*other.leaf_node_p};
+        leaf_node_p = reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p));
       } else {
         // First copy the logical node into current instance
         // DO NOT NEED new and delete; JUST DO A VALUE COPY
@@ -7343,8 +7515,8 @@ try_join_again:
       is_end = other.is_end;
 
       // Move the iterator ahead
-      it = leaf_node_p->data_list.begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->data_list.begin(), other.it);
+      it = leaf_node_p->Begin() + \
+           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
 
       return *this;
     }
@@ -7543,7 +7715,7 @@ try_join_again:
     KeyNodeIDPair next_key_pair;
 
     // This is the actual iterator
-    typename std::vector<KeyValuePair>::const_iterator it;
+    const KeyValuePair *it;
 
     // We use this flag to indicate whether we have reached the end of
     // iteration.
@@ -7642,14 +7814,14 @@ try_join_again:
         // Find the lower bound of the current start search key
         // NOTE: Do not use start_key_p since it has been changed by the
         // assignment to next_key_pair
-        it = std::lower_bound(leaf_node_p->data_list.begin(),
-                              leaf_node_p->data_list.end(),
+        it = std::lower_bound(leaf_node_p->Begin(),
+                              leaf_node_p->End(),
                               std::make_pair(start_key, ValueType{}),
                               this->tree_p->key_value_pair_cmp_obj);
 
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
-        if(it != leaf_node_p->data_list.end()) {
+        if(it != leaf_node_p->End()) {
           return;
         }
 
@@ -7678,7 +7850,7 @@ try_join_again:
       // then just try to load the next key. This has the possibility
       // that the is_end flag is set, but we do not care about it, and
       // directly returns after LowerBound() returns
-      if(it == leaf_node_p->data_list.end()) {
+      if(it == leaf_node_p->End()) {
         LowerBound();
       }
 

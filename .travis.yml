@@ -29,7 +29,7 @@ script:
     - make benchmark-all CXX=g++-5 PRELOAD_LIB=
     - make benchmark-bwtree CXX=g++-5 PRELOAD_LIB=
     - make clean
-    - make test CXX=g++-5 OPT_FLAG="-fprofile-arcs -ftest-coverage" PRELOAD_LIB= || RESULT=$?
+    - make test CXX=g++-5 OPT_FLAG="-fprofile-arcs -ftest-coverage -O2 --coverage" PRELOAD_LIB= || RESULT=$?
     - if [[ ${RESULT} == 0 ]]; then echo "\\o/ Test worked without problems"; else echo "Test returned an errorcode of $RESULT"; fi;
     - for i in $(find ./ -maxdepth 1 -name 'core*' -print); do gdb $(pwd)/test core* -ex "thread apply all bt" -ex "set pagination 0" -batch; done;
     - if [[ ${RESULT} != 0 ]]; then exit $RESULT ; fi;
