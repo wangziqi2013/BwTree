@@ -1962,7 +1962,24 @@ class BwTree {
     }
   };
   
-  
+  /*
+   * DeltaNodeUnion - The union of all delta nodes - we use this to precllocate
+   *                  memory on the base node for delta nodes
+   */
+  union DeltaNodeUnion {
+    InnerInsertNode inner_insert_node;
+    InnerDeleteNode inner_delete_node;
+    InnerSplitNode inner_split_node;
+    InnerMergeNode inner_merge_node;
+    InnerRemoveNode inner_remove_node;
+    InnerAbortNode inner_abort_node;
+    
+    LeafInsertNode leaf_insert_node;
+    LeafDeleteNode leaf_delete_node;
+    LeafSplitNode leaf_split_node;
+    LeafMergeNode leaf_merge_node;
+    LeafRemoveNode leaf_remove_node; 
+  };
 
   ////////////////////////////////////////////////////////////////////
   // Interface Method Implementation
