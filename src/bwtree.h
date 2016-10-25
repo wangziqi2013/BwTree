@@ -920,12 +920,17 @@ class BwTree {
    * class AllocationMeta - Metadata for maintaining preallocated space
    */
   class AllocationMeta {
+    static constexpr size_t CHUNK_SIZE = sizeof(DeltaNodeUnion) * 8;
+    
    private: 
     // This points to the higher address end of the chunk we are 
     // allocating from
     std::atomic<char *> tail;
     // This points to the lower limit of the memory region we could use
-    std::atomic<char *> limit;
+    char *limit;
+    // This forms a linked list which needs to be traversed in order to 
+    // free chunks of memory
+    std::atomic<char *> next;
   
    public:
     /*
@@ -933,8 +938,50 @@ class BwTree {
      */
     AllocationMeta(char *p_tail, char *p_limit) :
       tail{p_tail},
-      limit{p_limit}
+      limit{p_limit},
+      next{nullptr}
     {}
+    
+    /*
+     * TryAllocate() - Try to allocate from this chunk
+     *
+     * Returns the base address if size fits into this chunk
+     * Returns nullptr if the chunk is full
+     *
+     * Note that this function retries internally if CAS fails. Therefore, 
+     * the number of CAS loop is upperbounded by the chunk size
+     */
+    void *TryAllocate(size_t size) {
+      // This acts as a guard to prevent allocating from a chunk which has
+      // already underflown to avoid integer (64 bit pointer) underflow
+      if(tail.load() < base) {
+        return nullptr; 
+      }
+      
+      // This substracts size from tail, and assigns
+      // the value to local variable in one atomic step
+      char *new_tail = tail.fetch_sub(size) - size;
+      
+      // If the newly allocated memory is under the minimum then
+      // the chunk could not be used anymore
+      // Note that if threads keeps subtracting before the new pointer
+      if(new_tail < base) {
+        return nullptr; 
+      }
+      
+      return new_tail;
+    }
+    
+    /*
+     * GrowChunk() - Adds one chunk after the current chunk
+     *
+     * This procedure is thread safe since we always CAS the next pointer
+     * with expected value nullptr, such that it should never succeed twice
+     * even under contention
+     */
+    void GrowChunk() {
+      
+    }
   };
   
   /*
@@ -1914,6 +1961,8 @@ class BwTree {
       return node_p->IsOnLeafDeltaChain();
     }
   };
+  
+  
 
   ////////////////////////////////////////////////////////////////////
   // Interface Method Implementation
