@@ -311,6 +311,205 @@ class Envp {
   }
 };
 
+/*
+ * class Zipfian - Generates zipfian random numbers
+ *
+ * This class is adapted from: 
+ *   https://github.com/efficient/msls-eval/blob/master/zipf.h
+ *   https://github.com/efficient/msls-eval/blob/master/util.h
+ *
+ * The license is Apache 2.0.
+ *
+ * Usage:
+ *   theta = 0 gives a uniform distribution.
+ *   0 < theta < 0.992 gives some Zipf dist (higher theta = more skew).
+ * 
+ * YCSB's default is 0.99.
+ * It does not support theta > 0.992 because fast approximation used in
+ * the code cannot handle that range.
+  
+ * As extensions,
+ *   theta = -1 gives a monotonely increasing sequence with wraparounds at n.
+ *   theta >= 40 returns a single key (key 0) only. 
+ */
+class Zipfian {
+ private:
+  // number of items (input)
+  uint64_t n;    
+  // skewness (input) in (0, 1); or, 0 = uniform, 1 = always zero
+  double theta;  
+  // only depends on theta
+  double alpha;  
+  // only depends on theta
+  double thres;
+  // last n used to calculate the following
+  uint64_t last_n;  
+  
+  double dbl_n;
+  double zetan;
+  double eta;
+  uint64_t rand_state; 
+ 
+  /*
+   * PowApprox() - Approximate power function
+   *
+   * This function is adapted from the above link, which was again adapted from
+   *   http://martin.ankerl.com/2012/01/25/optimized-approximative-pow-in-c-and-cpp/
+   */
+  static double PowApprox(double a, double b) {
+    // calculate approximation with fraction of the exponent
+    int e = (int)b;
+    union {
+      double d;
+      int x[2];
+    } u = {a};
+    u.x[1] = (int)((b - (double)e) * (double)(u.x[1] - 1072632447) + 1072632447.);
+    u.x[0] = 0;
+  
+    // exponentiation by squaring with the exponent's integer part
+    // double r = u.d makes everything much slower, not sure why
+    // TODO: use popcount?
+    double r = 1.;
+    while (e) {
+      if (e & 1) r *= a;
+      a *= a;
+      e >>= 1;
+    }
+  
+    return r * u.d;
+  }
+  
+  /*
+   * Zeta() - Computes zeta function
+   */
+  static double Zeta(uint64_t last_n, double last_sum, uint64_t n, double theta) {
+    if (last_n > n) {
+      last_n = 0;
+      last_sum = 0.;
+    }
+    
+    while (last_n < n) {
+      last_sum += 1. / PowApprox((double)last_n + 1., theta);
+      last_n++;
+    }
+    
+    return last_sum;
+  }
+  
+  /*
+   * FastRandD() - Fast randum number generator that returns double
+   *
+   * This is adapted from:
+   *   https://github.com/efficient/msls-eval/blob/master/util.h
+   */
+  static double FastRandD(uint64_t *state) {
+    *state = (*state * 0x5deece66dUL + 0xbUL) & ((1UL << 48) - 1);
+    return (double)*state / (double)((1UL << 48) - 1);
+  }
+ 
+ public:
+
+  /*
+   * Constructor
+   *
+   * Note that since we copy this from C code, either memset() or the variable
+   * n having the same name as a member is a problem brought about by the
+   * transformation
+   */
+  Zipfian(uint64_t n, double theta, uint64_t rand_seed) {
+    assert(n > 0);
+    if (theta > 0.992 && theta < 1) {
+      fprintf(stderr, "theta > 0.992 will be inaccurate due to approximation\n");
+    } else if (theta >= 1. && theta < 40.) {
+      fprintf(stderr, "theta in [1., 40.) is not supported\n");
+      assert(false);
+    }
+    
+    assert(theta == -1. || (theta >= 0. && theta < 1.) || theta >= 40.);
+    assert(rand_seed < (1UL << 48));
+    
+    // This is ugly, but it is copied from C code, so let's preserve this
+    memset(this, 0, sizeof(*this));
+    
+    this->n = n;
+    this->theta = theta;
+    
+    if (theta == -1.) { 
+      rand_seed = rand_seed % n;
+    } else if (theta > 0. && theta < 1.) {
+      this->alpha = 1. / (1. - theta);
+      this->thres = 1. + PowApprox(0.5, theta);
+    } else {
+      this->alpha = 0.;  // unused
+      this->thres = 0.;  // unused
+    }
+    
+    this->last_n = 0;
+    this->zetan = 0.;
+    this->rand_state = rand_seed;
+    
+    return;
+  }
+  
+  /*
+   * ChangeN() - Changes the parameter n after initialization
+   *
+   * This is adapted from zipf_change_n()
+   */
+  void ChangeN(uint64_t n) {
+    this->n = n;
+    
+    return;
+  }
+  
+  /*
+   * Get() - Return the next number in the Zipfian distribution
+   */
+  uint64_t Get() {
+    if (this->last_n != this->n) {
+      if (this->theta > 0. && this->theta < 1.) {
+        this->zetan = Zeta(this->last_n, this->zetan, this->n, this->theta);
+        this->eta = (1. - PowApprox(2. / (double)this->n, 1. - this->theta)) /
+                     (1. - Zeta(0, 0., 2, this->theta) / this->zetan);
+      }
+      this->last_n = this->n;
+      this->dbl_n = (double)this->n;
+    }
+  
+    if (this->theta == -1.) {
+      uint64_t v = this->rand_state;
+      if (++this->rand_state >= this->n) this->rand_state = 0;
+      return v;
+    } else if (this->theta == 0.) {
+      double u = FastRandD(&this->rand_state);
+      return (uint64_t)(this->dbl_n * u);
+    } else if (this->theta >= 40.) {
+      return 0UL;
+    } else {
+      // from J. Gray et al. Quickly generating billion-record synthetic
+      // databases. In SIGMOD, 1994.
+  
+      // double u = erand48(this->rand_state);
+      double u = FastRandD(&this->rand_state);
+      double uz = u * this->zetan;
+      
+      if(uz < 1.) {
+        return 0UL;
+      } else if(uz < this->thres) {
+        return 1UL;
+      } else {
+        return (uint64_t)(this->dbl_n *
+                          PowApprox(this->eta * (u - 1.) + 1., this->alpha));
+      }
+    }
+    
+    // Should not reach here
+    assert(false);
+    return 0UL;
+  }
+   
+};
+
 TreeType *GetEmptyTree(bool no_print = false);
 void DestroyTree(TreeType *t, bool no_print = false);
 void PrintStat(TreeType *t);
