@@ -552,8 +552,13 @@ void TestBTreeMultimapInsertReadPerformance(int key_size);
 void TestCuckooHashTableInsertReadPerformance(int key_size);
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
-void TestBwTreeMultiThreadInsertPerformance(TreeType *t, int key_num, int thread_num);
-void TestBwTreeMultiThreadReadPerformance(TreeType *t, int key_num, int thread_num);
+
+// Multithreaded benchmark
+void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
+void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
+void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
+void BenchmarkBwTreeZipfRead(TreeType *t, int key_num, int thread_num);
+
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
 /*
