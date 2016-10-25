@@ -7,13 +7,11 @@
 #include "test_suite.h"
 
 /*
- * TestBwTreeMultiThreadInsertPerformance() - As name suggests
- *
- * This should be called in a multithreaded environment
+ * BenchmarkBwTreeSeqInsert() - As name suggests
  */
-void TestBwTreeMultiThreadInsertPerformance(TreeType *t, 
-                                            int key_num, 
-                                            int thread_num) {
+void BenchmarkBwTreeSeqInsert(TreeType *t, 
+                              int key_num, 
+                              int thread_num) {
   const int num_thread = thread_num;
 
   // This is used to record time taken for each individual thread
@@ -61,13 +59,11 @@ void TestBwTreeMultiThreadInsertPerformance(TreeType *t,
 }
 
 /*
- * TestBwTreeMultiThreadReadPerformance() - As name suggests
- *
- * This should be called in a multithreaded environment
+ * BenchmarkBwTreeSeqRead() - As name suggests
  */
-void TestBwTreeMultiThreadReadPerformance(TreeType *t, 
-                                          int key_num,
-                                          int thread_num) {
+void BenchmarkBwTreeSeqRead(TreeType *t, 
+                            int key_num,
+                            int thread_num) {
   const int num_thread = thread_num;
   int iter = 1;
   
@@ -116,11 +112,21 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t,
   std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read/sec" << "\n";
-            
-  ///////////////////////////////////////////////////////////////////
-  // Multithread random read performance
-  ///////////////////////////////////////////////////////////////////
+
+  return;
+}
+
+/*
+ * BenchmarkBwTreeRandRead() - As name suggests
+ */
+void BenchmarkBwTreeRandRead(TreeType *t, 
+                             int key_num,
+                             int thread_num) {
+  const int num_thread = thread_num;
+  int iter = 1;
   
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
   for(int i = 0;i < num_thread;i++) {
     thread_time[i] = 0.0;
   }
@@ -162,7 +168,7 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t,
 
   LaunchParallelTestID(num_thread, func2, t);
 
-  elapsed_seconds = 0.0;
+  double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
     elapsed_seconds += thread_time[i];
   }
@@ -170,6 +176,84 @@ void TestBwTreeMultiThreadReadPerformance(TreeType *t,
   std::cout << num_thread << " Threads BwTree: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read (random)/sec" << "\n";
+
+  return;
+}
+
+
+/*
+ * BenchmarkBwTreeZipfRead() - As name suggests
+ */
+void BenchmarkBwTreeZipfRead(TreeType *t, 
+                             int key_num,
+                             int thread_num) {
+  const int num_thread = thread_num;
+  int iter = 1;
+  
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+  
+  // Generate zipfian distribution into this list
+  std::vector<long> zipfian_key_list{};
+  zipfian_key_list.reserve(key_num);
+  
+  // Initialize it with time() as the random seed
+  Zipfian zipf{(uint64_t)key_num, 0.99, (uint64_t)time(NULL)};
+  
+  // Populate the array with random numbers 
+  for(int i = 0;i < key_num;i++) {
+    zipfian_key_list.push_back(zipf.Get()); 
+  }
+  
+  auto func2 = [key_num, 
+                iter, 
+                &thread_time,
+                &zipfian_key_list,
+                num_thread](uint64_t thread_id, TreeType *t) {
+    // This is the start and end index we read into the zipfian array
+    long int start_index = key_num / num_thread * (long)thread_id;
+    long int end_index = start_index + key_num / num_thread;
+    
+    std::vector<long> v{};
+
+    v.reserve(1);
+
+    Timer timer{true};
+
+    for(int j = 0;j < iter;j++) {
+      for(long i = start_index;i < end_index;i++) {
+        long int key = zipfian_key_list[i];
+
+        t->GetValue(key, v);
+
+        v.clear();
+      }
+    }
+
+    double duration = timer.Stop();
+
+    std::cout << "[Thread " << thread_id << " Done] @ " \
+              << (iter * (end_index - start_index) / (1024.0 * 1024.0)) / duration \
+              << " million read (zipfian)/sec" << "\n";
+              
+    thread_time[thread_id] = duration;
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func2, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BwTree: overall "
+            << (iter * key_num / (1024.0 * 1024.0)) / (elapsed_seconds / num_thread)
+            << " million read (zipfian)/sec" << "\n";
 
   return;
 }
