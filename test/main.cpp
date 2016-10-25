@@ -116,10 +116,13 @@ int main(int argc, char **argv) {
 
     if(run_benchmark_bwtree_full == true) {
       // First we rely on this test to fill bwtree with 30 million keys
-      TestBwTreeMultiThreadInsertPerformance(t1, key_num, (int)thread_num);
-
-      // And then do a multithreaded read
-      TestBwTreeMultiThreadReadPerformance(t1, key_num, (int)thread_num);
+      BenchmarkBwTreeSeqInsert(t1, key_num, (int)thread_num);
+      // And then do a multithreaded sequential read
+      BenchmarkBwTreeSeqRead(t1, key_num, (int)thread_num);
+      // Do a random read with totally random numbers
+      BenchmarkBwTreeRandRead(t1, key_num, (int)thread_num);
+      // Zipfan read
+      BenchmarkBwTreeZipfRead(t1, key_num, (int)thread_num);
     } else {
       // This function will delete all keys at the end, so the tree
       // is empty after it returns
