@@ -1049,11 +1049,20 @@ class BwTree {
                          const ElementType *copy_end_p) {
       // Make sure the loop will come to an end
       assert(copy_start_p <= copy_end_p);
-      
-      // TODO: A better way might be just to use std::copy
-      while(copy_start_p != copy_end_p) {
-        PushBack(*copy_start_p);
-        copy_start_p++; 
+
+      // If both key type and value type are trivially copyable then
+      // we just use std::memcpy to copy ii without losing any semantics
+      if(std::is_trivially_copyable<KeyType>::value == false || 
+         std::is_trivially_copyable<ValueType>::value == false) {
+        while(copy_start_p != copy_end_p) {
+          PushBack(*copy_start_p);
+          copy_start_p++; 
+        }
+      } else {
+        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
+        std::memcpy(End(), copy_start_p, diff);
+        
+        end = (ElementType *)((uint64_t)end + diff);
       }
       
       return;
