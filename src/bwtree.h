@@ -917,6 +917,27 @@ class BwTree {
   };
   
   /*
+   * class AllocationMeta - Metadata for maintaining preallocated space
+   */
+  class AllocationMeta {
+   private: 
+    // This points to the higher address end of the chunk we are 
+    // allocating from
+    std::atomic<char *> tail;
+    // This points to the lower limit of the memory region we could use
+    std::atomic<char *> limit;
+  
+   public:
+    /*
+     * Constructor
+     */
+    AllocationMeta(char *p_tail, char *p_limit) :
+      tail{p_tail},
+      limit{p_limit}
+    {}
+  };
+  
+  /*
    * class ElasticNode - The base class for elastic node types, i.e. InnerNode
    *                     and LeafNode
    *
