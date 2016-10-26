@@ -931,7 +931,7 @@ class BwTree {
     char *const limit;
     // This forms a linked list which needs to be traversed in order to 
     // free chunks of memory
-    std::atomic<char *> next;
+    std::atomic<AllocationMeta *> next;
   
    public:
     /*
@@ -984,8 +984,15 @@ class BwTree {
      * chunk such that the caller could retry on next chunk
      */
     char *GrowChunk() {
+      // If we know there is a next chunk just return it to avoid
+      // having too many failed CAS instruction
+      AllocationMeta *meta_p = next.load();
+      if(meta_p != nullptr) {
+        return meta_p;
+      }
+      
       char *new_chunk = new char[CHUNK_SIZE];
-      char *expected = nullptr;
+      AllocationMeta *expected = nullptr;
       
       // Prepare the new chunk's metadata field
       AllocationMeta *new_meta_base = \
@@ -998,7 +1005,7 @@ class BwTree {
         AllocationMeta{reinterpret_cast<char *>(new_meta_base),
                        new_chunk};
       
-      bool ret = next.compare_exchange_strong(expected, new_chunk);
+      bool ret = next.compare_exchange_strong(expected, new_meta_base);
       if(ret == true) {
         return new_chunk; 
       }
@@ -1008,6 +1015,33 @@ class BwTree {
       // If CAS fails this will be loaded with the real value such that we have
       // free access to the next chunk
       return expected;
+    }
+    
+    /*
+     * Allocate() - Allocates a chunk of memory from the preallocated space
+     *
+     * This allocation is guaranteed to succeed as long as there is memory. It
+     * tries to allocate from the first chunk pointed to by the current first
+     * and then if it fails go to the next chunk and try to allocate there
+     */
+    void *Allocate(size_t size) {
+      AllocationMeta *meta_p = this;
+      while(1) {
+        // Allocate from the current chunk first
+        // If this is nullptr then this chunk has been depleted
+        void *p = meta_p->TryAllocate(size);
+        if(p == nullptr) {
+          // Then try to grow it - if there is already another next chunk
+          // just return the pointer to that chunk
+          meta_p = meta_p->GrowChunk();
+          assert(meta_p != nullptr); 
+        } else {
+          return p; 
+        }
+      }
+      
+      assert(false);
+      return nullptr;
     }
   };
   
