@@ -1047,8 +1047,34 @@ class BwTree {
       return nullptr;
     }
     
+    /*
+     * Destroy() - Frees all chunks in the linked list
+     *
+     * Note that this functi7on must be called for every metadata object
+     * in the linked list, and we could should use operator delete since it
+     * is allocated through operator new
+     *
+     * Also since inside class ElasticNode, the metadata is colocated with
+     * the node itself, after deleting the metadata we should not delete
+     * the elastic node
+     *
+     * This function is not thread-safe and should only be called in a single
+     * thread environment such as GC
+     */
     void Destroy() {
+      AllocationMeta *meta_p = this;
       
+      while(meta_p != nullptr) {
+        // Save the next pointer to traverse to it later
+        AllocationMeta *next_p = meta_p->next.load();
+        
+        // After this point could not access meta_p
+        delete[] meta_p->limit; 
+        
+        meta_p = next_p;
+      }
+      
+      return;
     }
   };
   
