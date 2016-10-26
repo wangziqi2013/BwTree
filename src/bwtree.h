@@ -1837,6 +1837,20 @@ class BwTree {
     }
     
     /*
+     * InlineAllocate() - Allocates a delta node in preallocated area preceeds
+     *                    the data area of this ElasticNode
+     *
+     * Note that for any given NodeType, we always know its low key and the
+     * low key always points to the struct inside base node. This way, we
+     * compute the offset of the low key from the begining of the struct,
+     * and then subtract it with CHUNK_SIZE to derive the address of
+     * class AllocationMeta
+     */
+    void *InlineAllocate() {
+      
+    }
+    
+    /*
      * operator[] - Access element without bounds checking
      */
     inline ElementType &operator[](const int index) {
