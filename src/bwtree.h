@@ -920,6 +920,7 @@ class BwTree {
    * class AllocationMeta - Metadata for maintaining preallocated space
    */
   class AllocationMeta {
+    union DeltaNodeUnion;
     static constexpr size_t CHUNK_SIZE = sizeof(DeltaNodeUnion) * 8;
     
    private: 
@@ -927,7 +928,7 @@ class BwTree {
     // allocating from
     std::atomic<char *> tail;
     // This points to the lower limit of the memory region we could use
-    char *limit;
+    char *const limit;
     // This forms a linked list which needs to be traversed in order to 
     // free chunks of memory
     std::atomic<char *> next;
@@ -954,7 +955,7 @@ class BwTree {
     void *TryAllocate(size_t size) {
       // This acts as a guard to prevent allocating from a chunk which has
       // already underflown to avoid integer (64 bit pointer) underflow
-      if(tail.load() < base) {
+      if(tail.load() < limit) {
         return nullptr; 
       }
       
@@ -965,7 +966,7 @@ class BwTree {
       // If the newly allocated memory is under the minimum then
       // the chunk could not be used anymore
       // Note that if threads keeps subtracting before the new pointer
-      if(new_tail < base) {
+      if(new_tail < limit) {
         return nullptr; 
       }
       
@@ -978,9 +979,35 @@ class BwTree {
      * This procedure is thread safe since we always CAS the next pointer
      * with expected value nullptr, such that it should never succeed twice
      * even under contention
+     *
+     * Whether or not this has succeded, always return the pointer to the next
+     * chunk such that the caller could retry on next chunk
      */
-    void GrowChunk() {
+    char *GrowChunk() {
+      char *new_chunk = new char[CHUNK_SIZE];
+      char *expected = nullptr;
       
+      // Prepare the new chunk's metadata field
+      AllocationMeta *new_meta_base = \
+        reinterpret_cast<AllocationMeta *>(new_chunk - sizeof(AllocationMeta));
+        
+      // Call placement new operator to cnstruct it with tail being
+      // the address of this struct and limit being the starting address
+      // if new_chunk
+      new (new_meta_base) \
+        AllocationMeta{reinterpret_cast<char *>(new_meta_base),
+                       new_chunk};
+      
+      bool ret = next.compare_exchange_strong(expected, new_chunk);
+      if(ret == true) {
+        return new_chunk; 
+      }
+      
+      delete[] new_chunk;
+      
+      // If CAS fails this will be loaded with the real value such that we have
+      // free access to the next chunk
+      return expected;
     }
   };
   
