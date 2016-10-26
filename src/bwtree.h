@@ -915,12 +915,548 @@ class BwTree {
       return;
     }
   };
+
+  /*
+   * class DeltaNode - Common element in a delta node
+   *
+   * Common elements include depth of the node and pointer to
+   * children node
+   */
+  class DeltaNode : public BaseNode {
+   public:
+    const BaseNode *child_node_p;
+
+    /*
+     * Constructor
+     */
+    DeltaNode(NodeType p_type,
+              const BaseNode *p_child_node_p,
+              const KeyNodeIDPair *p_low_key_p,
+              const KeyNodeIDPair *p_high_key_p,
+              int p_depth,
+              int p_item_count) :
+      BaseNode{p_type,
+               p_low_key_p,
+               p_high_key_p,
+               p_depth,
+               p_item_count},
+      child_node_p{p_child_node_p}
+    {}
+  };
+  
+  /*
+   * class LeafDataNode - Holds LeafInsertNode and LeafDeleteNode's data
+   *
+   * This class is used in node consolidation to provide a uniform
+   * interface for the log-structured merge process
+   */
+  class LeafDataNode : public DeltaNode {
+   public:
+
+    // This is the item being deleted or inserted
+    KeyValuePair item;
+    
+    // This is the index of the node when inserting/deleting
+    // the item into the base leaf node
+    std::pair<int, bool> index_pair;
+
+    LeafDataNode(const KeyValuePair &p_item,
+                 NodeType p_type,
+                 const BaseNode *p_child_node_p,
+                 std::pair<int, bool> p_index_pair,
+                 const KeyNodeIDPair *p_low_key_p,
+                 const KeyNodeIDPair *p_high_key_p,
+                 int p_depth,
+                 int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item},
+      index_pair{p_index_pair}
+    {}
+    
+    /*
+     * GetIndexPair() - Returns the index pair for LeafDataNode
+     *
+     * Note that this function does not return reference which means
+     * that there is no way to modify the index pair
+     */
+    std::pair<int, bool> GetIndexPair() const {
+      return index_pair;
+    }
+  };
+
+  /*
+   * class LeafInsertNode - Insert record into a leaf node
+   */
+  class LeafInsertNode : public LeafDataNode {
+   public:
+
+    /*
+     * Constructor
+     */
+    LeafInsertNode(const KeyType &p_insert_key,
+                   const ValueType &p_value,
+                   const BaseNode *p_child_node_p,
+                   std::pair<int, bool> p_index_pair) :
+      LeafDataNode{std::make_pair(p_insert_key, p_value),
+                   NodeType::LeafInsertType,
+                   p_child_node_p,
+                   p_index_pair,
+                   &p_child_node_p->GetLowKeyPair(),
+                   &p_child_node_p->GetHighKeyPair(),
+                   p_child_node_p->GetDepth() + 1,
+                   // For insert nodes, the item count is inheried from the child
+                   // node + 1 since it inserts new item
+                   p_child_node_p->GetItemCount() + 1}
+    {}
+  };
+
+  /*
+   * class LeafDeleteNode - Delete record from a leaf node
+   *
+   * In multi-value mode, it takes a value to identify which value
+   * to delete. In single value mode, value is redundant but what we
+   * could use for sanity check
+   */
+  class LeafDeleteNode : public LeafDataNode {
+   public:
+
+    /*
+     * Constructor
+     */
+    LeafDeleteNode(const KeyType &p_delete_key,
+                   const ValueType &p_value,
+                   const BaseNode *p_child_node_p,
+                   std::pair<int, bool> p_index_pair) :
+      LeafDataNode{std::make_pair(p_delete_key, p_value),
+                   NodeType::LeafDeleteType,
+                   p_child_node_p,
+                   p_index_pair,
+                   &p_child_node_p->GetLowKeyPair(),
+                   &p_child_node_p->GetHighKeyPair(),
+                   p_child_node_p->GetDepth() + 1,
+                   // For delete node it inherits item count from its child
+                   // and - 1 from it since one element was deleted
+                   p_child_node_p->GetItemCount() - 1}
+     {}
+  };
+
+  /*
+   * class LeafSplitNode - Split node for leaf
+   *
+   * It includes a separator key to direct search to a correct direction
+   * and a physical pointer to find the current next node in delta chain
+   */
+  class LeafSplitNode : public DeltaNode {
+   public:
+    // Split key is the first element and the sibling NodeID
+    // is the second element
+    // This also specifies a new high key pair for the leaf
+    // delta chain
+    KeyNodeIDPair insert_item;
+
+    /*
+     * Constructor
+     *
+     * NOTE: The constructor requires that the physical pointer to the split
+     * sibling being passed as an argument. It will not be stored inside the
+     * split delta, but it will be used to compute the new item count for
+     * the current node
+     */
+    LeafSplitNode(const KeyNodeIDPair &p_insert_item,
+                  const BaseNode *p_child_node_p,
+                  const BaseNode *p_split_node_p) :
+      DeltaNode{NodeType::LeafSplitType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                // High key is redirected to the split item inside the node
+                &insert_item,
+                // NOTE: split node is SMO and does not introduce
+                // new piece of data
+                // So we set its depth the same as its child
+                p_child_node_p->GetDepth(),
+                // For split node it is a little bit tricky - we must
+                // know the item count of its sibling to decide how many
+                // items were removed by the split delta
+                p_child_node_p->GetItemCount() - \
+                  p_split_node_p->GetItemCount()},
+      insert_item{p_insert_item}
+    {}
+  };
+
+  /*
+   * class LeafRemoveNode - Remove all physical children and redirect
+   *                        all access to its logical left sibling
+   *
+   * The removed ID field is not used in SMO protocol, but it helps
+   * EpochManager to recycle NodeID correctly, since when a LeafRemoveNode
+   * is being recycled, the removed NodeID is also recycled
+   */
+  class LeafRemoveNode : public DeltaNode {
+   public:
+    // This is used for EpochManager to recycle NodeID
+    NodeID removed_id;
+
+    /*
+     * Constructor
+     */
+    LeafRemoveNode(NodeID p_removed_id,
+                   const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::LeafRemoveType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                &p_child_node_p->GetHighKeyPair(),
+                // REMOVE node is an SMO and does not introduce data
+                p_child_node_p->GetDepth(),
+                p_child_node_p->GetItemCount()},
+      removed_id{p_removed_id}
+    {}
+  };
+
+  /*
+   * class LeafMergeNode - Merge two delta chian structure into one node
+   *
+   * This structure uses two physical pointers to indicate that the right
+   * half has become part of the current node and there is no other way
+   * to access it
+   *
+   * NOTE: Merge node also contains the NodeID of the node being removed
+   * as the result of the merge operation. We keep it here to simplify
+   * NodeID searching in the parent node
+   */
+  class LeafMergeNode : public DeltaNode {
+   public:
+    KeyNodeIDPair delete_item;
+
+    // For merge nodes we use actual physical pointer
+    // to indicate that the right half is already part
+    // of the logical node
+    const BaseNode *right_merge_p;
+
+    /*
+     * Constructor
+     */
+    LeafMergeNode(const KeyType &p_merge_key,
+                  const BaseNode *p_right_merge_p,
+                  NodeID p_deleted_node_id,
+                  const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::LeafMergeType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                // The high key of the merge node is inherited
+                // from the right sibling
+                &p_right_merge_p->GetHighKeyPair(),
+                //std::max(p_child_node_p->metadata.depth,
+                //         p_right_merge_p->metadata.depth) + 1,
+                p_child_node_p->GetDepth() + \
+                  p_right_merge_p->GetDepth(),
+                // For merge node the item count should be the
+                // sum of items inside both branches
+                p_child_node_p->GetItemCount() + \
+                  p_right_merge_p->GetItemCount()},
+      delete_item{p_merge_key, p_deleted_node_id},
+      right_merge_p{p_right_merge_p}
+    {}
+  };
+
+  ///////////////////////////////////////////////////////////////////
+  // Leaf Delta Chain Node Type End
+  ///////////////////////////////////////////////////////////////////
+
+  ///////////////////////////////////////////////////////////////////
+  // Inner Delta Chain Node Type
+  ///////////////////////////////////////////////////////////////////
+
+  /*
+   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
+   *
+   * We need this node since we want to sort pointers to such nodes using
+   * stable sorting algorithm
+   */
+  class InnerDataNode : public DeltaNode {
+   public:
+    KeyNodeIDPair item;
+
+    InnerDataNode(const KeyNodeIDPair &p_item,
+                  NodeType p_type,
+                  const BaseNode *p_child_node_p,
+                  const KeyNodeIDPair *p_low_key_p,
+                  const KeyNodeIDPair *p_high_key_p,
+                  int p_depth,
+                  int p_item_count) :
+      DeltaNode{p_type,
+                p_child_node_p,
+                p_low_key_p,
+                p_high_key_p,
+                p_depth,
+                p_item_count},
+      item{p_item}
+    {}
+  }; 
+
+  /*
+   * class InnerInsertNode - Insert node for inner nodes
+   *
+   * It has two keys in order to make decisions upon seeing this
+   * node when traversing down the delta chain of an inner node
+   * If the search key lies in the range between sep_key and
+   * next_key then we know we should go to new_node_id
+   */
+  class InnerInsertNode : public InnerDataNode {
+   public:
+    // This is the next right after the item being inserted
+    // This could be set to the +Inf high key
+    // in that case next_item.second == INVALID_NODE_ID
+    KeyNodeIDPair next_item;
+
+    /*
+     * Constructor
+     */
+    InnerInsertNode(const KeyNodeIDPair &p_insert_item,
+                    const KeyNodeIDPair &p_next_item,
+                    const BaseNode *p_child_node_p) :
+      InnerDataNode{p_insert_item,
+                    NodeType::InnerInsertType,
+                    p_child_node_p,
+                    &p_child_node_p->GetLowKeyPair(),
+                    &p_child_node_p->GetHighKeyPair(),
+                    p_child_node_p->GetDepth() + 1,
+                    p_child_node_p->GetItemCount() + 1},
+      next_item{p_next_item}
+    {}
+  };
+
+  /*
+   * class InnerDeleteNode - Delete node
+   *
+   * NOTE: There are three keys associated with this node, two of them
+   * defining the new range after deleting this node, the remaining one
+   * describing the key being deleted
+   *
+   * NOTE 2: We also store the InnerDeleteNode in BwTree to facilitate
+   * tree destructor to avoid traversing NodeID that has already been
+   * deleted and gatbage collected
+   */
+  class InnerDeleteNode : public InnerDataNode {
+   public:
+     
+    // This holds the previous key-NodeID item in the inner node
+    // if the NodeID matches the low key of the inner node (which
+    // should be a constant and kept inside each node on the delta chain)
+    // then do not need to compare to it since the search key must >= low key
+    // But if the prev_item.second != low key node id then need to compare key
+    KeyNodeIDPair prev_item;
+
+    // This holds the next key-NodeID item in the inner node
+    // If the NodeID inside next_item is INVALID_NODE_ID then we do not have
+    // to conduct any comparison since we know it is the high key
+    KeyNodeIDPair next_item;
+
+    /*
+     * Constructor
+     *
+     * NOTE: We need to provide three keys, two for defining a new
+     * range, and one for removing the index term from base node
+     *
+     * NOTE 2: We also needs to provide the key being deleted, though
+     * it does make sense for tree traversal. But when the tree destructor
+     * runs it needs the deleted NodeID information in order to avoid
+     * traversing to a node that has already been deleted and been recycled
+     */
+    InnerDeleteNode(const KeyNodeIDPair &p_delete_item,
+                    const KeyNodeIDPair &p_prev_item,
+                    const KeyNodeIDPair &p_next_item,
+                    const BaseNode *p_child_node_p) :
+      InnerDataNode{p_delete_item,
+                    NodeType::InnerDeleteType,
+                    p_child_node_p,
+                    &p_child_node_p->GetLowKeyPair(),
+                    &p_child_node_p->GetHighKeyPair(),
+                    p_child_node_p->GetDepth() + 1,
+                    p_child_node_p->GetItemCount() - 1},
+      prev_item{p_prev_item},
+      next_item{p_next_item}
+    {}
+  };
+
+  /*
+   * class InnerSplitNode - Split inner nodes into two
+   *
+   * It has the same layout as leaf split node except for
+   * the base class type variable. We make such distinguishment
+   * to facilitate identifying current delta chain type
+   */
+  class InnerSplitNode : public DeltaNode {
+   public:
+    KeyNodeIDPair insert_item;
+
+    /*
+     * Constructor
+     */
+    InnerSplitNode(const KeyNodeIDPair &p_insert_item,
+                   const BaseNode *p_child_node_p,
+                   const BaseNode *p_split_node_p) :
+      DeltaNode{NodeType::InnerSplitType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(), // Low key does not change
+                &insert_item,                      // High key are defined by this
+                // For split node depth does not change since it does not
+                // introduce new data
+                p_child_node_p->GetDepth(),
+                // For split node we need the physical pointer to the
+                // split sibling to compute item count
+                p_child_node_p->GetItemCount() - \
+                  p_split_node_p->GetItemCount()},
+      insert_item{p_insert_item}
+    {}
+  };
+
+  /*
+   * class InnerRemoveNode
+   */
+  class InnerRemoveNode : public DeltaNode {
+   public:
+    // We also need this to recycle NodeID
+    NodeID removed_id;
+
+    /*
+     * Constructor
+     */
+    InnerRemoveNode(NodeID p_removed_id,
+                    const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::InnerRemoveType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                &p_child_node_p->GetHighKeyPair(),
+                p_child_node_p->GetDepth(),
+                p_child_node_p->GetItemCount()},
+      removed_id{p_removed_id}
+    {}
+  };
+
+  /*
+   * class InnerMergeNode - Merge delta for inner nodes
+   */
+  class InnerMergeNode : public DeltaNode {
+   public:
+    // This is exactly the item being deleted in the parent node
+    KeyNodeIDPair delete_item;
+
+    const BaseNode *right_merge_p;
+
+    /*
+     * Constructor
+     */
+    InnerMergeNode(const KeyType &p_merge_key,
+                   const BaseNode *p_right_merge_p,
+                   NodeID p_deleted_node_id,
+                   const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::InnerMergeType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                &p_right_merge_p->GetHighKeyPair(),
+                // Note: Since both children under merge node is considered
+                // as part of the same node, we use the larger one + 1
+                // as the depth of the merge node
+                //std::max(p_child_node_p->metadata.depth,
+                //         p_right_merge_p->metadata.depth) + 1,
+                p_child_node_p->GetDepth() + \
+                  p_right_merge_p->GetDepth(),
+                // For merge node the item count is the sum of its two
+                // branches
+                p_child_node_p->GetItemCount() + \
+                  p_right_merge_p->GetItemCount()},
+      delete_item{p_merge_key, p_deleted_node_id},
+      right_merge_p{p_right_merge_p}
+    {}
+  };
+
+  /*
+   * class InnerAbortNode - Same as LeafAbortNode
+   */
+  class InnerAbortNode : public DeltaNode {
+   public:
+
+    /*
+     * Constructor
+     */
+    InnerAbortNode(const BaseNode *p_child_node_p) :
+      DeltaNode{NodeType::InnerAbortType,
+                p_child_node_p,
+                &p_child_node_p->GetLowKeyPair(),
+                &p_child_node_p->GetHighKeyPair(),
+                p_child_node_p->GetDepth(),
+                p_child_node_p->GetItemCount()}
+    {}
+  };
+
+  /*
+   * struct NodeSnapshot - Describes the states in a tree when we see them
+   *
+   * node_id and node_p are pairs that represents the state when we traverse
+   * the node and use GetNode() to resolve the node ID.
+   */
+  class NodeSnapshot {
+   public:
+    NodeID node_id;
+    const BaseNode *node_p;
+
+    /*
+     * Constructor - Initialize every member to invalid state
+     *
+     * Identity of leaf or inner needs to be provided as constructor
+     * argument.
+     *
+     * NOTE: We do not allocate any logical node structure here
+     */
+    NodeSnapshot(NodeID p_node_id, const BaseNode *p_node_p) :
+      node_id{p_node_id},
+      node_p{p_node_p}
+    {}
+
+    /*
+     * Default Constructor - Fast path
+     */
+    NodeSnapshot() {}
+
+    /*
+     * IsLeaf() - Test whether current snapshot is on leaf delta chain
+     *
+     * This function is just a wrapper of IsOnLeafDeltaChain() in BaseNode
+     */
+    inline bool IsLeaf() const {
+      return node_p->IsOnLeafDeltaChain();
+    }
+  };
+  
+  /*
+   * union DeltaNodeUnion - The union of all delta nodes - we use this to 
+   *                        precllocate memory on the base node for delta nodes
+   */
+  union DeltaNodeUnion {
+    InnerInsertNode inner_insert_node;
+    InnerDeleteNode inner_delete_node;
+    InnerSplitNode inner_split_node;
+    InnerMergeNode inner_merge_node;
+    InnerRemoveNode inner_remove_node;
+    InnerAbortNode inner_abort_node;
+    
+    LeafInsertNode leaf_insert_node;
+    LeafDeleteNode leaf_delete_node;
+    LeafSplitNode leaf_split_node;
+    LeafMergeNode leaf_merge_node;
+    LeafRemoveNode leaf_remove_node; 
+  };
   
   /*
    * class AllocationMeta - Metadata for maintaining preallocated space
    */
   class AllocationMeta {
-    union DeltaNodeUnion;
+   public:
     // One reasonable amount of memory for each chunk is 
     // delta chain len * struct len + sizeof this struct
     static constexpr size_t CHUNK_SIZE = \
@@ -1263,16 +1799,31 @@ class BwTree {
       // just remove this line
       assert(size == p_item_count);
                                      
-      // Allocte basic template + ElementType element size * (node size)
+      // Allocte memory for 
+      //   1. AllocationMeta (chunk) 
+      //   2. node meta 
+      //   3. ElementType array
+      // basic template + ElementType element size * (node size) + CHUNK_SIZE
       // Note: do not make it constant since it is going to be modified
       // after being returned
+      char *alloc_base = \
+        new char[sizeof(ElasticNode) + \
+                   size * sizeof(ElementType) + \
+                   AllocationMeta::CHUNK_SIZE];
+      assert(alloc_base != nullptr);
+      
+      // Initialize the AllocationMeta - tail points to the first byte inside
+      // class ElasticNode; limit points to the first byte after class 
+      // AllocationMeta
+      new (reinterpret_cast<AllocationMeta *>(alloc_base)) \
+        AllocationMeta{alloc_base + AllocationMeta::CHUNK_SIZE,
+                       alloc_base + sizeof(AllocationMeta)};
+      
+      // The first CHUNK_SIZE byte is used by class AllocationMeta 
+      // and chunk data
       ElasticNode *node_p = \
-        static_cast<ElasticNode *>(
-          malloc(sizeof(ElasticNode) + size * sizeof(ElementType)));
-        
-      // Note that malloc() does not throw even if it fails
-      // in that case we will see GP error after this line under release mode
-      assert(node_p != nullptr);
+        reinterpret_cast<ElasticNode *>( \
+          alloc_base + AllocationMeta::CHUNK_SIZE);
       
       // Call placement new to initialize all that could be initialized
       new (node_p) ElasticNode{p_type, 
@@ -1312,80 +1863,75 @@ class BwTree {
       return operator[](index);
     }
   };
-
-  /*
-   * class DeltaNode - Common element in a delta node
-   *
-   * Common elements include depth of the node and pointer to
-   * children node
-   */
-  class DeltaNode : public BaseNode {
-   public:
-    const BaseNode *child_node_p;
-
-    /*
-     * Constructor
-     */
-    DeltaNode(NodeType p_type,
-              const BaseNode *p_child_node_p,
-              const KeyNodeIDPair *p_low_key_p,
-              const KeyNodeIDPair *p_high_key_p,
-              int p_depth,
-              int p_item_count) :
-      BaseNode{p_type,
-               p_low_key_p,
-               p_high_key_p,
-               p_depth,
-               p_item_count},
-      child_node_p{p_child_node_p}
-    {}
-  };
   
   /*
-   * class LeafDataNode - Holds LeafInsertNode and LeafDeleteNode's data
-   *
-   * This class is used in node consolidation to provide a uniform
-   * interface for the log-structured merge process
+   * class InnerNode - Inner node that holds separators
    */
-  class LeafDataNode : public DeltaNode {
+  class InnerNode : public ElasticNode<KeyNodeIDPair> {
    public:
 
-    // This is the item being deleted or inserted
-    KeyValuePair item;
-    
-    // This is the index of the node when inserting/deleting
-    // the item into the base leaf node
-    std::pair<int, bool> index_pair;
-
-    LeafDataNode(const KeyValuePair &p_item,
-                 NodeType p_type,
-                 const BaseNode *p_child_node_p,
-                 std::pair<int, bool> p_index_pair,
-                 const KeyNodeIDPair *p_low_key_p,
-                 const KeyNodeIDPair *p_high_key_p,
-                 int p_depth,
-                 int p_item_count) :
-      DeltaNode{p_type,
-                p_child_node_p,
-                p_low_key_p,
-                p_high_key_p,
-                p_depth,
-                p_item_count},
-      item{p_item},
-      index_pair{p_index_pair}
-    {}
-    
     /*
-     * GetIndexPair() - Returns the index pair for LeafDataNode
+     * Constructor - Deleted
      *
-     * Note that this function does not return reference which means
-     * that there is no way to modify the index pair
+     * All construction of InnerNode should be through ElasticNode interface
      */
-    std::pair<int, bool> GetIndexPair() const {
-      return index_pair;
+    InnerNode() = delete;
+    InnerNode(const InnerNode &) = delete;
+    InnerNode(InnerNode &&) = delete;
+    InnerNode &operator=(const InnerNode &) = delete;
+    InnerNode &operator=(InnerNode &&) = delete;
+
+    /*
+     * GetSplitSibling() - Split InnerNode into two halves.
+     *
+     * This function does not change the current node since all existing nodes
+     * should be read-only to avoid data race. It copies half of the inner node
+     * into the split sibling, and return the sibling node.
+     */
+    InnerNode *GetSplitSibling() const {
+      // Call function in class ElasticNode to determine the size of the 
+      // inner node
+      int key_num = this->GetSize();
+
+      // Inner node size must be > 2 to avoid empty split node
+      assert(key_num >= 2);
+
+      // Same reason as in leaf node - since we only split inner node
+      // without a delta chain on top of it, the sep list size must equal
+      // the recorded item count
+      assert(key_num == this->GetItemCount());
+
+      int split_item_index = key_num / 2;
+
+      // This is the split point of the inner node
+      auto copy_start_it = this->Begin() + split_item_index;
+            
+      // We need this to allocate enough space for the embedded array
+      int sibling_size = static_cast<int>(std::distance(copy_start_it, 
+                                                        this->End()));
+
+      // This sets metadata inside BaseNode by calling SetMetaData()
+      // inside inner node constructor
+      InnerNode *inner_node_p = \
+        reinterpret_cast<InnerNode *>(ElasticNode<KeyNodeIDPair>::\
+          Get(sibling_size,
+              NodeType::InnerType,
+              0,
+              sibling_size,
+              this->At(split_item_index),
+              this->GetHighKeyPair()));
+
+      // Call overloaded PushBack() to insert an array of elements
+      inner_node_p->PushBack(copy_start_it, this->End());
+      
+      // Since we copy exactly that many elements
+      assert(inner_node_p->GetSize() == sibling_size);
+      assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
+
+      return inner_node_p;
     }
   };
-
+  
   /*
    * class LeafNode - Leaf node that holds data
    *
@@ -1553,537 +2099,6 @@ class BwTree {
 
       return leaf_node_p;
     }
-  };
-
-  /*
-   * class LeafInsertNode - Insert record into a leaf node
-   */
-  class LeafInsertNode : public LeafDataNode {
-   public:
-
-    /*
-     * Constructor
-     */
-    LeafInsertNode(const KeyType &p_insert_key,
-                   const ValueType &p_value,
-                   const BaseNode *p_child_node_p,
-                   std::pair<int, bool> p_index_pair) :
-      LeafDataNode{std::make_pair(p_insert_key, p_value),
-                   NodeType::LeafInsertType,
-                   p_child_node_p,
-                   p_index_pair,
-                   &p_child_node_p->GetLowKeyPair(),
-                   &p_child_node_p->GetHighKeyPair(),
-                   p_child_node_p->GetDepth() + 1,
-                   // For insert nodes, the item count is inheried from the child
-                   // node + 1 since it inserts new item
-                   p_child_node_p->GetItemCount() + 1}
-    {}
-  };
-
-  /*
-   * class LeafDeleteNode - Delete record from a leaf node
-   *
-   * In multi-value mode, it takes a value to identify which value
-   * to delete. In single value mode, value is redundant but what we
-   * could use for sanity check
-   */
-  class LeafDeleteNode : public LeafDataNode {
-   public:
-
-    /*
-     * Constructor
-     */
-    LeafDeleteNode(const KeyType &p_delete_key,
-                   const ValueType &p_value,
-                   const BaseNode *p_child_node_p,
-                   std::pair<int, bool> p_index_pair) :
-      LeafDataNode{std::make_pair(p_delete_key, p_value),
-                   NodeType::LeafDeleteType,
-                   p_child_node_p,
-                   p_index_pair,
-                   &p_child_node_p->GetLowKeyPair(),
-                   &p_child_node_p->GetHighKeyPair(),
-                   p_child_node_p->GetDepth() + 1,
-                   // For delete node it inherits item count from its child
-                   // and - 1 from it since one element was deleted
-                   p_child_node_p->GetItemCount() - 1}
-     {}
-  };
-
-  /*
-   * class LeafSplitNode - Split node for leaf
-   *
-   * It includes a separator key to direct search to a correct direction
-   * and a physical pointer to find the current next node in delta chain
-   */
-  class LeafSplitNode : public DeltaNode {
-   public:
-    // Split key is the first element and the sibling NodeID
-    // is the second element
-    // This also specifies a new high key pair for the leaf
-    // delta chain
-    KeyNodeIDPair insert_item;
-
-    /*
-     * Constructor
-     *
-     * NOTE: The constructor requires that the physical pointer to the split
-     * sibling being passed as an argument. It will not be stored inside the
-     * split delta, but it will be used to compute the new item count for
-     * the current node
-     */
-    LeafSplitNode(const KeyNodeIDPair &p_insert_item,
-                  const BaseNode *p_child_node_p,
-                  const BaseNode *p_split_node_p) :
-      DeltaNode{NodeType::LeafSplitType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                // High key is redirected to the split item inside the node
-                &insert_item,
-                // NOTE: split node is SMO and does not introduce
-                // new piece of data
-                // So we set its depth the same as its child
-                p_child_node_p->GetDepth(),
-                // For split node it is a little bit tricky - we must
-                // know the item count of its sibling to decide how many
-                // items were removed by the split delta
-                p_child_node_p->GetItemCount() - \
-                  p_split_node_p->GetItemCount()},
-      insert_item{p_insert_item}
-    {}
-  };
-
-  /*
-   * class LeafRemoveNode - Remove all physical children and redirect
-   *                        all access to its logical left sibling
-   *
-   * The removed ID field is not used in SMO protocol, but it helps
-   * EpochManager to recycle NodeID correctly, since when a LeafRemoveNode
-   * is being recycled, the removed NodeID is also recycled
-   */
-  class LeafRemoveNode : public DeltaNode {
-   public:
-    // This is used for EpochManager to recycle NodeID
-    NodeID removed_id;
-
-    /*
-     * Constructor
-     */
-    LeafRemoveNode(NodeID p_removed_id,
-                   const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafRemoveType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_child_node_p->GetHighKeyPair(),
-                // REMOVE node is an SMO and does not introduce data
-                p_child_node_p->GetDepth(),
-                p_child_node_p->GetItemCount()},
-      removed_id{p_removed_id}
-    {}
-  };
-
-  /*
-   * class LeafMergeNode - Merge two delta chian structure into one node
-   *
-   * This structure uses two physical pointers to indicate that the right
-   * half has become part of the current node and there is no other way
-   * to access it
-   *
-   * NOTE: Merge node also contains the NodeID of the node being removed
-   * as the result of the merge operation. We keep it here to simplify
-   * NodeID searching in the parent node
-   */
-  class LeafMergeNode : public DeltaNode {
-   public:
-    KeyNodeIDPair delete_item;
-
-    // For merge nodes we use actual physical pointer
-    // to indicate that the right half is already part
-    // of the logical node
-    const BaseNode *right_merge_p;
-
-    /*
-     * Constructor
-     */
-    LeafMergeNode(const KeyType &p_merge_key,
-                  const BaseNode *p_right_merge_p,
-                  NodeID p_deleted_node_id,
-                  const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::LeafMergeType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                // The high key of the merge node is inherited
-                // from the right sibling
-                &p_right_merge_p->GetHighKeyPair(),
-                //std::max(p_child_node_p->metadata.depth,
-                //         p_right_merge_p->metadata.depth) + 1,
-                p_child_node_p->GetDepth() + \
-                  p_right_merge_p->GetDepth(),
-                // For merge node the item count should be the
-                // sum of items inside both branches
-                p_child_node_p->GetItemCount() + \
-                  p_right_merge_p->GetItemCount()},
-      delete_item{p_merge_key, p_deleted_node_id},
-      right_merge_p{p_right_merge_p}
-    {}
-  };
-
-  ///////////////////////////////////////////////////////////////////
-  // Leaf Delta Chain Node Type End
-  ///////////////////////////////////////////////////////////////////
-
-  ///////////////////////////////////////////////////////////////////
-  // Inner Delta Chain Node Type
-  ///////////////////////////////////////////////////////////////////
-
-  /*
-   * class InnerDataNode - Base class for InnerInsertNode and InnerDeleteNode
-   *
-   * We need this node since we want to sort pointers to such nodes using
-   * stable sorting algorithm
-   */
-  class InnerDataNode : public DeltaNode {
-   public:
-    KeyNodeIDPair item;
-
-    InnerDataNode(const KeyNodeIDPair &p_item,
-                  NodeType p_type,
-                  const BaseNode *p_child_node_p,
-                  const KeyNodeIDPair *p_low_key_p,
-                  const KeyNodeIDPair *p_high_key_p,
-                  int p_depth,
-                  int p_item_count) :
-      DeltaNode{p_type,
-                p_child_node_p,
-                p_low_key_p,
-                p_high_key_p,
-                p_depth,
-                p_item_count},
-      item{p_item}
-    {}
-  };
-
-  /*
-   * class InnerNode - Inner node that holds separators
-   */
-  class InnerNode : public ElasticNode<KeyNodeIDPair> {
-   public:
-
-    /*
-     * Constructor - Deleted
-     *
-     * All construction of InnerNode should be through ElasticNode interface
-     */
-    InnerNode() = delete;
-    InnerNode(const InnerNode &) = delete;
-    InnerNode(InnerNode &&) = delete;
-    InnerNode &operator=(const InnerNode &) = delete;
-    InnerNode &operator=(InnerNode &&) = delete;
-
-    /*
-     * GetSplitSibling() - Split InnerNode into two halves.
-     *
-     * This function does not change the current node since all existing nodes
-     * should be read-only to avoid data race. It copies half of the inner node
-     * into the split sibling, and return the sibling node.
-     */
-    InnerNode *GetSplitSibling() const {
-      // Call function in class ElasticNode to determine the size of the 
-      // inner node
-      int key_num = this->GetSize();
-
-      // Inner node size must be > 2 to avoid empty split node
-      assert(key_num >= 2);
-
-      // Same reason as in leaf node - since we only split inner node
-      // without a delta chain on top of it, the sep list size must equal
-      // the recorded item count
-      assert(key_num == this->GetItemCount());
-
-      int split_item_index = key_num / 2;
-
-      // This is the split point of the inner node
-      auto copy_start_it = this->Begin() + split_item_index;
-            
-      // We need this to allocate enough space for the embedded array
-      int sibling_size = static_cast<int>(std::distance(copy_start_it, 
-                                                        this->End()));
-
-      // This sets metadata inside BaseNode by calling SetMetaData()
-      // inside inner node constructor
-      InnerNode *inner_node_p = \
-        reinterpret_cast<InnerNode *>(ElasticNode<KeyNodeIDPair>::\
-          Get(sibling_size,
-              NodeType::InnerType,
-              0,
-              sibling_size,
-              this->At(split_item_index),
-              this->GetHighKeyPair()));
-
-      // Call overloaded PushBack() to insert an array of elements
-      inner_node_p->PushBack(copy_start_it, this->End());
-      
-      // Since we copy exactly that many elements
-      assert(inner_node_p->GetSize() == sibling_size);
-      assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
-
-      return inner_node_p;
-    }
-  };
-
-  /*
-   * class InnerInsertNode - Insert node for inner nodes
-   *
-   * It has two keys in order to make decisions upon seeing this
-   * node when traversing down the delta chain of an inner node
-   * If the search key lies in the range between sep_key and
-   * next_key then we know we should go to new_node_id
-   */
-  class InnerInsertNode : public InnerDataNode {
-   public:
-    // This is the next right after the item being inserted
-    // This could be set to the +Inf high key
-    // in that case next_item.second == INVALID_NODE_ID
-    KeyNodeIDPair next_item;
-
-    /*
-     * Constructor
-     */
-    InnerInsertNode(const KeyNodeIDPair &p_insert_item,
-                    const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
-      InnerDataNode{p_insert_item,
-                    NodeType::InnerInsertType,
-                    p_child_node_p,
-                    &p_child_node_p->GetLowKeyPair(),
-                    &p_child_node_p->GetHighKeyPair(),
-                    p_child_node_p->GetDepth() + 1,
-                    p_child_node_p->GetItemCount() + 1},
-      next_item{p_next_item}
-    {}
-  };
-
-  /*
-   * class InnerDeleteNode - Delete node
-   *
-   * NOTE: There are three keys associated with this node, two of them
-   * defining the new range after deleting this node, the remaining one
-   * describing the key being deleted
-   *
-   * NOTE 2: We also store the InnerDeleteNode in BwTree to facilitate
-   * tree destructor to avoid traversing NodeID that has already been
-   * deleted and gatbage collected
-   */
-  class InnerDeleteNode : public InnerDataNode {
-   public:
-     
-    // This holds the previous key-NodeID item in the inner node
-    // if the NodeID matches the low key of the inner node (which
-    // should be a constant and kept inside each node on the delta chain)
-    // then do not need to compare to it since the search key must >= low key
-    // But if the prev_item.second != low key node id then need to compare key
-    KeyNodeIDPair prev_item;
-
-    // This holds the next key-NodeID item in the inner node
-    // If the NodeID inside next_item is INVALID_NODE_ID then we do not have
-    // to conduct any comparison since we know it is the high key
-    KeyNodeIDPair next_item;
-
-    /*
-     * Constructor
-     *
-     * NOTE: We need to provide three keys, two for defining a new
-     * range, and one for removing the index term from base node
-     *
-     * NOTE 2: We also needs to provide the key being deleted, though
-     * it does make sense for tree traversal. But when the tree destructor
-     * runs it needs the deleted NodeID information in order to avoid
-     * traversing to a node that has already been deleted and been recycled
-     */
-    InnerDeleteNode(const KeyNodeIDPair &p_delete_item,
-                    const KeyNodeIDPair &p_prev_item,
-                    const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
-      InnerDataNode{p_delete_item,
-                    NodeType::InnerDeleteType,
-                    p_child_node_p,
-                    &p_child_node_p->GetLowKeyPair(),
-                    &p_child_node_p->GetHighKeyPair(),
-                    p_child_node_p->GetDepth() + 1,
-                    p_child_node_p->GetItemCount() - 1},
-      prev_item{p_prev_item},
-      next_item{p_next_item}
-    {}
-  };
-
-  /*
-   * class InnerSplitNode - Split inner nodes into two
-   *
-   * It has the same layout as leaf split node except for
-   * the base class type variable. We make such distinguishment
-   * to facilitate identifying current delta chain type
-   */
-  class InnerSplitNode : public DeltaNode {
-   public:
-    KeyNodeIDPair insert_item;
-
-    /*
-     * Constructor
-     */
-    InnerSplitNode(const KeyNodeIDPair &p_insert_item,
-                   const BaseNode *p_child_node_p,
-                   const BaseNode *p_split_node_p) :
-      DeltaNode{NodeType::InnerSplitType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(), // Low key does not change
-                &insert_item,                      // High key are defined by this
-                // For split node depth does not change since it does not
-                // introduce new data
-                p_child_node_p->GetDepth(),
-                // For split node we need the physical pointer to the
-                // split sibling to compute item count
-                p_child_node_p->GetItemCount() - \
-                  p_split_node_p->GetItemCount()},
-      insert_item{p_insert_item}
-    {}
-  };
-
-  /*
-   * class InnerRemoveNode
-   */
-  class InnerRemoveNode : public DeltaNode {
-   public:
-    // We also need this to recycle NodeID
-    NodeID removed_id;
-
-    /*
-     * Constructor
-     */
-    InnerRemoveNode(NodeID p_removed_id,
-                    const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerRemoveType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth(),
-                p_child_node_p->GetItemCount()},
-      removed_id{p_removed_id}
-    {}
-  };
-
-  /*
-   * class InnerMergeNode - Merge delta for inner nodes
-   */
-  class InnerMergeNode : public DeltaNode {
-   public:
-    // This is exactly the item being deleted in the parent node
-    KeyNodeIDPair delete_item;
-
-    const BaseNode *right_merge_p;
-
-    /*
-     * Constructor
-     */
-    InnerMergeNode(const KeyType &p_merge_key,
-                   const BaseNode *p_right_merge_p,
-                   NodeID p_deleted_node_id,
-                   const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerMergeType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_right_merge_p->GetHighKeyPair(),
-                // Note: Since both children under merge node is considered
-                // as part of the same node, we use the larger one + 1
-                // as the depth of the merge node
-                //std::max(p_child_node_p->metadata.depth,
-                //         p_right_merge_p->metadata.depth) + 1,
-                p_child_node_p->GetDepth() + \
-                  p_right_merge_p->GetDepth(),
-                // For merge node the item count is the sum of its two
-                // branches
-                p_child_node_p->GetItemCount() + \
-                  p_right_merge_p->GetItemCount()},
-      delete_item{p_merge_key, p_deleted_node_id},
-      right_merge_p{p_right_merge_p}
-    {}
-  };
-
-  /*
-   * class InnerAbortNode - Same as LeafAbortNode
-   */
-  class InnerAbortNode : public DeltaNode {
-   public:
-
-    /*
-     * Constructor
-     */
-    InnerAbortNode(const BaseNode *p_child_node_p) :
-      DeltaNode{NodeType::InnerAbortType,
-                p_child_node_p,
-                &p_child_node_p->GetLowKeyPair(),
-                &p_child_node_p->GetHighKeyPair(),
-                p_child_node_p->GetDepth(),
-                p_child_node_p->GetItemCount()}
-    {}
-  };
-
-  /*
-   * struct NodeSnapshot - Describes the states in a tree when we see them
-   *
-   * node_id and node_p are pairs that represents the state when we traverse
-   * the node and use GetNode() to resolve the node ID.
-   */
-  class NodeSnapshot {
-   public:
-    NodeID node_id;
-    const BaseNode *node_p;
-
-    /*
-     * Constructor - Initialize every member to invalid state
-     *
-     * Identity of leaf or inner needs to be provided as constructor
-     * argument.
-     *
-     * NOTE: We do not allocate any logical node structure here
-     */
-    NodeSnapshot(NodeID p_node_id, const BaseNode *p_node_p) :
-      node_id{p_node_id},
-      node_p{p_node_p}
-    {}
-
-    /*
-     * Default Constructor - Fast path
-     */
-    NodeSnapshot() {}
-
-    /*
-     * IsLeaf() - Test whether current snapshot is on leaf delta chain
-     *
-     * This function is just a wrapper of IsOnLeafDeltaChain() in BaseNode
-     */
-    inline bool IsLeaf() const {
-      return node_p->IsOnLeafDeltaChain();
-    }
-  };
-  
-  /*
-   * DeltaNodeUnion - The union of all delta nodes - we use this to precllocate
-   *                  memory on the base node for delta nodes
-   */
-  union DeltaNodeUnion {
-    InnerInsertNode inner_insert_node;
-    InnerDeleteNode inner_delete_node;
-    InnerSplitNode inner_split_node;
-    InnerMergeNode inner_merge_node;
-    InnerRemoveNode inner_remove_node;
-    InnerAbortNode inner_abort_node;
-    
-    LeafInsertNode leaf_insert_node;
-    LeafDeleteNode leaf_delete_node;
-    LeafSplitNode leaf_split_node;
-    LeafMergeNode leaf_merge_node;
-    LeafRemoveNode leaf_remove_node; 
   };
 
   ////////////////////////////////////////////////////////////////////
