@@ -921,7 +921,10 @@ class BwTree {
    */
   class AllocationMeta {
     union DeltaNodeUnion;
-    static constexpr size_t CHUNK_SIZE = sizeof(DeltaNodeUnion) * 8;
+    // One reasonable amount of memory for each chunk is 
+    // delta chain len * struct len + sizeof this struct
+    static constexpr size_t CHUNK_SIZE = \
+      sizeof(DeltaNodeUnion) * 8 + sizeof(AllocationMeta);
     
    private: 
     // This points to the higher address end of the chunk we are 
@@ -983,7 +986,7 @@ class BwTree {
      * Whether or not this has succeded, always return the pointer to the next
      * chunk such that the caller could retry on next chunk
      */
-    char *GrowChunk() {
+    AllocationMeta *GrowChunk() {
       // If we know there is a next chunk just return it to avoid
       // having too many failed CAS instruction
       AllocationMeta *meta_p = next.load();
@@ -996,20 +999,25 @@ class BwTree {
       
       // Prepare the new chunk's metadata field
       AllocationMeta *new_meta_base = \
-        reinterpret_cast<AllocationMeta *>(new_chunk - sizeof(AllocationMeta));
+        reinterpret_cast<AllocationMeta *>(new_chunk);
         
-      // Call placement new operator to cnstruct it with tail being
-      // the address of this struct and limit being the starting address
-      // if new_chunk
+      // We initialize the allocation meta at lower end of the address
+      // and let tail points to the first byte after this chunk, and the limit
+      // is the first byte after AllocationMeta
       new (new_meta_base) \
-        AllocationMeta{reinterpret_cast<char *>(new_meta_base),
-                       new_chunk};
+        AllocationMeta{new_chunk + CHUNK_SIZE,                  // tail
+                       new_chunk + sizeof(AllocationMeta)};     // limit
       
+      // Always CAS with nullptr such that we will never install/replace
+      // a chunk that has already been installed here
       bool ret = next.compare_exchange_strong(expected, new_meta_base);
       if(ret == true) {
-        return new_chunk; 
+        return new_meta_base; 
       }
       
+      // Note that here we call destructor manually and then delete the char[]
+      // to complete the entire sequence which should be done by the compiler
+      new_meta_base->~AllocationMeta();
       delete[] new_chunk;
       
       // If CAS fails this will be loaded with the real value such that we have
@@ -1036,6 +1044,9 @@ class BwTree {
         if(p == nullptr) {
           // Then try to grow it - if there is already another next chunk
           // just return the pointer to that chunk
+          // This will surely traverse the entire linked list
+          // but since the linked list itself is supposed to be relatively short
+          // even under contention, we do not worry about it right now
           meta_p = meta_p->GrowChunk();
           assert(meta_p != nullptr); 
         } else {
@@ -1050,13 +1061,9 @@ class BwTree {
     /*
      * Destroy() - Frees all chunks in the linked list
      *
-     * Note that this functi7on must be called for every metadata object
+     * Note that this function must be called for every metadata object
      * in the linked list, and we could should use operator delete since it
      * is allocated through operator new
-     *
-     * Also since inside class ElasticNode, the metadata is colocated with
-     * the node itself, after deleting the metadata we should not delete
-     * the elastic node
      *
      * This function is not thread-safe and should only be called in a single
      * thread environment such as GC
@@ -1068,8 +1075,12 @@ class BwTree {
         // Save the next pointer to traverse to it later
         AllocationMeta *next_p = meta_p->next.load();
         
-        // After this point could not access meta_p
-        delete[] meta_p->limit; 
+        // 1. Manually call destructor
+        // 2. Delete it as a char[]
+        // Note that we know the base of meta_p is always the address
+        // returned by operator new[]
+        meta_p->~AllocationMeta();
+        delete[] reinterpret_cast<char *>(meta_p);
         
         meta_p = next_p;
       }
