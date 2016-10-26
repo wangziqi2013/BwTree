@@ -1837,6 +1837,29 @@ class BwTree {
     }
     
     /*
+     * GetNodeHeader() - Given low key pointer, returns the node header
+     *
+     * This is useful since only the low key pointer is available from any
+     * type of node
+     */
+    static ElasticNode *GetNodeHeader(ElementType *low_key_p) {
+      static constexpr size_t low_key_offset = offsetof(ElasticNode, low_key);
+      
+      return reinterpret_cast<ElasticNode *>( \
+               reinterpret_cast<uint64_t>(low_key_p) - low_key_offset);
+    }
+    
+    /*
+     * GetAllocationHeader() - Returns the address of class AllocationHeader
+     *                         embedded inside the ElasticNode object
+     */
+    static AllocationMeta *GetAllocationHeader(ElasticNode *node_p) {
+      return reinterpret_cast<AllocationMeta *>( \
+               reinterpret_cast<uint64_t>(node_p) - \
+                 AllocationMeta::CHUNK_SIZE);
+    }
+    
+    /*
      * InlineAllocate() - Allocates a delta node in preallocated area preceeds
      *                    the data area of this ElasticNode
      *
@@ -1845,16 +1868,22 @@ class BwTree {
      * compute the offset of the low key from the begining of the struct,
      * and then subtract it with CHUNK_SIZE to derive the address of
      * class AllocationMeta
+     *
+     * Note that since this function is accessed when the header is unknown
+     * so (1) it is static, and (2) it takes low key p which is universally
+     * available for all node type (stored in NodeMetadata)
      */
-    void *InlineAllocate() {
+    static void *InlineAllocate(ElementType *low_key_p, size_t size) {
+      ElasticNode *node_p = GetNodeHeader(low_key_p);
+      assert(&node_p->low_key == low_key_p);
       
-    }
-    
-    /*
-     * operator[] - Access element without bounds checking
-     */
-    inline ElementType &operator[](const int index) {
-      return *(Begin() + index);
+      // Jumo over chunk content
+      AllocationMeta *meta_p = GetAllocationHeader(node_p);
+            
+      void *p = meta_p->Allocate(size);
+      assert(p != nullptr);
+      
+      return p;
     }
     
     inline const ElementType &operator[](const int index) const {
