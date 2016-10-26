@@ -1023,6 +1023,9 @@ class BwTree {
      * This allocation is guaranteed to succeed as long as there is memory. It
      * tries to allocate from the first chunk pointed to by the current first
      * and then if it fails go to the next chunk and try to allocate there
+     *
+     * Note that this must be called at the header node of the chain, since it
+     * takes "this" pointer and iterate using the "next" field
      */
     void *Allocate(size_t size) {
       AllocationMeta *meta_p = this;
@@ -1042,6 +1045,10 @@ class BwTree {
       
       assert(false);
       return nullptr;
+    }
+    
+    void Destroy() {
+      
     }
   };
   
