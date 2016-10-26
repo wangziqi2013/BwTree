@@ -1886,10 +1886,6 @@ class BwTree {
       return p;
     }
     
-    inline const ElementType &operator[](const int index) const {
-      return *(Begin() + index);
-    }
-    
     /*
      * At() - Access element with bounds checking under debug mode
      */
@@ -1897,14 +1893,14 @@ class BwTree {
       // The index must be inside the valid range
       assert(index < GetSize());
       
-      return operator[](index);
+      return *(Begin() + index);
     }
     
     inline const ElementType &At(const int index) const {
       // The index must be inside the valid range
       assert(index < GetSize());
       
-      return operator[](index);
+      return *(Begin() + index);
     }
   };
   
