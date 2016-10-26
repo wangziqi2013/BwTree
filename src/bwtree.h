@@ -32,7 +32,8 @@
 #include <chrono>
 #include <thread>
 #include <unordered_set>
-#include <vector>
+// offsetof() is defined here
+#include <cstddef>
 
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
