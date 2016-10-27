@@ -1728,6 +1728,17 @@ class BwTree {
     }
     
     /*
+     * Destroy() - Frees the memory by calling AllocationMeta::Destroy()
+     */
+    void Destroy() const {
+      // This finds the allocation header for this base node, and then
+      // traverses the linked list
+      ElasticNode::GetAllocationHeader(this)->Destroy();
+      
+      return;
+    }
+    
+    /*
      * Begin() - Returns a begin iterator to its internal array
      */
     inline ElementType *Begin() {
@@ -1868,7 +1879,7 @@ class BwTree {
      * This is useful since only the low key pointer is available from any
      * type of node
      */
-    static ElasticNode *GetNodeHeader(const ElementType *low_key_p) {
+    static ElasticNode *GetNodeHeader(const KeyNodeIDPair *low_key_p) {
       static constexpr size_t low_key_offset = offsetof(ElasticNode, low_key);
       
       return reinterpret_cast<ElasticNode *>( \
@@ -1879,7 +1890,7 @@ class BwTree {
      * GetAllocationHeader() - Returns the address of class AllocationHeader
      *                         embedded inside the ElasticNode object
      */
-    static AllocationMeta *GetAllocationHeader(ElasticNode *node_p) {
+    static AllocationMeta *GetAllocationHeader(const ElasticNode *node_p) {
       return reinterpret_cast<AllocationMeta *>( \
                reinterpret_cast<uint64_t>(node_p) - \
                  AllocationMeta::CHUNK_SIZE);
@@ -1899,8 +1910,8 @@ class BwTree {
      * so (1) it is static, and (2) it takes low key p which is universally
      * available for all node type (stored in NodeMetadata)
      */
-    static void *InlineAllocate(const ElementType *low_key_p, size_t size) {
-      ElasticNode *node_p = GetNodeHeader(low_key_p);
+    static void *InlineAllocate(const KeyNodeIDPair *low_key_p, size_t size) {
+      const ElasticNode *node_p = GetNodeHeader(low_key_p);
       assert(&node_p->low_key == low_key_p);
       
       // Jumo over chunk content
@@ -2353,14 +2364,14 @@ class BwTree {
         case NodeType::LeafInsertType:
           next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
 
-          delete (LeafInsertNode *)node_p;
+          ((LeafInsertNode *)node_p)->~LeafInsertNode();
           freed_count++;
 
           break;
         case NodeType::LeafDeleteType:
           next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
-          delete (LeafDeleteNode *)node_p;
+          ((LeafDeleteNode *)node_p)->~LeafDeleteNode();
 
           break;
         case NodeType::LeafSplitType:
@@ -2369,7 +2380,7 @@ class BwTree {
           freed_count += \
             FreeNodeByNodeID(((LeafSplitNode *)node_p)->insert_item.second);
 
-          delete (LeafSplitNode *)node_p;
+          ((LeafSplitNode *)node_p)->~LeafSplitNode();
           freed_count++;
 
           break;
@@ -2379,13 +2390,19 @@ class BwTree {
           freed_count += \
             FreeNodeByPointer(((LeafMergeNode *)node_p)->right_merge_p);
 
-          delete (LeafMergeNode *)node_p;
+          ((LeafMergeNode *)node_p)->~LeafMergeNode();
           freed_count++;
 
           // Leaf merge node is an ending node
           return freed_count;
         case NodeType::LeafType:
-          delete (LeafNode *)node_p;
+          // Call destructor first, and then call Destroy() on its preallocated
+          // linked list of chunks
+          ((LeafNode *)node_p)->~LeafNode();
+          
+          // Free the memory
+          ((LeafNode *)node_p)->Destroy();
+          
           freed_count++;
 
           // We have reached the end of delta chain
@@ -2396,7 +2413,7 @@ class BwTree {
           freed_count += \
             FreeNodeByNodeID(((InnerInsertNode *)node_p)->item.second);
 
-          delete (InnerInsertNode *)node_p;
+          ((InnerInsertNode *)node_p)->~InnerInsertNode();
           freed_count++;
 
           break;
@@ -2411,7 +2428,7 @@ class BwTree {
           mapping_table[((InnerDeleteNode *)node_p)->item.second] = \
             nullptr;
 
-          delete (InnerDeleteNode *)node_p;
+          ((InnerDeleteNode *)node_p)->~InnerDeleteNode();
           freed_count++;
 
           break;
@@ -2421,7 +2438,7 @@ class BwTree {
           freed_count += \
             FreeNodeByNodeID(((LeafSplitNode *)node_p)->insert_item.second);
 
-          delete (InnerSplitNode *)node_p;
+          ((InnerSplitNode *)node_p)->~InnerSplitNode();
           freed_count++;
 
           break;
@@ -2431,7 +2448,7 @@ class BwTree {
           freed_count += \
             FreeNodeByPointer(((InnerMergeNode *)node_p)->right_merge_p);
 
-          delete (InnerMergeNode *)node_p;
+          ((InnerMergeNode *)node_p)->~InnerMergeNode();
           freed_count++;
 
           return freed_count;
@@ -2448,8 +2465,10 @@ class BwTree {
             freed_count += FreeNodeByNodeID(it->second);
           }
 
-          // Access its content first and then delete the node itself
-          delete inner_node_p;
+          inner_node_p->~InnerNode();
+          inner_node_p->Destroy();
+          
+          
           freed_count++;
 
           // Since we free nodes recursively, after processing an inner
@@ -5348,6 +5367,7 @@ before_switch:
             // Put the remove node into garbage chain, because
             // we cannot call InvalidateNodeID() here
             epoch_manager.AddGarbageNode(fake_remove_node_p);
+            epoch_manager.AddGarbageNode(inner_node_p);
 
             context_p->abort_flag = true;
 
@@ -5462,7 +5482,7 @@ before_switch:
 
       snapshot_p->node_p = leaf_node_p;
     } else {
-      delete leaf_node_p;
+      epoch_manager.AddGarbageNode(leaf_node_p);
     }
     
     return;
@@ -5487,7 +5507,7 @@ before_switch:
 
       snapshot_p->node_p = inner_node_p;
     } else {
-      delete inner_node_p;
+      epoch_manager.AddGarbageNode(inner_node_p);
     }
     
     return;
@@ -5649,12 +5669,14 @@ before_switch:
         // If leaf split fails this should be recyced using a fake remove node
         NodeID new_node_id = GetNextNodeID();
 
+        // Note that although split node only stores the new node ID
+        // we still need its pointer to compute item_count
         const LeafSplitNode *split_node_p = \
-          new LeafSplitNode{std::make_pair(split_key, new_node_id),
-                            node_p,
-                            // We need this to compute the item count
-                            // of the current node being splited
-                            new_leaf_node_p};
+          LeafInlineAllocateOfType(LeafSplitNode, 
+                                   node_p, 
+                                   std::make_pair(split_key, new_node_id),
+                                   node_p,
+                                   new_leaf_node_p);
 
         //  First install the NodeID -> split sibling mapping
         // If CAS fails we also need to recycle the node ID allocated here
@@ -5682,13 +5704,18 @@ before_switch:
           // constructor needs some pointer to initialize
           // the high key and low key
           const LeafRemoveNode *fake_remove_node_p = \
-            new LeafRemoveNode{new_node_id, new_leaf_node_p};
+            LeafInlineAllocateOfType(LeafRemoveNode, 
+                                     new_leaf_node_p, 
+                                     new_node_id, 
+                                     new_leaf_node_p);
 
+          // Must put both of them into GC chain since RemoveNode
+          // will not be followed by GC thread
           epoch_manager.AddGarbageNode(fake_remove_node_p);
+          epoch_manager.AddGarbageNode(new_leaf_node_p);
 
           // We have two nodes to delete here
-          delete split_node_p;
-          delete new_leaf_node_p;
+          split_node_p->~LeafSplitNode();
 
           return;
         }
@@ -5732,7 +5759,10 @@ before_switch:
         }
 
         const LeafRemoveNode *remove_node_p = \
-          new LeafRemoveNode{node_id, node_p};
+          LeafInlineAllocateOfType(LeafRemoveNode, 
+                                   node_p, 
+                                   node_id, 
+                                   node_p);
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -5748,7 +5778,7 @@ before_switch:
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
 
-          delete remove_node_p;
+          remove_node_p->~LeafRemoveNode();
 
           context_p->abort_flag = true;
 
@@ -5840,6 +5870,7 @@ before_switch:
                                       new_inner_node_p);
 
           epoch_manager.AddGarbageNode(fake_remove_node_p);
+          epoch_manager.AddGarbageNode(new_inner_node_p);
 
           // Call destructor since it is allocated from the base InnerNode
           split_node_p->~InnerSplitNode();
@@ -7285,7 +7316,7 @@ try_join_again:
           case NodeType::LeafInsertType:
             next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
 
-            delete (LeafInsertNode *)node_p;
+            ((LeafInsertNode *)node_p)->~LeafInsertNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7294,7 +7325,7 @@ try_join_again:
           case NodeType::LeafDeleteType:
             next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
-            delete (LeafDeleteNode *)node_p;
+            ((LeafDeleteNode *)node_p)->~LeafDeleteNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7304,7 +7335,7 @@ try_join_again:
           case NodeType::LeafSplitType:
             next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
-            delete (LeafSplitNode *)node_p;
+            ((LeafSplitNode *)node_p)->~LeafSplitNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7315,7 +7346,7 @@ try_join_again:
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
-            delete (LeafMergeNode *)node_p;
+            ((LeafMergeNode *)node_p)->~LeafMergeNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7327,7 +7358,7 @@ try_join_again:
             // This recycles node ID
             tree_p->InvalidateNodeID(((LeafRemoveNode *)node_p)->removed_id);
 
-            delete (LeafRemoveNode *)node_p;
+            ((LeafRemoveNode *)node_p)->~LeafRemoveNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7343,7 +7374,8 @@ try_join_again:
             // by one thread that succeeds CAS)
             return;
           case NodeType::LeafType:
-            delete (LeafNode *)node_p;
+            ((LeafNode *)node_p)->~LeafNode();
+            ((LeafNode *)node_p)->Destroy();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7354,7 +7386,7 @@ try_join_again:
           case NodeType::InnerInsertType:
             next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
 
-            delete (InnerInsertNode *)node_p;
+            ((InnerInsertNode *)node_p)->~InnerInsertNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7364,7 +7396,8 @@ try_join_again:
           case NodeType::InnerDeleteType:
             next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
 
-            delete (InnerDeleteNode *)node_p;
+            ((InnerDeleteNode *)node_p)->~InnerDeleteNode();
+            
             #ifdef BWTREE_DEBUG
             freed_count++;
             #endif
@@ -7373,7 +7406,7 @@ try_join_again:
           case NodeType::InnerSplitType:
             next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
 
-            delete (InnerSplitNode *)node_p;
+            ((InnerSplitNode *)node_p)->~InnerSplitNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7384,7 +7417,7 @@ try_join_again:
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
-            delete (InnerMergeNode *)node_p;
+            ((InnerMergeNode *)node_p)->~InnerMergeNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7398,7 +7431,7 @@ try_join_again:
             // see the remove node exit before cleaning the NodeID
             tree_p->InvalidateNodeID(((InnerRemoveNode *)node_p)->removed_id);
 
-            delete (InnerRemoveNode *)node_p;
+            ((InnerRemoveNode *)node_p)->~InnerRemoveNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7408,7 +7441,8 @@ try_join_again:
             // We never free nodes under remove node
             return;
           case NodeType::InnerType:
-            delete (InnerNode *)node_p;
+            ((InnerNode *)node_p)->~InnerNode();
+            ((InnerNode *)node_p)->Destroy();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7421,7 +7455,7 @@ try_join_again:
             // wrong type after the node has been put into the
             // list (if we delete it directly then this will be
             // a problem)
-            delete (InnerAbortNode *)node_p;
+            ((InnerAbortNode *)node_p)->~InnerAbortNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7790,7 +7824,7 @@ try_join_again:
 
       // For an empty iterator this branch is necessary
       if(leaf_node_p != nullptr) {
-        delete leaf_node_p;
+        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
       }
 
       // Direcrly moves the leaf node pointer without copying
