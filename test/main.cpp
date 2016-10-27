@@ -121,10 +121,11 @@ int main(int argc, char **argv) {
     uint64_t thread_num = GetThreadNum();
     
     BenchmarkBTreeSeqInsert(t, key_num, (int)thread_num);
+    // Let this go before any of the other
+    BenchmarkBTreeZipfLockLessRead(t, key_num, (int)thread_num);
     BenchmarkBTreeSeqRead(t, key_num, (int)thread_num);
     BenchmarkBTreeRandRead(t, key_num, (int)thread_num);
     BenchmarkBTreeZipfRead(t, key_num, (int)thread_num);
-    BenchmarkBTreeZipfLockLessRead(t, key_num, (int)thread_num);
     
     DestroyBTree(t);
   }
