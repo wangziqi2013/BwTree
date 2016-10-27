@@ -4904,9 +4904,9 @@ abort_traverse:
     //                      next key-node id pair
     //                      child node in delta chain
     const InnerInsertNode *insert_node_p = \
-      InnerInlineAllocateOfType(InnerInsertNode,             // Type
-                                parent_snapshot_p->node_p,   // Node pointer
-                                insert_item,                 // Params below
+      InnerInlineAllocateOfType(InnerInsertNode,
+                                parent_snapshot_p->node_p,
+                                insert_item,
                                 next_item,
                                 parent_snapshot_p->node_p);
 
@@ -4935,7 +4935,9 @@ abort_traverse:
 
       // Set abort, and remove the newly created node
       context_p->abort_flag = true;
-      delete insert_node_p;
+      
+      // Call destructor but do not free memory
+      insert_node_p->~InnerInsertNode();
 
       return false;
     } // if CAS succeeds/fails
@@ -4963,10 +4965,12 @@ abort_traverse:
     // Deleted item; Prev item; next item (NodeID not used for next item)
     // and delta chail child node
     const InnerDeleteNode *delete_node_p = \
-      new InnerDeleteNode{delete_item,
-                          prev_item,
-                          next_item,
-                          parent_snapshot_p->node_p};
+      InnerInlineAllocateOfType(InnerDeleteNode,
+                                parent_snapshot_p->node_p,
+                                delete_item,
+                                prev_item,
+                                next_item,
+                                parent_snapshot_p->node_p);
 
     // Assume parent has not changed, and CAS the index term delete delta
     // If CAS failed then parent has changed, and we have no idea how it
@@ -5014,7 +5018,7 @@ abort_traverse:
       bwt_printf("Index term delete delta install failed. ABORT\n");
 
       // DO NOT FORGET TO DELETE THIS
-      delete delete_node_p;
+      delete_node_p->~InnerDeleteNode();
 
       // The caller just returns after this function, so do not have
       // to branch on abort_flag after this function returns
@@ -5110,18 +5114,18 @@ before_switch:
         // If we are currently on leaf, just post leaf merge delta
         if(left_snapshot_p->IsLeaf() == true) {
           ret = \
-            PostMergeNode<LeafMergeNode>(left_snapshot_p,
-                                         &merge_key,
-                                         merge_right_branch,
-                                         deleted_node_id,
-                                         &merge_node_p);
+            PostLeafMergeNode(left_snapshot_p,
+                              &merge_key,
+                              merge_right_branch,
+                              deleted_node_id,
+                              &merge_node_p);
         } else {
           ret = \
-            PostMergeNode<InnerMergeNode>(left_snapshot_p,
-                                          &merge_key,
-                                          merge_right_branch,
-                                          deleted_node_id,
-                                          &merge_node_p);
+            PostInnerMergeNode(left_snapshot_p,
+                               &merge_key,
+                               merge_right_branch,
+                               deleted_node_id,
+                               &merge_node_p);
         }
 
         // If CAS fails just abort and return
@@ -5790,9 +5794,10 @@ before_switch:
         if(split_key_child_node_p->IsRemoveNode()) {
           bwt_printf("Found a removed node on split key child. CONTINUE \n");
 
-          // NOTE: There was a memory leak caused by not removing the node
-          // allocared above
-          delete new_inner_node_p;
+          // Put the new inner node into GC chain
+          // Although it is not entirely necessary it is good for us to
+          // make is so to avoid redundant code here
+          epoch_manager.AddGarbageNode(new_inner_node_p);
 
           return;
         }
@@ -5800,11 +5805,11 @@ before_switch:
         NodeID new_node_id = GetNextNodeID();
 
         const InnerSplitNode *split_node_p = \
-          new InnerSplitNode{std::make_pair(split_key, new_node_id),
-                             node_p,
-                             // We need this to compute item count of the
-                             // current node being splited
-                             new_inner_node_p};
+          InnerInlineAllocateOfType(InnerSplitNode,
+                                    node_p,
+                                    std::make_pair(split_key, new_node_id),
+                                    node_p,
+                                    new_inner_node_p);
 
         //  First install the NodeID -> split sibling mapping
         InstallNewNode(new_node_id, new_inner_node_p);
@@ -5825,14 +5830,18 @@ before_switch:
 
           // Use the epoch manager to recycle NodeID in single threaded
           // environment
+          // Note that this remove node should be created on top
+          // of the newly created InnerNode to be recycled together with it
           const InnerRemoveNode *fake_remove_node_p = \
-            new InnerRemoveNode{new_node_id, new_inner_node_p};
+            InnerInlineAllocateOfType(InnerRemoveNode, 
+                                      new_inner_node_p,  
+                                      new_node_id, 
+                                      new_inner_node_p);
 
           epoch_manager.AddGarbageNode(fake_remove_node_p);
 
-          // We have two nodes to delete here
-          delete split_node_p;
-          delete new_inner_node_p;
+          // Call destructor since it is allocated from the base InnerNode
+          split_node_p->~InnerSplitNode();
 
           return;
         } // if CAS fails
@@ -6390,41 +6399,65 @@ before_switch:
   }
 
   /*
-   * PostMergeNode() - Post a leaf merge node on top of a delta chain
-   *
-   * This function is made to be a template since all logic except the
-   * node type is same.
-   *
-   * NOTE: This function takes an argument, such that if CAS succeeds it
-   * sets that pointer's value to be the new node we just created
-   * If CAS fails we do not touch that pointer
-   *
-   * NOTE: This function deletes memory for the caller, so caller do
-   * not have to free memory when this function returns false
+   * PostInnerMergeNode() - Post an inner merge node
    */
-  template <typename MergeNodeType>
-  bool PostMergeNode(const NodeSnapshot *snapshot_p,
-                     const KeyType *merge_key_p,
-                     const BaseNode *merge_branch_p,
-                     NodeID deleted_node_id,
-                     const BaseNode **node_p_p) {
+  bool PostInnerMergeNode(const NodeSnapshot *snapshot_p,
+                          const KeyType *merge_key_p,
+                          const BaseNode *merge_branch_p,
+                          NodeID deleted_node_id,
+                          const BaseNode **node_p_p) {
     // This is the child node of merge delta
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
-    // NOTE: DO NOT FORGET TO DELETE THIS IF CAS FAILS
-    const MergeNodeType *merge_node_p = \
-      new MergeNodeType{*merge_key_p,
-                        merge_branch_p,
-                        deleted_node_id,
-                        node_p};
+    const InnerMergeNode *merge_node_p = \
+      InnerInlineAllocateOfType(InnerMergeNode, 
+                                node_p,
+                                *merge_key_p,
+                                merge_branch_p,
+                                deleted_node_id,
+                                node_p);
 
     // Compare and Swap!
     bool ret = InstallNodeToReplace(node_id, merge_node_p, node_p);
 
     // If CAS fails we delete the node and return false
     if(ret == false) {
-      delete merge_node_p;
+      merge_node_p->~InnerMergeNode();
+    } else {
+      *node_p_p = merge_node_p;
+    }
+
+    return ret;
+  }
+  
+
+  /*
+   * PostLeafMergeNode() - Post an inner merge node
+   */
+  bool PostLeafMergeNode(const NodeSnapshot *snapshot_p,
+                         const KeyType *merge_key_p,
+                         const BaseNode *merge_branch_p,
+                         NodeID deleted_node_id,
+                         const BaseNode **node_p_p) {
+    // This is the child node of merge delta
+    const BaseNode *node_p = snapshot_p->node_p;
+    NodeID node_id = snapshot_p->node_id;
+
+    const LeafMergeNode *merge_node_p = \
+      InnerInlineAllocateOfType(LeafMergeNode, 
+                                node_p,
+                                *merge_key_p,
+                                merge_branch_p,
+                                deleted_node_id,
+                                node_p);
+
+    // Compare and Swap!
+    bool ret = InstallNodeToReplace(node_id, merge_node_p, node_p);
+
+    // If CAS fails we delete the node and return false
+    if(ret == false) {
+      merge_node_p->~LeafMergeNode();
     } else {
       *node_p_p = merge_node_p;
     }
