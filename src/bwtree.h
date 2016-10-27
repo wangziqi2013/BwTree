@@ -34,6 +34,7 @@
 #include <unordered_set>
 // offsetof() is defined here
 #include <cstddef>
+#include <vector>
 
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
