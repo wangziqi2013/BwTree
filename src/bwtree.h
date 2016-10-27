@@ -145,6 +145,13 @@ extern bool print_flag;
 #define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
+// InlineAllocateOfType() allocates a chunk of memory from base node and
+// initialize it using placement new and then return its pointer
+#define InlineAllocateOfType(T, low_key_p, ...) (static_cast<T *>( \
+                                                   new(ElasticNode::InlineAllocate( \
+                                                     low_key_p, sizeof(T)) \
+                                                   ) T{##__VA_ARGS__} ))
+
 /*
  * class BwTree - Lock-free BwTree index implementation
  *
