@@ -6710,7 +6710,12 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, value, node_p, index_pair};
+        LeafInlineAllocateOfType(LeafDeleteNode, 
+                                 node_p, 
+                                 key, 
+                                 value, 
+                                 node_p, 
+                                 index_pair);
 
       bool ret = InstallNodeToReplace(node_id,
                                       delete_node_p,
@@ -6724,7 +6729,7 @@ before_switch:
       } else {
         bwt_printf("Leaf Delete delta CAS failed\n");
 
-        delete delete_node_p;
+        delete_node_p->~LeafDeleteNode();
 
         #ifdef BWTREE_DEBUG
 
@@ -6742,89 +6747,6 @@ before_switch:
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
     }
-
-    epoch_manager.LeaveEpoch(epoch_node_p);
-
-    return true;
-  }
-
-  /*
-   * DeleteExchange() - Deletes an item pointer and copies the deleted
-   *                    value to the input parameter
-   *
-   * If the key-value pair is found, then they will be deleted from the
-   * index, and input parameter value would be overwritten
-   * using the deleted value of value (key is unchanged; of course it
-   * should not change since the key must be the same)
-   */
-  bool DeleteExchange(KeyType &key, ValueType *value_p) {
-    bwt_printf("DeleteExchange called\n");
-
-    #ifdef BWTREE_DEBUG
-    delete_op_count.fetch_add(1);
-    #endif
-
-    const KeyValuePair *item_p;
-
-    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
-
-    while(1) {
-      Context context{key};
-      std::pair<int, bool> index_pair;
-
-      // Navigate leaf nodes to check whether the key-value
-      // pair exists
-      item_p = Traverse(&context, value_p, &index_pair);
-
-      // If value not found just return
-      if(item_p == nullptr) {
-        epoch_manager.LeaveEpoch(epoch_node_p);
-
-        return false;
-      }
-
-      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
-
-      // We will CAS on top of this
-      const BaseNode *node_p = snapshot_p->node_p;
-      NodeID node_id = snapshot_p->node_id;
-
-      const LeafDeleteNode *delete_node_p = \
-        new LeafDeleteNode{key, *value_p, node_p, index_pair};
-
-      bool ret = InstallNodeToReplace(node_id,
-                                      delete_node_p,
-                                      node_p);
-      if(ret == true) {
-        bwt_printf("Leaf Delete delta CAS succeed\n");
-
-        // If install is a success then just break from the loop
-        // and return
-        break;
-      } else {
-        bwt_printf("Leaf Delete delta CAS failed\n");
-
-        delete delete_node_p;
-
-        #ifdef BWTREE_DEBUG
-
-        context.abort_counter++;
-        
-        #endif
-      }
-
-      #ifdef BWTREE_DEBUG
-
-      delete_abort_count.fetch_add(context.abort_counter);
-      
-      #endif
-
-      // We reach here only because CAS failed
-      bwt_printf("Retry installing leaf delete delta from the root\n");
-    }
-
-    // Assign the old deleted value to input parameter value
-    *value_p = item_p->second;
 
     epoch_manager.LeaveEpoch(epoch_node_p);
 
