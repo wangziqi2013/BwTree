@@ -18,7 +18,6 @@
 #include <pthread.h>
 
 #include "../src/bwtree.h"
-#include "../benchmark/stx_btree/btree.h"
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
 
@@ -571,6 +570,19 @@ void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeZipfRead(TreeType *t, int key_num, int thread_num);
+
+void BenchmarkBTreeSeqInsert(BTreeType *t, 
+                             int key_num, 
+                             int num_thread);
+void BenchmarkBTreeSeqRead(BTreeType *t, 
+                           int key_num,
+                           int num_thread);
+void BenchmarkBTreeRandRead(BTreeType *t, 
+                            int key_num,
+                            int num_thread);
+void BenchmarkBTreeZipfRead(BTreeType *t, 
+                            int key_num,
+                            int num_thread);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 

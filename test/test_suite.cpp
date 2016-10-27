@@ -34,7 +34,7 @@ TreeType *GetEmptyTree(bool no_print) {
  * GetEmptyBTree() - Returns an empty Btree multimap object created on the heap
  */ 
 BTreeType *GetEmptyBTree() {
-  BTreeType *t = new BTreeType(KeyComparator{1});
+  BTreeType *t = new BTreeType{KeyComparator{1}};
   
   return t; 
 }
