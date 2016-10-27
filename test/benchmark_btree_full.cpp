@@ -377,3 +377,73 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
 
   return;
 }
+
+/*
+ * BenchmarkBTreeZipfLockLessRead() - As name suggests
+ *
+ * In this benchmark we just let it fire without any lock
+ */
+void BenchmarkBTreeZipfLockLessRead(BTreeType *t, 
+                                    int key_num,
+                                    int num_thread) {
+  int iter = 1;
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+  std::vector<long> zipfian_key_list{};
+  zipfian_key_list.reserve(key_num);
+  Zipfian zipf{(uint64_t)key_num, 0.99, (uint64_t)time(NULL)};
+  for(int i = 0;i < key_num;i++) {
+    zipfian_key_list.push_back(zipf.Get()); 
+  }
+  
+  auto func2 = [key_num, 
+                iter, 
+                &thread_time,
+                &zipfian_key_list,
+                num_thread](uint64_t thread_id, BTreeType *t) {
+    long int start_index = key_num / num_thread * (long)thread_id;
+    long int end_index = start_index + key_num / num_thread;
+    
+    std::vector<long> v{};
+
+    v.reserve(1);
+
+    Timer timer{true};
+
+    for(int j = 0;j < iter;j++) {
+      for(long int i = start_index;i < end_index;i++) {
+        long int key = zipfian_key_list[i];
+        auto it_pair = t->equal_range(key);
+        for(auto it = it_pair.first;it != it_pair.second;it++) {
+          v.push_back(it->second);
+        }
+        v.clear();
+      }
+    }
+
+    double duration = timer.Stop();
+
+    std::cout << "[Thread " << thread_id << " Done] @ " \
+              << (iter * (end_index - start_index) / (1024.0 * 1024.0)) / duration \
+              << " million read (zipfian, lockless)/sec" << "\n";
+              
+    thread_time[thread_id] = duration;
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func2, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BTree Multimap: overall "
+            << (iter * key_num / (1024.0 * 1024.0)) / (elapsed_seconds / num_thread)
+            << " million read (zipfian, lockless)/sec" << "\n";
+
+  return;
+}
