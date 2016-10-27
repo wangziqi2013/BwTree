@@ -6510,7 +6510,12 @@ before_switch:
       NodeID node_id = snapshot_p->node_id;
 
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p, index_pair};
+        LeafInlineAllocateOfType(LeafInsertNode, 
+                                 node_p, 
+                                 key, 
+                                 value, 
+                                 node_p, 
+                                 index_pair);
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -6530,7 +6535,7 @@ before_switch:
         
         #endif
 
-        delete insert_node_p;
+        insert_node_p->~LeafInsertNode();
       }
 
       #ifdef BWTREE_DEBUG
@@ -6622,7 +6627,12 @@ before_switch:
       // Here since we could not know which is the next key node
       // just use child node as a cpnservative way of inserting
       const LeafInsertNode *insert_node_p = \
-        new LeafInsertNode{key, value, node_p, index_pair};
+        LeafInlineAllocateOfType(LeafInsertNode, 
+                                 node_p, 
+                                 key, 
+                                 value, 
+                                 node_p, 
+                                 index_pair);
 
       bool ret = InstallNodeToReplace(node_id,
                                       insert_node_p,
@@ -6642,7 +6652,7 @@ before_switch:
         
         #endif
 
-        delete insert_node_p;
+        insert_node_p->~LeafInsertNode();
       }
 
       #ifdef BWTREE_DEBUG
