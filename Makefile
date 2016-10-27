@@ -1,6 +1,6 @@
 
 CXX = g++
-CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16 -Wno-invalid-offsetof -l boost_system
+CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16 -Wno-invalid-offsetof
 GMON_FLAG = 
 OPT_FLAG = -O2
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
@@ -58,7 +58,7 @@ gprof:
 
 full-speed:
 	make clean
-	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG"
+	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG -lboost_system -lboost_thread"
 
 small-size:
 	make clean
