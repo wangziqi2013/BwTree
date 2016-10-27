@@ -83,6 +83,9 @@ using TreeType = BwTree<long int,
                         long int,
                         KeyComparator,
                         KeyEqualityChecker>;
+                        
+using BTreeType = btree_multimap<long, long, KeyComparator>;
+                        
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
 using LeafDeleteNode = typename TreeType::LeafDeleteNode;
@@ -510,8 +513,18 @@ class Zipfian {
    
 };
 
+/*
+ * Initialize and destroy btree
+ */
 TreeType *GetEmptyTree(bool no_print = false);
 void DestroyTree(TreeType *t, bool no_print = false);
+
+/*
+ * Btree
+ */
+BTreeType *GetEmptyBTree();
+void DestroyBTree(BTreeType *t);
+
 void PrintStat(TreeType *t);
 void PinToCore(size_t core_id);
 
