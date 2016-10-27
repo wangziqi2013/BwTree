@@ -5280,11 +5280,11 @@ before_switch:
           #ifdef BWTREE_PELOTON
 
           // This is the first item of the newly created InnerNode
-          // and also the low key for the new InnerNode
+          // and also the low key for the newly created InnerNode
           const KeyNodeIDPair first_item = std::make_pair(KeyType(),
                                                           snapshot_p->node_id);
 
-          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
             reinterpret_cast<InnerNode *>( \
               ElasticNode<KeyNodeIDPair>::\
@@ -5298,11 +5298,11 @@ before_switch:
           #else
 
           // This is the first item of the newly created InnerNode
-          // and also the low key for the new InnerNode
+          // and also the low key for the InnerNode
           const KeyNodeIDPair first_item = std::make_pair(KeyType{},
                                                           snapshot_p->node_id);
 
-          // Allocate a new InnerNode with KeyNodeIDPair embedded
+          // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
             reinterpret_cast<InnerNode *>( \
               ElasticNode<KeyNodeIDPair>::\
@@ -5340,13 +5340,14 @@ before_switch:
             // We need to make a new remove node and send it into EpochManager
             // for recycling the NodeID
             const InnerRemoveNode *fake_remove_node_p = \
-              new InnerRemoveNode{new_root_id, inner_node_p};
+              InnerInlineAllocateOfType(InnerRemoveNode, 
+                                        inner_node_p, 
+                                        new_root_id, 
+                                        inner_node_p);
 
             // Put the remove node into garbage chain, because
             // we cannot call InvalidateNodeID() here
             epoch_manager.AddGarbageNode(fake_remove_node_p);
-
-            delete inner_node_p;
 
             context_p->abort_flag = true;
 
@@ -5895,11 +5896,14 @@ before_switch:
         }
 
         const InnerRemoveNode *remove_node_p = \
-          new InnerRemoveNode{node_id, node_p};
+          InnerInlineAllocateOfType(InnerRemoveNode, 
+                                    node_p, 
+                                    node_id, 
+                                    node_p);
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
-          bwt_printf("LeafRemoveNode CAS succeeds. ABORT\n");
+          bwt_printf("InnerRemoveNode CAS succeeds. ABORT\n");
 
           // We abort after installing a node remove delta
           context_p->abort_flag = true;
@@ -5913,9 +5917,9 @@ before_switch:
 
           return;
         } else {
-          bwt_printf("LeafRemoveNode CAS failed\n");
+          bwt_printf("InnerRemoveNode CAS failed\n");
 
-          delete remove_node_p;
+          remove_node_p->~InnerRemoveNode();
 
           // We must abort here since otherwise it might cause
           // merge nodes to underflow
@@ -5966,6 +5970,7 @@ before_switch:
 
     // This delays the deletion of abort node until all threads has exited
     // so that existing pointers to ABORT node remain valid
+    // GC does not follow the delta chain of ABORT node
     epoch_manager.AddGarbageNode(abort_node_p);
 
     return;
@@ -6000,7 +6005,8 @@ before_switch:
     *abort_child_node_p_p = parent_node_p;
     *parent_node_id_p = parent_node_id;
 
-    InnerAbortNode *abort_node_p = new InnerAbortNode{parent_node_p};
+    InnerAbortNode *abort_node_p = \
+      InnerInlineAllocateOfType(InnerAbortNode, parent_node_p, parent_node_p);
 
     bool ret = InstallNodeToReplace(parent_node_id,
                                     abort_node_p,
@@ -6015,7 +6021,7 @@ before_switch:
     } else {
       bwt_printf("Inner Abort node CAS failed\n");
 
-      delete abort_node_p;
+      abort_node_p->~InnerAbortNode();
     }
 
     return ret;
