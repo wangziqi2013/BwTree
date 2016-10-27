@@ -1914,7 +1914,7 @@ class BwTree {
       const ElasticNode *node_p = GetNodeHeader(low_key_p);
       assert(&node_p->low_key == low_key_p);
       
-      // Jumo over chunk content
+      // Jump over chunk content
       AllocationMeta *meta_p = GetAllocationHeader(node_p);
             
       void *p = meta_p->Allocate(size);
@@ -5358,11 +5358,12 @@ before_switch:
 
             // We need to make a new remove node and send it into EpochManager
             // for recycling the NodeID
+            // Note that the remove node must not be created on inner_node_p
+            // since inner_node_p might be destroyed before remove node is 
+            // destroyed since they are both put into the GC chain
             const InnerRemoveNode *fake_remove_node_p = \
-              InnerInlineAllocateOfType(InnerRemoveNode, 
-                                        inner_node_p, 
-                                        new_root_id, 
-                                        inner_node_p);
+              new InnerRemoveNode{new_root_id, 
+                                  inner_node_p};
 
             // Put the remove node into garbage chain, because
             // we cannot call InvalidateNodeID() here
@@ -5700,14 +5701,13 @@ before_switch:
           bwt_printf("Leaf split delta CAS fails\n");
 
           // Need to use the epoch manager to recycle NodeID
-          // NOTE: DO NOT CHANGE THE NEW LEAF NODE since the
-          // constructor needs some pointer to initialize
-          // the high key and low key
+          // Note that this node must not be created on new_leaf_node_p
+          // since they are both put into the GC chain, it is possible
+          // for new_leaf_node_p to be deleted first and then remove node
+          // is deleted
           const LeafRemoveNode *fake_remove_node_p = \
-            LeafInlineAllocateOfType(LeafRemoveNode, 
-                                     new_leaf_node_p, 
-                                     new_node_id, 
-                                     new_leaf_node_p);
+            new LeafRemoveNode{new_node_id, 
+                               new_leaf_node_p};
 
           // Must put both of them into GC chain since RemoveNode
           // will not be followed by GC thread
@@ -5759,10 +5759,8 @@ before_switch:
         }
 
         const LeafRemoveNode *remove_node_p = \
-          LeafInlineAllocateOfType(LeafRemoveNode, 
-                                   node_p, 
-                                   node_id, 
-                                   node_p);
+          new LeafRemoveNode{node_id, 
+                             node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -5778,7 +5776,7 @@ before_switch:
         } else {
           bwt_printf("LeafRemoveNode CAS failed\n");
 
-          remove_node_p->~LeafRemoveNode();
+          delete remove_node_p;
 
           context_p->abort_flag = true;
 
@@ -5861,13 +5859,12 @@ before_switch:
 
           // Use the epoch manager to recycle NodeID in single threaded
           // environment
-          // Note that this remove node should be created on top
-          // of the newly created InnerNode to be recycled together with it
+          // Note that this remove node should be created on existing node
+          // rather than on new_inner_node_p, since new_inner_node_p may
+          // be destroyed before fake_remove_node_p is destroyed
           const InnerRemoveNode *fake_remove_node_p = \
-            InnerInlineAllocateOfType(InnerRemoveNode, 
-                                      new_inner_node_p,  
-                                      new_node_id, 
-                                      new_inner_node_p);
+            new InnerRemoveNode{new_node_id, 
+                                new_inner_node_p};
 
           epoch_manager.AddGarbageNode(fake_remove_node_p);
           epoch_manager.AddGarbageNode(new_inner_node_p);
@@ -5927,10 +5924,8 @@ before_switch:
         }
 
         const InnerRemoveNode *remove_node_p = \
-          InnerInlineAllocateOfType(InnerRemoveNode, 
-                                    node_p, 
-                                    node_id, 
-                                    node_p);
+          new InnerRemoveNode{node_id, 
+                              node_p};
 
         bool ret = InstallNodeToReplace(node_id, remove_node_p, node_p);
         if(ret == true) {
@@ -5950,7 +5945,7 @@ before_switch:
         } else {
           bwt_printf("InnerRemoveNode CAS failed\n");
 
-          remove_node_p->~InnerRemoveNode();
+          delete remove_node_p;
 
           // We must abort here since otherwise it might cause
           // merge nodes to underflow
@@ -6037,7 +6032,7 @@ before_switch:
     *parent_node_id_p = parent_node_id;
 
     InnerAbortNode *abort_node_p = \
-      InnerInlineAllocateOfType(InnerAbortNode, parent_node_p, parent_node_p);
+      new InnerAbortNode{parent_node_p};
 
     bool ret = InstallNodeToReplace(parent_node_id,
                                     abort_node_p,
@@ -6052,7 +6047,7 @@ before_switch:
     } else {
       bwt_printf("Inner Abort node CAS failed\n");
 
-      abort_node_p->~InnerAbortNode();
+      delete abort_node_p;
     }
 
     return ret;
@@ -7358,7 +7353,7 @@ try_join_again:
             // This recycles node ID
             tree_p->InvalidateNodeID(((LeafRemoveNode *)node_p)->removed_id);
 
-            ((LeafRemoveNode *)node_p)->~LeafRemoveNode();
+            delete ((LeafRemoveNode *)node_p);
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7368,10 +7363,6 @@ try_join_again:
             // We never try to free those under remove node
             // since they will be freed by recursive call from
             // merge node
-            //
-            // TODO: Put remove node into garbage list after
-            // IndexTermDeleteDelta was posted (this could only be done
-            // by one thread that succeeds CAS)
             return;
           case NodeType::LeafType:
             ((LeafNode *)node_p)->~LeafNode();
@@ -7431,7 +7422,7 @@ try_join_again:
             // see the remove node exit before cleaning the NodeID
             tree_p->InvalidateNodeID(((InnerRemoveNode *)node_p)->removed_id);
 
-            ((InnerRemoveNode *)node_p)->~InnerRemoveNode();
+            delete ((InnerRemoveNode *)node_p);
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -7455,7 +7446,7 @@ try_join_again:
             // wrong type after the node has been put into the
             // list (if we delete it directly then this will be
             // a problem)
-            ((InnerAbortNode *)node_p)->~InnerAbortNode();
+            delete ((InnerAbortNode *)node_p);
 
             #ifdef BWTREE_DEBUG
             freed_count++;
