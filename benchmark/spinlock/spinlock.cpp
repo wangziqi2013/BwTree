@@ -8,6 +8,8 @@
  * Original authored by JesseFang (github: boytm)
  */ 
 
+#include "spinlock.h"
+
 using std::atomic;
 using std::atomic_int;
 using std::atomic_store_explicit;
@@ -16,8 +18,6 @@ using std::atomic_compare_exchange_weak_explicit;
 using std::memory_order_relaxed;
 using std::memory_order_acquire;
 using std::memory_order_release;
-
-#include "spinlock.h"
 
 void rwlock_init(spinlock_t &l)
 {

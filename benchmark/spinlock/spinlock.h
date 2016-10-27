@@ -10,7 +10,7 @@
 #define SPIN_LOCK_UNLOCK 0
 #define SPIN_LOCK_WRITE_LOCK -1
 
-#define spinlock_t atomic<int>
+using spinlock_t = std::atomic<int>;
 
 void rwlock_init(spinlock_t &l);
 void read_lock(spinlock_t &l);
