@@ -9,9 +9,13 @@
 #include "test_suite.h"
 #include "../benchmark/spinlock/spinlock.h"
 
+// Only use boost for full-speed build
+#ifdef NDEBUG 
 // For boost reference:
 //   http://www.boost.org/doc/libs/1_58_0/doc/html/thread/synchronization.html#thread.synchronization.mutex_types.shared_mutex
 #define USE_BOOST
+#pragma message "Using boost::thread for shared_mutex"
+#endif
 
 #ifdef USE_BOOST
 #include <boost/thread/shared_mutex.hpp>
@@ -31,7 +35,7 @@ void BenchmarkBTreeSeqInsert(BTreeType *t,
     thread_time[i] = 0.0;
   }
   
-  #ifdef USE_BOOST
+  #ifndef USE_BOOST
   // Declear a spinlock protecting the data structure
   spinlock_t lock;
   rwlock_init(lock);
@@ -50,7 +54,7 @@ void BenchmarkBTreeSeqInsert(BTreeType *t,
     Timer timer{true};
 
     for(long int i = start_key;i < end_key;i++) {
-      #ifdef USE_BOOST
+      #ifndef USE_BOOST
       write_lock(lock);
       #else
       lock.lock();
@@ -58,7 +62,7 @@ void BenchmarkBTreeSeqInsert(BTreeType *t,
       
       t->insert(i, i);
       
-      #ifdef USE_BOOST
+      #ifndef USE_BOOST
       write_unlock(lock);
       #else
       lock.unlock();
@@ -104,7 +108,7 @@ void BenchmarkBTreeSeqRead(BTreeType *t,
     thread_time[i] = 0.0;
   }
   
-  #ifdef USE_BOOST
+  #ifndef USE_BOOST
   // Declear a spinlock protecting the data structure
   spinlock_t lock;
   rwlock_init(lock);
@@ -125,7 +129,7 @@ void BenchmarkBTreeSeqRead(BTreeType *t,
 
     for(int j = 0;j < iter;j++) {
       for(long int i = 0;i < key_num;i++) {
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_lock(lock);
         #else
         lock.lock_shared();
@@ -141,7 +145,7 @@ void BenchmarkBTreeSeqRead(BTreeType *t,
           v.push_back(it->second);
         }
         
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_unlock(lock);
         #else
         lock.unlock_shared();
@@ -190,7 +194,7 @@ void BenchmarkBTreeRandRead(BTreeType *t,
     thread_time[i] = 0.0;
   }
   
-  #ifdef USE_BOOST
+  #ifndef USE_BOOST
   // Declear a spinlock protecting the data structure
   spinlock_t lock;
   rwlock_init(lock);
@@ -217,7 +221,7 @@ void BenchmarkBTreeRandRead(BTreeType *t,
         //int key = uniform_dist(e1);
         long int key = (long int)h((uint64_t)i, thread_id);
 
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_lock(lock);
         #else
         lock.lock_shared();
@@ -233,7 +237,7 @@ void BenchmarkBTreeRandRead(BTreeType *t,
           v.push_back(it->second);
         }
         
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_unlock(lock);
         #else
         lock.unlock_shared();
@@ -283,7 +287,7 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
     thread_time[i] = 0.0;
   }
   
-  #ifdef USE_BOOST
+  #ifndef USE_BOOST
   // Declear a spinlock protecting the data structure
   spinlock_t lock;
   rwlock_init(lock);
@@ -323,7 +327,7 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
       for(long int i = start_index;i < end_index;i++) {
         long int key = zipfian_key_list[i];
 
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_lock(lock);
         #else
         lock.lock_shared();
@@ -339,7 +343,7 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
           v.push_back(it->second);
         }
         
-        #ifdef USE_BOOST
+        #ifndef USE_BOOST
         read_unlock(lock);
         #else
         lock.unlock_shared();
