@@ -146,15 +146,30 @@ extern bool print_flag;
 #define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
 /*
- * InlineAllocateOfType() - allocates a chunk of memory from base node and
- *                          initialize it using placement new and then return 
- *                          its pointer
+ * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
+ *                               initialize it using placement new and then 
+ *                               return its pointer
+ *
+ * This is used for InnerNode delta chains
  */
-#define InlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
-                                                new(ElasticNode::InlineAllocate( \
-                                                    &node_p->GetLowKeyPair(), \
-                                                    sizeof(T)) \
-                                                ) T{##__VA_ARGS__} ))
+#define InnerInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
+                                                     new(ElasticNode<KeyNodeIDPair>::InlineAllocate( \
+                                                         &node_p->GetLowKeyPair(), \
+                                                         sizeof(T)) \
+                                                     ) T{ __VA_ARGS__ } ))
+                                                     
+/*
+ * LeafInlineAllocateOfType() - allocates a chunk of memory from base node and
+ *                              initialize it using placement new and then 
+ *                              return its pointer
+ *
+ * This is used for LeafNode delta chains
+ */
+#define LeafInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
+                                                    new(ElasticNode<KeyValuePair>::InlineAllocate( \
+                                                        &node_p->GetLowKeyPair(), \
+                                                        sizeof(T)) \
+                                                    ) T{__VA_ARGS__} ))
 
 /*
  * class BwTree - Lock-free BwTree index implementation
@@ -1853,7 +1868,7 @@ class BwTree {
      * This is useful since only the low key pointer is available from any
      * type of node
      */
-    static ElasticNode *GetNodeHeader(ElementType *low_key_p) {
+    static ElasticNode *GetNodeHeader(const ElementType *low_key_p) {
       static constexpr size_t low_key_offset = offsetof(ElasticNode, low_key);
       
       return reinterpret_cast<ElasticNode *>( \
@@ -1884,7 +1899,7 @@ class BwTree {
      * so (1) it is static, and (2) it takes low key p which is universally
      * available for all node type (stored in NodeMetadata)
      */
-    static void *InlineAllocate(ElementType *low_key_p, size_t size) {
+    static void *InlineAllocate(const ElementType *low_key_p, size_t size) {
       ElasticNode *node_p = GetNodeHeader(low_key_p);
       assert(&node_p->low_key == low_key_p);
       
@@ -4889,9 +4904,11 @@ abort_traverse:
     //                      next key-node id pair
     //                      child node in delta chain
     const InnerInsertNode *insert_node_p = \
-      new InnerInsertNode{insert_item,
-                          next_item,
-                          parent_snapshot_p->node_p};
+      InnerInlineAllocateOfType(InnerInsertNode,             // Type
+                                parent_snapshot_p->node_p,   // Node pointer
+                                insert_item,                 // Params below
+                                next_item,
+                                parent_snapshot_p->node_p);
 
     // CAS Index Term Insert Delta onto the parent node
     bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
