@@ -6443,9 +6443,12 @@ before_switch:
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
+    // Note that we allocate from merge_banch_p since node_p is deallocated
+    // first and then merge_branch_p, so if we allocate the merge node
+    // on node_p's base node it will be invalid for the second recursive call
     const InnerMergeNode *merge_node_p = \
       InnerInlineAllocateOfType(InnerMergeNode, 
-                                node_p,
+                                merge_branch_p,
                                 *merge_key_p,
                                 merge_branch_p,
                                 deleted_node_id,
@@ -6477,9 +6480,13 @@ before_switch:
     const BaseNode *node_p = snapshot_p->node_p;
     NodeID node_id = snapshot_p->node_id;
 
+    // Must allocate on merge_branch_p, otherwise when recycle this
+    // delta chain, node_p is reclaimed first and then merge_branch_p,
+    // so if we allocate it on node_p, we will get an invalid reference
+    // for the second recursive call
     const LeafMergeNode *merge_node_p = \
       InnerInlineAllocateOfType(LeafMergeNode, 
-                                node_p,
+                                merge_branch_p,
                                 *merge_key_p,
                                 merge_branch_p,
                                 deleted_node_id,
