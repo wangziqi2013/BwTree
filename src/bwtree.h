@@ -7928,7 +7928,7 @@ try_join_again:
      */
     ~ForwardIterator() {
       if(leaf_node_p != nullptr) {
-        delete leaf_node_p;
+        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
       }
 
       return;
@@ -8088,7 +8088,7 @@ try_join_again:
           // be a null pointer
           assert(start_key_p != nullptr);
 
-          delete leaf_node_p;
+          tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
         }
 
         // Consolidate the current node
