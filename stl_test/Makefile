@@ -12,6 +12,7 @@ all: $(SOURCE)
 	g++ sorted_small_set_test.cpp -o ./bin/sorted_small_set_test $(CXXFLAG)
 	g++ partial_order_sort.cpp -o ./bin/partial_order_sort $(CXXFLAG)
 	g++ copy_backward.cpp -o ./bin/copy_backward.cpp $(CXXFLAG)
+	g++ offsetof_test.cpp -o ./bin/offset_of $(CXXFLAG)
 
 clean:
 	rm -f ./bin/*
