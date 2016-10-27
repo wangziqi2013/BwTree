@@ -124,6 +124,7 @@ int main(int argc, char **argv) {
     BenchmarkBTreeSeqRead(t, key_num, (int)thread_num);
     BenchmarkBTreeRandRead(t, key_num, (int)thread_num);
     BenchmarkBTreeZipfRead(t, key_num, (int)thread_num);
+    BenchmarkBTreeZipfLockLessRead(t, key_num, (int)thread_num);
     
     DestroyBTree(t);
   }

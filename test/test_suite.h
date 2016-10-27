@@ -583,6 +583,9 @@ void BenchmarkBTreeRandRead(BTreeType *t,
 void BenchmarkBTreeZipfRead(BTreeType *t, 
                             int key_num,
                             int num_thread);
+void BenchmarkBTreeZipfLockLessRead(BTreeType *t, 
+                                    int key_num,
+                                    int num_thread);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
