@@ -3207,6 +3207,15 @@ abort_traverse:
     assert(inner_node_p->GetSize() == node_p->GetItemCount());
     assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
+    int end_micro_index = (inner_node_p->GetItemCount() - 1) / 8;
+    for(int i = 0;i <= end_micro_index;i++) {
+      // This is the place where real element should be 
+      int element_index = i * 8;
+      
+      // Fill in just the key
+      micro_index[i] = inner_node_p->At(element_index).first;
+    }
+
     return inner_node_p;
   }
 
