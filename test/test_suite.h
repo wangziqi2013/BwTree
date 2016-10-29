@@ -18,7 +18,6 @@
 #include <pthread.h>
 
 #include "../src/bwtree.h"
-#include "../benchmark/stx_btree/btree.h"
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
 
@@ -83,6 +82,9 @@ using TreeType = BwTree<long int,
                         long int,
                         KeyComparator,
                         KeyEqualityChecker>;
+                        
+using BTreeType = btree_multimap<long, long, KeyComparator>;
+                        
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
 using LeafDeleteNode = typename TreeType::LeafDeleteNode;
@@ -510,8 +512,18 @@ class Zipfian {
    
 };
 
+/*
+ * Initialize and destroy btree
+ */
 TreeType *GetEmptyTree(bool no_print = false);
 void DestroyTree(TreeType *t, bool no_print = false);
+
+/*
+ * Btree
+ */
+BTreeType *GetEmptyBTree();
+void DestroyBTree(BTreeType *t);
+
 void PrintStat(TreeType *t);
 void PinToCore(size_t core_id);
 
@@ -558,6 +570,22 @@ void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeZipfRead(TreeType *t, int key_num, int thread_num);
+
+void BenchmarkBTreeSeqInsert(BTreeType *t, 
+                             int key_num, 
+                             int num_thread);
+void BenchmarkBTreeSeqRead(BTreeType *t, 
+                           int key_num,
+                           int num_thread);
+void BenchmarkBTreeRandRead(BTreeType *t, 
+                            int key_num,
+                            int num_thread);
+void BenchmarkBTreeZipfRead(BTreeType *t, 
+                            int key_num,
+                            int num_thread);
+void BenchmarkBTreeZipfLockLessRead(BTreeType *t, 
+                                    int key_num,
+                                    int num_thread);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 

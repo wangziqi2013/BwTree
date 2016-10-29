@@ -4,8 +4,8 @@ CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16 -Wno-invalid-offsetof
 GMON_FLAG = 
 OPT_FLAG = -O2
 PRELOAD_LIB = LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-SRC = ./test/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./test/test_suite.h ./test/test_suite.cpp ./test/random_pattern_test.cpp ./test/basic_test.cpp ./test/mixed_test.cpp ./test/performance_test.cpp ./test/stress_test.cpp ./test/iterator_test.cpp ./test/misc_test.cpp ./test/benchmark_bwtree_full.cpp
-OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o ./build/stress_test.o ./build/iterator_test.o ./build/misc_test.o ./build/benchmark_bwtree_full.o
+SRC = ./test/main.cpp ./src/bwtree.h ./src/bloom_filter.h ./src/atomic_stack.h ./src/sorted_small_set.h ./test/test_suite.h ./test/test_suite.cpp ./test/random_pattern_test.cpp ./test/basic_test.cpp ./test/mixed_test.cpp ./test/performance_test.cpp ./test/stress_test.cpp ./test/iterator_test.cpp ./test/misc_test.cpp ./test/benchmark_bwtree_full.cpp ./benchmark/spinlock/spinlock.cpp ./test/benchmark_btree_full.cpp
+OBJ = ./build/main.o ./build/bwtree.o ./build/test_suite.o ./build/random_pattern_test.o ./build/basic_test.o ./build/mixed_test.o ./build/performance_test.o ./build/stress_test.o ./build/iterator_test.o ./build/misc_test.o ./build/benchmark_bwtree_full.o ./build/spinlock.o ./build/benchmark_btree_full.o
 
 all: main
 
@@ -35,6 +35,9 @@ main: $(OBJ)
 
 ./build/benchmark_bwtree_full.o: ./test/benchmark_bwtree_full.cpp ./src/bwtree.h
 	$(CXX) ./test/benchmark_bwtree_full.cpp -c -o ./build/benchmark_bwtree_full.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
+
+./build/benchmark_btree_full.o: ./test/benchmark_btree_full.cpp ./src/bwtree.h
+	$(CXX) ./test/benchmark_btree_full.cpp -c -o ./build/benchmark_btree_full.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
 	
 ./build/stress_test.o: ./test/stress_test.cpp ./src/bwtree.h
 	$(CXX) ./test/stress_test.cpp -c -o ./build/stress_test.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
@@ -46,13 +49,16 @@ main: $(OBJ)
 	$(CXX) ./test/misc_test.cpp -c -o ./build/misc_test.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
 
 
+./build/spinlock.o:
+	$(CXX) ./benchmark/spinlock/spinlock.cpp -c -o ./build/spinlock.o $(CXX_FLAG) $(OPT_FLAG) $(GMON_FLAG)
+
 gprof:
 	make clean
 	make all GMON_FLAG=-pg
 
 full-speed:
 	make clean
-	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG"
+	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG -lboost_system -lboost_thread"
 
 small-size:
 	make clean
@@ -66,6 +72,9 @@ benchmark-bwtree: main
 
 benchmark-bwtree-full: main
 	$(PRELOAD_LIB) ./main --benchmark-bwtree-full
+
+benchmark-btree-full: main
+	$(PRELOAD_LIB) ./main --benchmark-btree-full
 
 test: main
 	$(PRELOAD_LIB) ./main --test
