@@ -1481,19 +1481,6 @@ class BwTree {
   };
   
   /*
-   * class MicroIndex - This implements a second level index on top of 
-   *                    existing keys
-   *
-   * The gist of this structure is to provide a cache-resident lookup
-   * table for the larger inner node
-   */
-  template <typename ElementType>
-  class MicroIndex {
-   public:
-    ElementType data[8];
-  };
-  
-  /*
    * class AllocationMeta - Metadata for maintaining preallocated space
    */
   class AllocationMeta {
@@ -1501,9 +1488,7 @@ class BwTree {
     // One reasonable amount of memory for each chunk is 
     // delta chain len * struct len + sizeof this struct
     static constexpr size_t CHUNK_SIZE = \
-      sizeof(DeltaNodeUnion) * LEAF_DELTA_CHAIN_LENGTH_THRESHOLD + \
-      sizeof(AllocationMeta) + \
-      sizeof(MicroIndex);
+      sizeof(DeltaNodeUnion) * 8 + sizeof(AllocationMeta);
     
    private: 
     // This points to the higher address end of the chunk we are 
@@ -1910,16 +1895,6 @@ class BwTree {
       return reinterpret_cast<AllocationMeta *>( \
                reinterpret_cast<uint64_t>(node_p) - \
                  AllocationMeta::CHUNK_SIZE);
-    }
-    
-    /*
-     * GetMicroIndex() - Returns a pointer to the micro index that facilitates
-     *                   fast cache line search
-     */
-    static MicroIndex *GetMicroIndex(const ElasticNode *node_p) {
-      return reinterpret_cast<MicroIndex *>( \
-               reinterpret_cast<uint64_t>(node_p) - \
-                 sizeof(MicroIndex));
     }
     
     /*
