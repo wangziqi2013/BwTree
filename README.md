@@ -1,5 +1,5 @@
 # BwTree [![Build Status](https://travis-ci.org/wangziqi2013/BwTree.svg?branch=peloton)](https://travis-ci.org/wangziqi2013/BwTree) [![Coverage Status](https://coveralls.io/repos/github/wangziqi2013/BwTree/badge.svg?branch=peloton)](https://coveralls.io/github/wangziqi2013/BwTree?branch=peloton)
-This is a street strength implementation of Bw-Tree, using ideas from the MSR's paper with some minor modifications. The official implementation of BwTree by Microsoft is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.  
+This is an implementation of BwTree, based on a design from Microsoft Research[1]. The official implementation of BwTree by Microsoft is currently deployed in SQL Server Hekaton, Azure DocumentDB, Bing and other Microsoft products.  
 
 BwTree is a general purpose, concurrent and lock-free B+-Tree index. It allows for multiple threads modifying and/or querying the tree concurrently without corrupting the tree or giving inconsistent results. However, BwTree only guarantees atomicity of operations, and is not a concurrency control agent. If both atomicity and isolation is required, an extra concurrency control layer must be implemented.
 
@@ -8,35 +8,7 @@ This project is developed together with Peloton, a self-adaptive database system
 Benchmark 
 ========= 
 
-3 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30.png)
-
-1 Million Key; 1 thread; Intel Core i7-4600 CPU @ 2.10GHz (max @ 3.30GHz); 32K/256K/4M L1/L2/L3 cache 
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-30-2.png)
-
-27.55 Million String Key; 1 thread; Intel Xeon E5-2420 v2 @ 2.20GHz; 32K/256K/16M L1/L2/L3 cache
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/result-2016-07-19-3.png)
-
-Stress test with key space = 60M (expected tree size = 30M); random insert/delete; 8 worker threads
-
-![Result](https://raw.githubusercontent.com/wangziqi2013/BwTree/peloton/result/stress-test-result-20160629.jpg)
-
-References
-===================
-http://research.microsoft.com/pubs/246926/p2067-makreshanski.pdf
-
-Section 5.1 "Lock-Free Programming Difficulties" points out at least three scenario where we should take care when implementing Bw-Tree
-
-http://www.msr-waypoint.com/pubs/178758/bw-tree-icde2013-final.pdf
-
-This is the official Bw-Tree paper with many of the details blurred
-
-http://db.disi.unitn.eu/pages/VLDBProgram/pdf/DBRank/dbrank2013-invited2.pdf
-
-Here is again an interesting paper which has nothing new about Bw-Tree but there is a short summary of Bw-Tree in section 1.1
+(Since currently this repo is undergoing radical design changes, benchmark will be unavailable for few weeks)
 
 Improvements
 ================================
@@ -76,7 +48,20 @@ Compile and Run
 |make email-test | Runs email test. This requires a special email input file that we will not provide for some reason|
 |make mixed-test | Runs insert-delete extremely high contention test. This test is the one that fails most implementations|
 
+Releases
+========
+You could either use git checkout to view these releases, or download them through Github web interface.
+| Release Name | Description |
+|--------------|-------------|
+| baseline     | A stable working version of BwTree used as testing baseline against design changes |
+
 Misc 
 ====
 
 Under stl\_test folder there are C++ source files illustrating how STL and our private container libraries could be used, as well as some testing / benchmarking / demo code. Using make command to compile and link these STL test cases.
+
+For email_test, a text file with email addresses generated in some way is required, which is not provided here for some reason. However, generating your own email file should not be difficult.
+
+References
+==========
+[1] Levandoski, Justin J., David B. Lomet, and Sudipta Sengupta. "The Bw-Tree: A B-tree for new hardware platforms." In Data Engineering (ICDE), 2013 IEEE 29th International Conference on, pp. 302-313. IEEE, 2013.
