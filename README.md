@@ -38,7 +38,7 @@ Compile and Run
 |make prepare | Prepares build directory. Must be used first to set up the environment after each fresh clone|
 |make | Compiles and links, with debugging flag, and with lower optimization level (-O2)|
 |make full-speed | Compiles without debugging flag. Better performance (-O3)|
-|make small-size | Compiles without debugging flag, but also optimized for smaller code size (-Os)
+|make small-size | Compiles without debugging flag, but also optimized for smaller code size (-Os)|
 |make benchmark-bwtree | Compiles and runs benchmark (seq. and random) for bwtree|
 |make benchmark-all | This compiles and runs benchmark for bwtree, std::map, std::unordered_map, stx::btree and stx::bwtree_multimap|
 |make stress-test | Runs stress test on BwTree|
@@ -47,13 +47,15 @@ Compile and Run
 |make infinite-insert-test | Runs random insert test on a random pattern|
 |make email-test | Runs email test. This requires a special email input file that we will not provide for some reason|
 |make mixed-test | Runs insert-delete extremely high contention test. This test is the one that fails most implementations|
+|make benchmark-btree-full | Run the same benchmark as those in 'benchmark-bwtree-full' for stx::btree_multimap|
 
 Releases
 ========
 You could either use git checkout to view these releases, or download them through Github web interface.
+
 | Release Name | Description |
 |--------------|-------------|
-| baseline     | A stable working version of BwTree used as testing baseline against design changes |
+| baseline | A stable working version of BwTree used as testing baseline against design changes |
 
 Misc 
 ====
