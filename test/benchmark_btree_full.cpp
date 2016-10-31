@@ -272,6 +272,78 @@ void BenchmarkBTreeRandRead(BTreeType *t,
   return;
 }
 
+/*
+ * BenchmarkBTreeRandLocklessRead() - As name suggests
+ */
+void BenchmarkBTreeRandLocklessRead(BTreeType *t, 
+                                    int key_num,
+                                    int num_thread) {
+  int iter = 1;
+  
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+  
+  auto func2 = [key_num, 
+                iter, 
+                &thread_time,
+                num_thread](uint64_t thread_id, BTreeType *t) {
+    std::vector<long> v{};
+
+    v.reserve(1);
+    
+    // This is the random number generator we use
+    SimpleInt64Random<0, 30 * 1024 * 1024> h{};
+
+    Timer timer{true};
+
+    for(int j = 0;j < iter;j++) {
+      for(long int i = 0;i < key_num;i++) {
+        //int key = uniform_dist(e1);
+        long int key = (long int)h((uint64_t)i, thread_id);
+        
+        auto it_pair = t->equal_range(key);
+
+        // For multimap we need to write an external loop to
+        // extract all keys inside the multimap
+        // This is the place where btree_multimap is slower than
+        // btree
+        for(auto it = it_pair.first;it != it_pair.second;it++) {
+          v.push_back(it->second);
+        }
+  
+        v.clear();
+      }
+    }
+
+    double duration = timer.Stop();
+
+    std::cout << "[Thread " << thread_id << " Done] @ " \
+              << (iter * key_num / (1024.0 * 1024.0)) / duration \
+              << " million read (random)/sec" << "\n";
+              
+    thread_time[thread_id] = duration;
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func2, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads BTree Multimap: overall "
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
+            << " million read (random, lockless)/sec" << "\n";
+
+  return;
+}
+
+
 
 /*
  * BenchmarkBTreeZipfRead() - As name suggests

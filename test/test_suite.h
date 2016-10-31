@@ -580,6 +580,9 @@ void BenchmarkBTreeSeqRead(BTreeType *t,
 void BenchmarkBTreeRandRead(BTreeType *t, 
                             int key_num,
                             int num_thread);
+void BenchmarkBTreeRandLocklessRead(BTreeType *t, 
+                                    int key_num,
+                                    int num_thread);
 void BenchmarkBTreeZipfRead(BTreeType *t, 
                             int key_num,
                             int num_thread);
