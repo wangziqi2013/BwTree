@@ -10,7 +10,7 @@ Benchmark
 
 (Since currently this repo is undergoing radical design changes, benchmark will be unavailable for few weeks)
 
-Improvements
+Improvements 
 ================================
 In the official BwTree paper, removing a node is described as posting a node remove delta on the removed node, finishing it by posting an index term delete delta on top of the parent node delta chain. This procedure has a potential problem when the parent is undergoing a split and the split key is unfortunately chosen to be pointing to the removed node. In this case, after parent node split, its left most child is logically merged into the left sibling of the parent node, which implicitly changes both the low key of the parent and the high key of its left sibling.
 
