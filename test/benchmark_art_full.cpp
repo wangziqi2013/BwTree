@@ -78,8 +78,7 @@ void BenchmarkARTSeqInsert(ARTType *t,
  */
 void BenchmarkARTSeqRead(ARTType *t, 
                          int key_num,
-                         int num_thread,
-                         long int *array) {
+                         int num_thread) {
   int iter = 1;
   
   // This is used to record time taken for each individual thread
@@ -127,6 +126,71 @@ void BenchmarkARTSeqRead(ARTType *t,
   std::cout << num_thread << " Threads ART: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read/sec" << "\n";
+
+  return;
+}
+
+
+/*
+ * BenchmarkARTRandRead() - As name suggests
+ */
+void BenchmarkARTRandRead(ARTType *t, 
+                          int key_num,
+                          int num_thread) {
+  int iter = 1;
+  
+  // This is used to record time taken for each individual thread
+  double thread_time[num_thread];
+  for(int i = 0;i < num_thread;i++) {
+    thread_time[i] = 0.0;
+  }
+  
+  auto func2 = [key_num, 
+                iter, 
+                &thread_time,
+                num_thread](uint64_t thread_id, ARTType *t) {
+    std::vector<long> v{};
+
+    v.reserve(1);
+    
+    // This is the random number generator we use
+    SimpleInt64Random<0, 30 * 1024 * 1024> h{};
+
+    Timer timer{true};
+
+    for(int j = 0;j < iter;j++) {
+      for(long int i = 0;i < key_num;i++) {
+        //int key = uniform_dist(e1);
+        long int key = (long int)h((uint64_t)i, thread_id);
+
+        long int temp = \
+          *(long int *)art_search(t, (unsigned char *)&key, sizeof(key));
+        v.push_back(temp);
+        v.clear();
+      }
+    }
+
+    double duration = timer.Stop();
+
+    std::cout << "[Thread " << thread_id << " Done] @ " \
+              << (iter * key_num / (1024.0 * 1024.0)) / duration \
+              << " million read (random)/sec" << "\n";
+              
+    thread_time[thread_id] = duration;
+
+    return;
+  };
+
+  LaunchParallelTestID(num_thread, func2, t);
+
+  double elapsed_seconds = 0.0;
+  for(int i = 0;i < num_thread;i++) {
+    elapsed_seconds += thread_time[i];
+  }
+
+  std::cout << num_thread << " Threads ART: overall "
+            << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
+            << " million read (random)/sec" << "\n";
 
   return;
 }
