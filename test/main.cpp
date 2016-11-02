@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     BenchmarkARTSeqInsert(&t, key_num, (int)thread_num, array);
     BenchmarkARTSeqRead(&t, key_num, (int)thread_num);
     BenchmarkARTRandRead(&t, key_num, (int)thread_num);    
-    //BenchmarkARTZipfRead(t, key_num, (int)thread_num);
+    BenchmarkARTZipfRead(&t, key_num, (int)thread_num);
     
     delete[] array;
   }

@@ -604,6 +604,9 @@ void BenchmarkARTSeqRead(ARTType *t,
 void BenchmarkARTRandRead(ARTType *t, 
                           int key_num,
                           int num_thread);
+void BenchmarkARTZipfRead(ARTType *t, 
+                          int key_num,
+                          int num_thread);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
