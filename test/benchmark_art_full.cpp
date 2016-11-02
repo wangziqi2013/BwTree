@@ -14,7 +14,8 @@
  */
 void BenchmarkARTSeqInsert(ARTType *t, 
                            int key_num, 
-                           int num_thread) {
+                           int num_thread,
+                           long int *array) {
 
   // Enforce this with explicit assertion that is still valid under 
   // release mode
@@ -30,7 +31,8 @@ void BenchmarkARTSeqInsert(ARTType *t,
 
   auto func = [key_num, 
                &thread_time, 
-               num_thread](uint64_t thread_id, ARTType *t) {
+               num_thread,
+               array](uint64_t thread_id, ARTType *t) {
     long int start_key = key_num / num_thread * (long)thread_id;
     long int end_key = start_key + key_num / num_thread;
 
@@ -38,11 +40,11 @@ void BenchmarkARTSeqInsert(ARTType *t,
     Timer timer{true};
 
     for(long int i = start_key;i < end_key;i++) {
-      // 8 byte key, 8 byte payload (i.e. nullptr)
-      // This is a little bit cheating - since we have only 1 payload and
-      // in order to get the value we need another level of indirection which
-      // is not demonstrated here
-      art_insert(t, (unsigned char *)&i, sizeof(i), nullptr);
+      // 8 byte key, 8 byte payload (i.e. int *)
+      // Since ART itself does not store data, we must allocate an external
+      // array which occupies extra space, and also this adds one extra
+      // pointer dereference
+      art_insert(t, (unsigned char *)&i, sizeof(i), array + i);
     }
 
     double duration = timer.Stop();
@@ -76,7 +78,8 @@ void BenchmarkARTSeqInsert(ARTType *t,
  */
 void BenchmarkARTSeqRead(ARTType *t, 
                          int key_num,
-                         int num_thread) {
+                         int num_thread,
+                         long int *array) {
   int iter = 1;
   
   // This is used to record time taken for each individual thread
@@ -84,14 +87,6 @@ void BenchmarkARTSeqRead(ARTType *t,
   for(int i = 0;i < num_thread;i++) {
     thread_time[i] = 0.0;
   }
-  
-  #ifndef USE_BOOST
-  // Declear a spinlock protecting the data structure
-  spinlock_t lock;
-  rwlock_init(lock);
-  #else
-  shared_mutex lock;
-  #endif
   
   auto func = [key_num, 
                iter, 
@@ -105,28 +100,8 @@ void BenchmarkARTSeqRead(ARTType *t,
 
     for(int j = 0;j < iter;j++) {
       for(long int i = 0;i < key_num;i++) {
-        #ifndef USE_BOOST
-        read_lock(lock);
-        #else
-        lock.lock_shared();
-        #endif
-        
-        auto it_pair = t->equal_range(i);
-
-        // For multimap we need to write an external loop to
-        // extract all keys inside the multimap
-        // This is the place where btree_multimap is slower than
-        // btree
-        for(auto it = it_pair.first;it != it_pair.second;it++) {
-          v.push_back(it->second);
-        }
-        
-        #ifndef USE_BOOST
-        read_unlock(lock);
-        #else
-        lock.unlock_shared();
-        #endif
-  
+        long int temp = *(long int *)art_search(t, (unsigned char *)&i, sizeof(i));
+        v.push_back(temp);
         v.clear();
       }
     }
@@ -149,7 +124,7 @@ void BenchmarkARTSeqRead(ARTType *t,
     elapsed_seconds += thread_time[i];
   }
 
-  std::cout << num_thread << " Threads BTree Multimap: overall "
+  std::cout << num_thread << " Threads ART: overall "
             << (iter * key_num / (1024.0 * 1024.0) * num_thread * num_thread) / elapsed_seconds
             << " million read/sec" << "\n";
 

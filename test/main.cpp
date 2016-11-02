@@ -121,18 +121,18 @@ int main(int argc, char **argv) {
     int key_num = 30 * 1024 * 1024;  
     uint64_t thread_num = 1;
     
-    printf("Initializing ART's external data array...");
+    printf("Initializing ART's external data array of size = %f MB\n", 
+           sizeof(long int) * key_num / 1024.0 / 1024.0);
     
     // This is the array for storing ART's data
     // Sequential access of the array is fast through ART
-    int *array = new long int[key_num];
+    long int *array = new long int[key_num];
     for(int i = 0;i < key_num;i++) {
       array[i] = i; 
     }
     
-    BenchmarkARTSeqInsert(&t, key_num, (int)thread_num);
-    
-    //BenchmarkARTSeqRead(t, key_num, (int)thread_num);
+    BenchmarkARTSeqInsert(&t, key_num, (int)thread_num, array);
+    BenchmarkARTSeqRead(&t, key_num, (int)thread_num, array);
     //BenchmarkARTRandRead(t, key_num, (int)thread_num);    
     //BenchmarkARTZipfRead(t, key_num, (int)thread_num);
     

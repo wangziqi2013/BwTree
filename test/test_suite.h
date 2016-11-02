@@ -596,7 +596,12 @@ void BenchmarkBTreeZipfLockLessRead(BTreeType *t,
 // Benchmark for ART              
 void BenchmarkARTSeqInsert(ARTType *t, 
                            int key_num, 
-                           int num_thread);
+                           int num_thread,
+                           long int *array);
+void BenchmarkARTSeqRead(ARTType *t, 
+                         int key_num,
+                         int num_thread,
+                         long int *array);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
