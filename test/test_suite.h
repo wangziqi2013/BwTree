@@ -20,6 +20,7 @@
 #include "../src/bwtree.h"
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
+#include "../benchmark/art/art.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
@@ -84,6 +85,7 @@ using TreeType = BwTree<long int,
                         KeyEqualityChecker>;
                         
 using BTreeType = btree_multimap<long, long, KeyComparator>;
+using ARTType = art_tree;
                         
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
@@ -571,6 +573,7 @@ void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeZipfRead(TreeType *t, int key_num, int thread_num);
 
+// Benchmark for stx::btree
 void BenchmarkBTreeSeqInsert(BTreeType *t, 
                              int key_num, 
                              int num_thread);
@@ -589,6 +592,11 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
 void BenchmarkBTreeZipfLockLessRead(BTreeType *t, 
                                     int key_num,
                                     int num_thread);
+
+// Benchmark for ART              
+void BenchmarkARTSeqInsert(ARTType *t, 
+                           int key_num, 
+                           int num_thread);
 
 void TestBwTreeEmailInsertPerformance(BwTree<std::string, long int> *t, std::string filename);
 
