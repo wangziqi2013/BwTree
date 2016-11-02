@@ -1722,7 +1722,7 @@ class BwTree {
           element_p != End();
           element_p++) {
         // Manually calls destructor when the node is destroyed
-        element_p->~ElementType();      
+        element_p->~ElementType();
       }
       
       return;
@@ -1730,6 +1730,9 @@ class BwTree {
     
     /*
      * Destroy() - Frees the memory by calling AllocationMeta::Destroy()
+     *
+     * Note that function does not call destructor, and instead the destructor
+     * should be called first before this function is called
      */
     void Destroy() const {
       // This finds the allocation header for this base node, and then
@@ -7743,7 +7746,9 @@ try_join_again:
     }
     
     /*
-     * Destructor
+     * Destructor - Frees all KeyValuePair element inside this chunk
+     *
+     * Note that this should be called before Destroy() is called
      */
     ~IteratorContext() {
       KeyValuePair *kv_p = &data[0];
@@ -7763,7 +7768,8 @@ try_join_again:
     /*
      * Get() - Static function that constructs an iterator context object
      */
-    static IteratorContext *Get(BwTree *p_tree_p, LeafNode *leaf_node_p) {
+    inline static IteratorContext *Get(BwTree *p_tree_p, 
+                                       LeafNode *leaf_node_p) {
       // This is the size of the memory chunk we allocate for the leaf node
       size_t size = \
         sizeof(IteratorContext) + \
@@ -7780,6 +7786,22 @@ try_join_again:
       new (ic_p) IteratorContext{p_tree_p, leaf_node_p};
       
       return ic_p;
+    }
+    
+    /*
+     * Destroy() - Frees the memory chunk used by this instance
+     *
+     * This should be called directly instead of the destructor since we use
+     * malloc() to allocate memory rather than operator delete, so we could
+     * only use free() to reclaim memory.
+     *
+     * Make sure the destructor is called first to destruct all KeyValuePair
+     * objects stored inside of it.
+     */ 
+    inline void Destroy() {
+      free(this); 
+      
+      return;
     }
   };
 
