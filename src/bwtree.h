@@ -7742,6 +7742,22 @@ try_join_again:
       return;
     }
     
+    /*
+     * Destructor
+     */
+    ~IteratorContext() {
+      KeyValuePair *kv_p = &data[0];
+      
+      // Loop until we have destroyed all elements
+      while(kv_p != end_p) {
+        kv_p->~KeyValuePair();
+        
+        kv_p++;
+      }
+      
+      return;
+    }
+    
    public:
     
     /*
@@ -7760,6 +7776,7 @@ try_join_again:
       // The end pointer must also points to the exact end address of 
       // the chunk
       assert((uint64_t)ic_p->end_p == (uint64_t)(ic_p + 1));
+      
       new (ic_p) IteratorContext{p_tree_p, leaf_node_p};
       
       return ic_p;
