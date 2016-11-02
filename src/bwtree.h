@@ -7699,19 +7699,60 @@ try_join_again:
     KeyValuePair data[0];
     
     /*
-     * Constructor
+     * Constructor - Copies elements from LeafNode to the context
      */
     IteratorContext(BwTree *p_tree_p, LeafNode *leaf_node_p) :
       tree_p{p_tree_p},
       ref_count{0UL},
       high_key_pair{leaf_node_p->GetHighKeyPair()},
-      end_p{data + leaf_node_p->GetItemCount()} 
-    {}
+      end_p{data + leaf_node_p->GetItemCount()} {
+      // Note that we do not use std::copy since it relies on
+      // is_trivially_copyable() which does not function correctly on std::pair
+      //KeyValuePair *kv_p = std::copy();
+      
+      // These two are pointers that denote the range we want to copy
+      // They could both be used as element pointer and also as
+      // byte pointer
+      auto copy_start_p = leaf_node_p->Begin();
+      auto copy_end_p = leaf_node_p->End();
+      
+      if(std::is_trivially_copyable<KeyType>::value == false || 
+         std::is_trivially_copyable<ValueType>::value == false) {
+        while(copy_start_p != copy_end_p) {
+          PushBack(*copy_start_p);
+          copy_start_p++; 
+        }
+      } else {
+        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
+        std::memcpy(End(), copy_start_p, diff);
+        
+        auto expected_end = (KeyValuePair *)((uint64_t)&data[0] + diff);
+        // Expected end of copy must equal the end we calculated using 
+        // GetItemCount()
+        assert(expected_end == end_p);
+      }
+      
+      return;
+    }
     
    public:
-    //
-    IteratorContext *Get(LeafNode *leaf_node_p) {
+    
+    /*
+     * Get() - Static function that constructs an iterator context object
+     */
+    static IteratorContext *Get(BwTree *p_tree_p, LeafNode *leaf_node_p) {
+      // This is the size of the memory chunk we allocate for the leaf node
+      size_t size = \
+        sizeof(IteratorContext + \
+               sizeof(KeyValuePair) * leaf_node_p->GetItemCount());
       
+      // This is the size of memory we wish to initialize for IteratorContext
+      // plus data
+      IteratorContext *ic_p = malloc(size);
+      assert(ic_p != nullptr);
+      new (ic_p) IteratorContext{p_tree_p, leaf_node_p};
+      
+      return ic_p;
     }
   };
 
