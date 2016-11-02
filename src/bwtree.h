@@ -7716,21 +7716,28 @@ try_join_again:
       auto copy_start_p = leaf_node_p->Begin();
       auto copy_end_p = leaf_node_p->End();
       
+      // This is the pointer to which we copy
+      KeyValuePair *current_p = &data[0];
+      
+      // Decide whether we could copy the value directly and then
+      // call memcpy() or placement new operator
       if(std::is_trivially_copyable<KeyType>::value == false || 
          std::is_trivially_copyable<ValueType>::value == false) {
         while(copy_start_p != copy_end_p) {
-          PushBack(*copy_start_p);
+          new (current_p) KeyValuePair(*copy_start_p);
+          current_p++;
           copy_start_p++; 
         }
       } else {
         const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
-        std::memcpy(End(), copy_start_p, diff);
+        std::memcpy(&data[0], copy_start_p, diff);
         
-        auto expected_end = (KeyValuePair *)((uint64_t)&data[0] + diff);
-        // Expected end of copy must equal the end we calculated using 
-        // GetItemCount()
-        assert(expected_end == end_p);
+        current_p = (KeyValuePair *)((uint64_t)&data[0] + diff);
       }
+      
+      // After copy the next "copy to" pointer must be the same
+      // as the end pointer calculated using GetItemCount()
+      assert(current_p == end_p);
       
       return;
     }
@@ -7743,13 +7750,16 @@ try_join_again:
     static IteratorContext *Get(BwTree *p_tree_p, LeafNode *leaf_node_p) {
       // This is the size of the memory chunk we allocate for the leaf node
       size_t size = \
-        sizeof(IteratorContext + \
-               sizeof(KeyValuePair) * leaf_node_p->GetItemCount());
+        sizeof(IteratorContext) + \
+               sizeof(KeyValuePair) * leaf_node_p->GetItemCount();
       
       // This is the size of memory we wish to initialize for IteratorContext
       // plus data
       IteratorContext *ic_p = malloc(size);
       assert(ic_p != nullptr);
+      // The end pointer must also points to the exact end address of 
+      // the chunk
+      assert((uint64_t)ic_p->end_p == (uint64_t)(ic_p + 1));
       new (ic_p) IteratorContext{p_tree_p, leaf_node_p};
       
       return ic_p;
