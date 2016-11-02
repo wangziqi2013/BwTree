@@ -7666,6 +7666,19 @@ try_join_again:
    */
 
   /*
+   * class IteratorContext - Buffers leaf page information for iterating on
+   *                         that page
+   *
+   * This page buffers the content of a leaf page in the tree. We do not 
+   * directly refer to a page because there is no protection from the page being
+   * recycled by SMR.
+   */
+  class IteratorContext {
+    // We need this reference to traverse and also to call GC
+    BwTree *tree_p;
+  };
+
+  /*
    * class ForwardIterator - Iterator that supports forward iteration of
    *                         tree elements
    *
