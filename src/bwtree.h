@@ -7672,10 +7672,47 @@ try_join_again:
    * This page buffers the content of a leaf page in the tree. We do not 
    * directly refer to a page because there is no protection from the page being
    * recycled by SMR.
+   *
+   * Please note that this IteratorContext could only be used under single 
+   * threaded environment. This is a valid assumption since different threads
+   * could always start their own iterators
    */
   class IteratorContext {
+   private:
     // We need this reference to traverse and also to call GC
     BwTree *tree_p;
+    
+    // This is a reference counter used for single threaded environment
+    // Note that if multiple threads modifies the reference counter concurrentl
+    // then we could not recycle it even if the ref count has droped to 0
+    size_t ref_count;
+    
+    // This either denotes the next key we use for iterating forward, or
+    // denotes end of iteration by having INVALID_NODE_ID as its node ID
+    KeyNodeIDPair high_key_pair;
+    
+    // This points to the last KeyValuePair respectively
+    KeyValuePair *end_p;
+    
+    // This is the starting where actual data is stored
+    // we call it to 
+    KeyValuePair data[0];
+    
+    /*
+     * Constructor
+     */
+    IteratorContext(BwTree *p_tree_p, LeafNode *leaf_node_p) :
+      tree_p{p_tree_p},
+      ref_count{0UL},
+      high_key_pair{leaf_node_p->GetHighKeyPair()},
+      end_p{data + leaf_node_p->GetItemCount()} 
+    {}
+    
+   public:
+    //
+    IteratorContext *Get(LeafNode *leaf_node_p) {
+      
+    }
   };
 
   /*
