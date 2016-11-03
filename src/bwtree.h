@@ -7671,11 +7671,20 @@ try_join_again:
    * Please note that this IteratorContext could only be used under single 
    * threaded environment. This is a valid assumption since different threads
    * could always start their own iterators
+   *
+   * Since the instance of this class is created as char[], with a class 
+   * ElasticNode<KeyValuePair> embedded, when destroy the instance we must
+   * manually call destructor first, and then call member Destroy() to free
+   * the chunk of memory as char[] rather than IteratorContext instance.
    */
   class IteratorContext {
    private:
     // We need this reference to traverse and also to call GC
     BwTree *tree_p;
+    
+    // This points to the current value being iterated on
+    // It will be initialized to Begin() pointer of class LeafNode
+    KeyValuePair *kv_p;
     
     // This is a reference counter used for single threaded environment
     // Note that if multiple threads modifies the reference counter concurrentl
@@ -7684,15 +7693,33 @@ try_join_again:
     
     // This is a stub that points to class LeafNode which is used to
     // receive consolidated key value pairs from a leaf delta chain
-    LeafNode leaf_node_p[0];
+    ElasticNode<KeyValuePair> leaf_node_p[0];
     
     /*
      * Constructor - Initialize class IteratorContext part
+     *
+     * Note that the LeafNode instance is initialized outside of this class
      */
     IteratorContext(BwTree *p_tree_p) :
       tree_p{p_tree_p},
+      kv_p{(*leaf_node_p).Begin()},
       ref_count{0UL} 
     {}
+    
+    /*
+     * Destructor
+     *
+     * Note that this could not be directly deleted by calling operator delete[]
+     * since we allocate it as char[], so the destructor must be called
+     * manually and then free the chunk of memory as char[] rather than as
+     * class IteratorContext instance
+     */
+    ~IteratorContext() {
+      // Call destructor to destruct all KeyValuePairs stored in its array
+      GetLeafNode()->~ElasticNode<KeyValuePair>();
+      
+      return;
+    }
     
    public:
     
@@ -7706,38 +7733,53 @@ try_join_again:
     
     /*
      * Get() - Static function that constructs an iterator context object
+     *
+     * Note that node_p is passed as the head node of a delta chain, and we
+     * only need its high key and item count field. Low key, depth and node type
+     * will be used to initialize the LeafNode instance embedded inside
+     * this object but they will not be used as part of the iteration
      */
-    inline static IteratorContext *Get(BwTree *p_tree_p, int item_count) {
+    inline static IteratorContext *Get(BwTree *p_tree_p, 
+                                       const BaseNode *node_p) {
       // This is the size of the memory chunk we allocate for the leaf node
       size_t size = \
         sizeof(IteratorContext) + \
         sizeof(LeafNode) + \
-        sizeof(KeyValuePair) * item_count;
+        sizeof(KeyValuePair) * node_p->GetItemCount();
       
       // This is the size of memory we wish to initialize for IteratorContext
       // plus data
-      IteratorContext *ic_p = malloc(size);
+      IteratorContext *ic_p = \
+        reinterpret_cast<IteratorContext *>(new char[size]);
       assert(ic_p != nullptr);
       
+      // Initialize class IteratorContext part
       new (ic_p) IteratorContext{p_tree_p};
+      
+      // Then initialize class LeafNode 
+      // i.e. class ElasticNode<KeyValuePair> part 
+      new (ic_p->GetLeafNode()) \
+        ElasticNode<KeyValuePair>{node_p->GetType(),
+                                  node_p->GetDepth(),
+                                  node_p->GetItemCount(),
+                                  node_p->GetLowKeyPair(),
+                                  node_p->GetHighKeyPair()};
       
       return ic_p;
     }
     
     /*
-     * Destroy() - Frees the memory chunk used by this instance
+     * Destroy() - Manually frees memory as char[]
      *
-     * This should be called directly instead of the destructor since we use
-     * malloc() to allocate memory rather than operator delete, so we could
-     * only use free() to reclaim memory.
-     *
-     * Make sure the destructor is called first to destruct all KeyValuePair
-     * objects stored inside of it.
-     */ 
+     * This function is necessary to ensure well defined bahavior of the
+     * class since the memory of "this" pointer is allocated through operator
+     * new[] of type char[], so we must reclaim memory using the same
+     * operator delete[] of type char[]
+     */
     inline void Destroy() {
-      free(this); 
+      delete[] this;
       
-      return;
+      return; 
     }
   };
 
