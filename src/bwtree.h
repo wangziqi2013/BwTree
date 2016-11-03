@@ -7696,11 +7696,7 @@ try_join_again:
    private:
     // We need this reference to traverse and also to call GC
     BwTree *tree_p;
-    
-    // This points to the current value being iterated on
-    // It will be initialized to Begin() pointer of class LeafNode
-    KeyValuePair *kv_p;
-    
+
     // This is a reference counter used for single threaded environment
     // Note that if multiple threads modifies the reference counter concurrentl
     // then we could not recycle it even if the ref count has droped to 0
@@ -7717,7 +7713,6 @@ try_join_again:
      */
     IteratorContext(BwTree *p_tree_p) :
       tree_p{p_tree_p},
-      kv_p{(*leaf_node_p).Begin()},
       ref_count{0UL} 
     {}
     
@@ -7818,6 +7813,11 @@ try_join_again:
    * is both begin() and end() iterator at the same time
    */
   class ForwardIterator {
+   private:
+    // This points to the iterator context
+    IteratorContext *ic_p;
+    KeyValuePair *kv_p;
+    
    public:
     /*
      * Default Constructor - This acts as a place holder for some functions
@@ -7825,11 +7825,12 @@ try_join_again:
      *                       want to afford the overhead of loading a page into
      *                       the iterator
      *
-     * Only leaf_node_p is initialized to avoid destructor destructing the
-     * iterator, also to avoid assignment operator directly assign to it.
+     * All pointers are initialized to nullptr to indicate that it does not
+     * need any form of memory reclaim
      */
     ForwardIterator() :
-      leaf_node_p{nullptr}
+      ic_p{nullptr},
+      kv_p{nullptr}
     {}
 
     /*
@@ -7839,30 +7840,30 @@ try_join_again:
      * during construction in order to correctly identify the case where
      * the tree is empty, and such that begin() iterator equals end() iterator
      */
-    ForwardIterator(BwTree *p_tree_p) :
-      tree_p{p_tree_p},
-      is_end{false} {
+    ForwardIterator(BwTree *p_tree_p) {
+      // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
+      ic_p = IteratorContext::Get(p_tree_p, node_p);
+      kv_p = ic_p->GetLeafNode()->Begin();
+      
+      // This also needs to be protected by epoch since we do access internal
+      // node that is possible to be reclaimed
+      EpochNode *epoch_node_p = p_tree_p->JoinEpoch();
+        
       // Load the first leaf page
-      const BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
-
+      const BaseNode *node_p = p_tree_p->GetNode(FIRST_LEAF_NODE_ID);
       assert(node_p != nullptr);
       assert(node_p->IsOnLeafDeltaChain() == true);
 
-      // Use the high key of current node as the next key locking
-      next_key_pair = node_p->GetHighKeyPair();
 
+      // Use this to collect all values
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
 
-      // Consolidate the current node (this does not change high key)
-      leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
-
-      it = leaf_node_p->Begin();
-
-      // Corner case: if the vector is itself empty
-      // then we should set the flag manually
-      if(leaf_node_p->GetSize() == 0) {
-        is_end = true;
-      }
+      // Consolidate the current node. Note that we pass in the leaf node
+      // object embedded inside the IteratorContext object
+      p_tree_p->CollectAllValuesOnLeaf(&snapshot, ic_p->GetLeafNode());
+      
+      // Leave epoch
+      p_tree_p->LeaveEpoch(epoch_node_p);
 
       return;
     }
@@ -8119,42 +8120,6 @@ try_join_again:
     inline bool IsEnd() const {
       return is_end;
     }
-
-   private:
-    // We need access to the tree in order to traverse down using
-    // a low key to leaf node level
-    BwTree *tree_p;
-
-    // This points to a consolidated leaf node
-    // The leaf node is not shared with any internal structure of
-    // BwTree and also not between iterators. Each iterator
-    // keeps an instance of LeafNode on which it iterates
-    LeafNode *leaf_node_p;
-
-    // The upper bound of current logical leaf node. Used to access the next
-    // position (i.e. leaf node) inside bwtree
-    // NOTE: We cannot use next_node_id to access next node since
-    // it might become invalid since the logical node was created. The only
-    // pivotal point we could rely on is the high key, which indicates a
-    // lowerbound of keys we have not seen
-    // NOTE 2: This has to be an object rather than pointer. The reason is that
-    // after this iterator is returned to the user, the actual bwtree node
-    // might be recycled by the epoch manager since thread has exited current
-    // epoch. Therefore we need to copy the wrapped key from bwtree physical
-    // node into the iterator
-    KeyNodeIDPair next_key_pair;
-
-    // This is the actual iterator
-    const KeyValuePair *it;
-
-    // We use this flag to indicate whether we have reached the end of
-    // iteration.
-    // NOTE: We could not directly check for next_key being +Inf, since
-    // there might still be keys not scanned yet even if next_key is +Inf
-    // LoadNextKey() checks whether the current page has no key >= next_key
-    // and the next key is +Inf for current page. If these two conditions hold
-    // then we know we have reached the last key of the last page
-    bool is_end;
 
     /*
      * LowerBound() - Load leaf page whose key >= start_key
