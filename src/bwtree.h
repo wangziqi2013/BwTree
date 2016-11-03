@@ -7690,100 +7690,44 @@ try_join_again:
     // then we could not recycle it even if the ref count has droped to 0
     size_t ref_count;
     
-    // This either denotes the next key we use for iterating forward, or
-    // denotes end of iteration by having INVALID_NODE_ID as its node ID
-    KeyNodeIDPair high_key_pair;
-    
-    // This points to the last KeyValuePair respectively
-    KeyValuePair *end_p;
-    
-    // This is the starting where actual data is stored
-    // we call it to 
-    KeyValuePair data[0];
+    // This is a stub that points to class LeafNode which is used to
+    // receive consolidated key value pairs from a leaf delta chain
+    LeafNode leaf_node_p[0];
     
     /*
-     * Constructor - Copies elements from LeafNode to the context
+     * Constructor - Initialize class IteratorContext part
      */
-    IteratorContext(BwTree *p_tree_p, LeafNode *leaf_node_p) :
+    IteratorContext(BwTree *p_tree_p) :
       tree_p{p_tree_p},
-      ref_count{0UL},
-      high_key_pair{leaf_node_p->GetHighKeyPair()},
-      end_p{data + leaf_node_p->GetItemCount()} {
-      // Note that we do not use std::copy since it relies on
-      // is_trivially_copyable() which does not function correctly on std::pair
-      //KeyValuePair *kv_p = std::copy();
-      
-      // These two are pointers that denote the range we want to copy
-      // They could both be used as element pointer and also as
-      // byte pointer
-      auto copy_start_p = leaf_node_p->Begin();
-      auto copy_end_p = leaf_node_p->End();
-      
-      // This is the pointer to which we copy
-      KeyValuePair *current_p = &data[0];
-      
-      // Decide whether we could copy the value directly and then
-      // call memcpy() or placement new operator
-      if(std::is_trivially_copyable<KeyType>::value == false || 
-         std::is_trivially_copyable<ValueType>::value == false) {
-        while(copy_start_p != copy_end_p) {
-          new (current_p) KeyValuePair(*copy_start_p);
-          current_p++;
-          copy_start_p++; 
-        }
-      } else {
-        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
-        std::memcpy(&data[0], copy_start_p, diff);
-        
-        current_p = (KeyValuePair *)((uint64_t)&data[0] + diff);
-      }
-      
-      // After copy the next "copy to" pointer must be the same
-      // as the end pointer calculated using GetItemCount()
-      assert(current_p == end_p);
-      
-      return;
-    }
-    
-    /*
-     * Destructor - Frees all KeyValuePair element inside this chunk
-     *
-     * Note that this should be called before Destroy() is called
-     */
-    ~IteratorContext() {
-      KeyValuePair *kv_p = &data[0];
-      
-      // Loop until we have destroyed all elements
-      while(kv_p != end_p) {
-        kv_p->~KeyValuePair();
-        
-        kv_p++;
-      }
-      
-      return;
-    }
+      ref_count{0UL} 
+    {}
     
    public:
     
     /*
+     * GetLeafNode() - Returns a pointer to the leaf node object embedded inside
+     *                 class IteratorContext object
+     */
+    inline LeafNode *GetLeafNode() {
+      return &leaf_node_p[0];
+    }
+    
+    /*
      * Get() - Static function that constructs an iterator context object
      */
-    inline static IteratorContext *Get(BwTree *p_tree_p, 
-                                       LeafNode *leaf_node_p) {
+    inline static IteratorContext *Get(BwTree *p_tree_p, int item_count) {
       // This is the size of the memory chunk we allocate for the leaf node
       size_t size = \
         sizeof(IteratorContext) + \
-               sizeof(KeyValuePair) * leaf_node_p->GetItemCount();
+        sizeof(LeafNode) + \
+        sizeof(KeyValuePair) * item_count;
       
       // This is the size of memory we wish to initialize for IteratorContext
       // plus data
       IteratorContext *ic_p = malloc(size);
       assert(ic_p != nullptr);
-      // The end pointer must also points to the exact end address of 
-      // the chunk
-      assert((uint64_t)ic_p->end_p == (uint64_t)(ic_p + 1));
       
-      new (ic_p) IteratorContext{p_tree_p, leaf_node_p};
+      new (ic_p) IteratorContext{p_tree_p};
       
       return ic_p;
     }
