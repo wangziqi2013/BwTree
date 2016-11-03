@@ -7732,6 +7732,15 @@ try_join_again:
     }
     
     /*
+     * GetRefCount() - Returns a reference to the ref count field of the class
+     *
+     * The returned reference could be used to access ref_count field
+     */
+    inline size_t &GetRefCount() {
+      return ref_count;
+    }
+    
+    /*
      * Get() - Static function that constructs an iterator context object
      *
      * Note that node_p is passed as the head node of a delta chain, and we
