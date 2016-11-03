@@ -63,6 +63,11 @@ using NodeID = uint64_t;
 #include "bloom_filter.h"
 #include "atomic_stack.h"
 
+// Copied from Linux kernel code to facilitate branch prediction unit on CPU
+// if there is one
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
 // We use this to control from the compiler
 #ifndef BWTREE_NODEBUG
 /*
@@ -4065,8 +4070,14 @@ abort_traverse:
    * This function is the non-recursive wrapper of the resursive core function.
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
+   *
+   * If leaf_node_p is nullptr (default) then a new leaf node instance is 
+   * created; Otherwise we simply use the existing pointer *WITHOUT* performing
+   * any initialization. This implies that the caller should initialize
+   * a valid LeafNode object before calling this function
    */
-  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p,
+                                   LeafNode *leaf_node_p=nullptr) {
     assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -4075,14 +4086,18 @@ abort_traverse:
     // Prepare new node
     /////////////////////////////////////////////////////////////////
 
-    LeafNode *leaf_node_p = \
-      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-        Get(node_p->GetItemCount(),
-            NodeType::LeafType,
-            0,
-            node_p->GetItemCount(),
-            node_p->GetLowKeyPair(),
-            node_p->GetHighKeyPair()));
+    if(likely(leaf_node_p == nullptr)) {
+      leaf_node_p = \
+        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+          Get(node_p->GetItemCount(),
+              NodeType::LeafType,
+              0,
+              node_p->GetItemCount(),
+              node_p->GetLowKeyPair(),
+              node_p->GetHighKeyPair()));
+    }
+    
+    assert(leaf_node_p != nullptr);
     
     /////////////////////////////////////////////////////////////////
     // Prepare Delta Set
