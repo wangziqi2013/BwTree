@@ -7841,10 +7841,6 @@ try_join_again:
      * the tree is empty, and such that begin() iterator equals end() iterator
      */
     ForwardIterator(BwTree *p_tree_p) {
-      // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
-      ic_p = IteratorContext::Get(p_tree_p, node_p);
-      kv_p = ic_p->GetLeafNode()->Begin();
-      
       // This also needs to be protected by epoch since we do access internal
       // node that is possible to be reclaimed
       EpochNode *epoch_node_p = p_tree_p->JoinEpoch();
@@ -7854,6 +7850,10 @@ try_join_again:
       assert(node_p != nullptr);
       assert(node_p->IsOnLeafDeltaChain() == true);
 
+      // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
+      ic_p = IteratorContext::Get(p_tree_p, node_p);
+      kv_p = ic_p->GetLeafNode()->Begin();
+      ic_p->GetRefCount()++;
 
       // Use this to collect all values
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
@@ -7877,17 +7877,12 @@ try_join_again:
      */
     ForwardIterator(BwTree *p_tree_p,
                     const KeyType &start_key) :
-      tree_p{p_tree_p},
-      leaf_node_p{nullptr}, // This is used to singal LowerBound() that
-                            // no memory should be freed
-      is_end{false} {
-
-      // This sets all members, and might return with is_end == true
-      // Also this function
-      LowerBound(&start_key);
-
-      // After LowerBound(), either it points to KeyValuePair or
-      // is_end is set to true
+      ic_p{nullptr},
+      kv_p{nullptr} {
+      
+      // Load the corresponding page using the given key and store all its
+      // data into the iterator's embedded leaf page
+      LowerBound(p_tree_p, &start_key);
 
       return;
     }
@@ -8140,33 +8135,9 @@ try_join_again:
      * NOTE 2: A corner case is that a key that is bigger than all current keys
      * in the system was given
      */
-    void LowerBound(const KeyType *start_key_p = nullptr) {
-      // Caller needs to guarantee this function not being called if
-      // we have already reached the end
-      assert(is_end == false);
-
+    void LowerBound(BwTree *p_tree_p, 
+                    const KeyType *start_key_p) {
       while(1) {
-        // If we use the nexy_key_pair (this happens if start_key_p was
-        // given from the beginning, or at the second iteration in the
-        // while loop)
-        if(start_key_p == nullptr) {
-          // If there is no next key, then just return
-          if(next_key_pair.second == INVALID_NODE_ID) {
-            // If there is no next key then we are at the end of the iteration
-            is_end = true;
-
-            // NOTE: If the leaf node p is valid at this point
-            // then the iterator carries a chunk of memory that needs to be
-            // destroied inside the destructor
-            return;
-          }
-
-          start_key_p = &next_key_pair.first;
-        }
-
-        // We need to save this since the start key pointer will be overwritten
-        const KeyType start_key = *start_key_p;
-
         // First join the epoch to prevent physical nodes being deallocated
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
@@ -8174,57 +8145,50 @@ try_join_again:
         // Traverse down the tree to get to leaf node
         Context context{*start_key_p};
         
-        // NOTE: Even if ValueType is a value we will not test it here
-        // since Traverse() will not pass the pointer into NavigateLeafNode
-        // but rather just stop on the correct leaf node
+        // This forces the traversal to stop at the first sight of a leaf node
+        // (of course after traversing its sibling)
         tree_p->Traverse(&context, nullptr, nullptr);
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
-
-        // The page must be on a leaf delta chain
         assert(node_p->IsOnLeafDeltaChain() == true);
 
-        // Set high key pair for next call of this function
-        next_key_pair = node_p->GetHighKeyPair();
-
-        // If this is nullptr then we are calling it from the constructor
-        if(leaf_node_p != nullptr) {
-          // Only we call it from the constructor will the start key pointer
-          // be a null pointer
-          assert(start_key_p != nullptr);
-
-          tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+        if(ic_p != nullptr) {
+          // This calls destructor of KeyValuePairs stored
+          ic_p->~IteratorContext();
+          // This frees memory
+          ic_p->Destroy();
         }
+        
+        // Refresh the IteratorContext object and also refresh kv_p
+        ic_p = IteratorContext::Get(p_tree_p, node_p);
+        ic_p->GetRefCount()++;        
 
-        // Consolidate the current node
-        leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
+        // Consolidate the current node and store all key value pairs
+        // to the embedded leaf node 
+        tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
 
         // Leave the epoch, since we have already had all information
         tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
-        // Then we need to find the start key in the leaf node until we have seen
-        // a larger key
-
         // Find the lower bound of the current start search key
         // NOTE: Do not use start_key_p since it has been changed by the
         // assignment to next_key_pair
-        it = std::lower_bound(leaf_node_p->Begin(),
-                              leaf_node_p->End(),
-                              std::make_pair(start_key, ValueType{}),
-                              this->tree_p->key_value_pair_cmp_obj);
+        kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
+                                ic_p->GetLeafNode()->End(),
+                                std::make_pair(start_key, ValueType{}),
+                                p_tree_p->key_value_pair_cmp_obj);
 
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
-        if(it != leaf_node_p->End()) {
-          return;
+        if(kv_p != ic_p->GetLeafNode()->End()) {
+          break;
+        } else {
+          // Assign it to be the high key of the current node and retry
+          start_key_p = &ic_p->GetLeafNode()->GetHighKeyPair().first;
         }
-
-        // Need to set this to nullptr to let the function to use next key pair
-        start_key_p = nullptr;
       } // while(1)
 
-      assert(false);
       return;
     }
 
