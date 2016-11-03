@@ -2022,18 +2022,10 @@ class BwTree {
   class LeafNode : public ElasticNode<KeyValuePair> {
    public:
     LeafNode() = delete;
-    //LeafNode(const LeafNode &) = delete;  -> This should be implemented
+    LeafNode(const LeafNode &) = delete;
     LeafNode(LeafNode &&) = delete;
     LeafNode &operator=(const LeafNode &) = delete;
     LeafNode &operator=(LeafNode &&) = delete;
-
-    /*
-     * Copy Constructor - This is needed to support iterators taking
-     *                    snapshot of the LeafNode
-     */
-    LeafNode(const LeafNode &other) :
-      ElasticNode<KeyValuePair>{other}
-    {}
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
