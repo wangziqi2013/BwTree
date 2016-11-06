@@ -7997,9 +7997,8 @@ try_join_again:
     /*
      * operator= - Assigns one object to another
      *
-     * DONE: As an optimization we could define an assignment operation
-     * for logical leaf node, and direct assign the logical leaf node from
-     * the source object to the current object
+     * Note: For self-assignment special care must be taken to avoid
+     * operating on an object itself
      */
     ForwardIterator &operator=(const ForwardIterator &other) {
       // It is crucial to prevent self assignment since we do pointer
@@ -8008,27 +8007,19 @@ try_join_again:
         return *this;
       }
 
-      // For an empty iterator this branch is necessary
-      if(leaf_node_p == nullptr) {
-        leaf_node_p = reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p));
+      // If this is an empty iterator then do nothing; otherwise need to
+      // release a reference to the current ic_p first
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr); 
       } else {
-        // First copy the logical node into current instance
-        // DO NOT NEED new and delete; JUST DO A VALUE COPY
-        // since the storage has already been allocated during construction
-        // and the old value with be automatically dealt with LeafNode
-        // and vector's assignment operation
-        *leaf_node_p = *other.leaf_node_p;
+        assert(kv_p != nullptr); 
+        ic_p->DecRef();
       }
-
-      // Copy everything that could be copied
-      tree_p = other.tree_p;
-      next_key_pair = other.next_key_pair;
-
-      is_end = other.is_end;
-
-      // Move the iterator ahead
-      it = leaf_node_p->Begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
+      
+      // Add a reference to the IteratorContext
+      ic_p = other.ic_p;
+      kv_p = other.kv_p;
+      ic_p->IncRef();
 
       return *this;
     }
