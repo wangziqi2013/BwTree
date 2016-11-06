@@ -1720,6 +1720,16 @@ class BwTree {
     
     /*
      * Destructor
+     *
+     * All element types are destroyed inside the destruction function. D'tor
+     * is called by Destroy(), and therefore should not be called directly
+     * by external functions.
+     *
+     * Note that this is not called by Destroy() and instead it should be 
+     * called by an external function that destroies a delta chain, since in one
+     * instance of thie class there might be multiple nodes of different types
+     * so destroying should be dont individually with each type. The behavior
+     * here is different from the behavior of class IteratorContext
      */
     ~ElasticNode() {
       // Use two iterators to iterate through all existing elements
@@ -1738,6 +1748,11 @@ class BwTree {
      *
      * Note that function does not call destructor, and instead the destructor
      * should be called first before this function is called
+     *
+     * Note that this function does not call destructor for the class since
+     * it holds multiple instances of tree nodes, we should call destructor 
+     * for each individual type outside of this class, and only frees memory
+     * when Destroy() is called.
      */
     void Destroy() const {
       // This finds the allocation header for this base node, and then
@@ -7749,23 +7764,52 @@ try_join_again:
      */
     inline void IncRef() {
       ref_count++;
+      assert(ref_count != 0UL);
+      
+      return;
     }
     
+    /*
+     * DecRef() - Decrease the refreence counter by 1
+     *
+     * If ref_count drops to zero after the decreament then call the destructor 
+     * of the current object to destroy it. External functions do not need
+     * to take care of the lifetime of the object
+     *
+     * Note that the reference count mechanism could only be used when there
+     * is only one thread accessing this instance. If multiple threads are 
+     * using the reference counter then the following is possible:
+     *   1. Thread 1 decreases ref count and it becomes 0
+     *   2. Thread 1 decides to destroy the object
+     *   3. Thread 2 refers to the object, and increases the ref count
+     *   4. Thread 1 frees memory
+     *   5. Thread 2 access invalid memory
+     *  
+     * An alternative way for this naive ref count would be to lock it using
+     * either implicit atomic variable or explicitly with a lock. Once ref
+     * count drops to 0, we lock it to avoid threads further accessing. 
+     */
     inline void DecRef() {
+      // for unsigned long the only thing we could ensure
+      // is that it does not cross 0 boundary
+      assert(ret_count != 0UL);
+      
       ref_count--;
       if(ref_count == 0UL) {
-      
+        // 1. calls d'tor of class IteratorContext which calls d'tor
+        //    for class ElasticNode
+        this->~IteratorContext();
+        // 2. Frees memory as char[]
+        this->Destroy();
       }
       
       return;
     }
     
     /*
-     * GetRefCount() - Returns a reference to the ref count field of the class
-     *
-     * The returned reference could be used to access ref_count field
+     * GetRefCount() - Returns the current reference counter
      */
-    inline size_t &GetRefCount() {
+    inline size_t GetRefCount() {
       return ref_count;
     }
     
@@ -7776,6 +7820,10 @@ try_join_again:
      * only need its high key and item count field. Low key, depth and node type
      * will be used to initialize the LeafNode instance embedded inside
      * this object but they will not be used as part of the iteration
+     *
+     * Both class IteratorContext and class LeafNode is initialized when
+     * this function returns. CollectAllValuesOnLeaf() does not einitialize
+     * the leaf node if it is provided in the argument list.
      */
     inline static IteratorContext *Get(BwTree *p_tree_p, 
                                        const BaseNode *node_p) {
@@ -7813,6 +7861,9 @@ try_join_again:
      * class since the memory of "this" pointer is allocated through operator
      * new[] of type char[], so we must reclaim memory using the same
      * operator delete[] of type char[]
+     *
+     * Note that class ElasticNode<KeyValuePair> has to be deleted
+     * before this function is called then it is deleted in the d'tor
      */
     inline void Destroy() {
       // Note that we must cast it as char * before
