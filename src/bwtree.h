@@ -8075,7 +8075,7 @@ try_join_again:
      * to access members of the value, but cannot modify
      */
     inline const KeyValuePair *operator->() {
-      return &(*it);
+      return &*kv_p;
     }
 
     /*
