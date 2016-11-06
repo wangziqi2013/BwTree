@@ -7864,6 +7864,9 @@ try_join_again:
                                   node_p->GetLowKeyPair(),
                                   node_p->GetHighKeyPair()};
       
+      // So after this function returns the ref count should be exactly 1               
+      ic_p->IncRef();
+      
       return ic_p;
     }
     
@@ -7875,7 +7878,7 @@ try_join_again:
      * new[] of type char[], so we must reclaim memory using the same
      * operator delete[] of type char[]
      *
-     * Note that class ElasticNode<KeyValuePair> has to be deleted
+     * Note that class ElasticNode<KeyValuePair> d'tor needs to be called
      * before this function is called then it is deleted in the d'tor
      */
     inline void Destroy() {
@@ -7938,8 +7941,9 @@ try_join_again:
 
       // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
       ic_p = IteratorContext::Get(p_tree_p, node_p);
+      // This does not change after CollectAllValuesOnLeaf() is called
       kv_p = ic_p->GetLeafNode()->Begin();
-      ic_p->GetRefCount()++;
+      assert(ic_p->GetRefCount() == 1UL);
 
       // Use this to collect all values
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
@@ -7981,15 +7985,11 @@ try_join_again:
      * to this. So we should move the iterator manually
      */
     ForwardIterator(const ForwardIterator &other) :
-      tree_p{other.tree_p},
-      // This copy constructs all members recursively by default
-      leaf_node_p{reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p))},
-      next_key_pair{other.next_key_pair},
-      is_end{other.is_end} {
-
-      // Move the iterator ahead
-      it = leaf_node_p->Begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
+      ic_p{other.ic_p},
+      kv_p{other.kv_p} {
+      // Increase its reference count since now two iterators
+      // share one IteratorContext object
+      ic_p->IncRef();
 
       return;
     }
