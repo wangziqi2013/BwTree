@@ -8190,13 +8190,16 @@ try_join_again:
     /*
      * Destructor
      *
-     * NOTE: Since we always make copies of logical node object when copy
-     * constructing the iterator, we could always safely delete the logical
-     * node, because its memory is not shared between iterators
+     * If the iterator is not null iterator then we decrease the reference
+     * count of the IteratorContext object which could possibly leads
+     * to the destruction of ic_p. Otherwise just return
      */
     ~ForwardIterator() {
-      if(leaf_node_p != nullptr) {
-        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+      if(ic_p != nullptr) {
+        assert(kv_p != nullptr);
+        ic_p->DecRef();
+      } else {
+        assert(kv_p == nullptr); 
       }
 
       return;
