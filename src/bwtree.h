@@ -8032,30 +8032,26 @@ try_join_again:
      * and such that the iterator is not invalidated
      */
     ForwardIterator &operator=(ForwardIterator &&other) {
+      // Note that this is necessary since even if other has an address
+      // it could be transformed into a x-value using std::move()
       if(this == &other) {
         return *this;
       }
 
-      // For an empty iterator this branch is necessary
-      if(leaf_node_p != nullptr) {
-        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+      // For move assignment we do not touch the ref count
+      // and just nullify the other object 
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr); 
+      } else {
+        assert(kv_p != nullptr); 
       }
-
-      // Direcrly moves the leaf node pointer without copying
-      leaf_node_p = other.leaf_node_p;
-
-      // Since the leaf node does not change, the constructor is not invalidated
-      // we could just copy it here
-      it = other.it;
-
-      tree_p = other.tree_p;
-      next_key_pair = other.next_key_pair;
-
-      is_end = other.is_end;
-
-      // This is necessary to avoid the leaf node pointer being
-      // deleted when the other is destructed
-      other.leaf_node_p = nullptr;
+      
+      // Add a reference to the IteratorContext
+      ic_p = other.ic_p;
+      kv_p = other.kv_p;
+      // Nullify it to avoid from being used
+      other.ic_p = nullptr;
+      other.kv_p = nullptr;
 
       return *this;
     }
@@ -8069,7 +8065,7 @@ try_join_again:
      */
     inline const KeyValuePair &operator*() {
       // This itself is a ValueType reference
-      return (*it);
+      return *kv_p;
     }
 
     /*
