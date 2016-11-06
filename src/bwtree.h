@@ -8055,6 +8055,29 @@ try_join_again:
 
       return *this;
     }
+    
+    /*
+     * IsEnd() - Whether the current iterator caches the last page and 
+     *           the iterator points to the last element
+     *
+     * Note that since in a lock-free data structure it is impossible to
+     * derive a universal coordinate to denote where an iterator points to
+     * we only make use of the current cached page to determine whether this
+     * page is the last page (by looking at the next node ID stored in leaf
+     * page metadata) and whether the current kv_p points to the End() iterator
+     * of the currently cached page. If both are met then we claim it is an end
+     * iterator.
+     *
+     * Comparing between two End() iterators are meaningless since the last
+     * page might be different. Therefore, please always call IsEnd() to
+     * detect end of iteration. 
+     */
+    bool IsEnd() const {
+      // 1. Next node ID is INVALID_NODE_ID
+      // 2. Current iterator pointer equals end_p stored in leaf node
+      return (ic_p->GetLeafPage()->GetNextNodeID() == INVALID_NODE_ID) && \
+             (ic_p->GetLeafPage()->End() == kv_p);
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
