@@ -7742,6 +7742,25 @@ try_join_again:
     }
     
     /*
+     * InnRef() - Increase reference counter
+     *
+     * This must be called when an object is newly constructed or is referecne
+     * copied to another iterator instance
+     */
+    inline void IncRef() {
+      ref_count++;
+    }
+    
+    inline void DecRef() {
+      ref_count--;
+      if(ref_count == 0UL) {
+      
+      }
+      
+      return;
+    }
+    
+    /*
      * GetRefCount() - Returns a reference to the ref count field of the class
      *
      * The returned reference could be used to access ref_count field
@@ -7796,7 +7815,10 @@ try_join_again:
      * operator delete[] of type char[]
      */
     inline void Destroy() {
-      delete[] this;
+      // Note that we must cast it as char * before
+      // delete[] otherwise C++ will try to find the size of the array
+      // and call d'tor for each element
+      delete[] reinterpret_cast<char *>(this);
       
       return; 
     }
@@ -7814,7 +7836,7 @@ try_join_again:
    */
   class ForwardIterator {
    private:
-    // This points to the iterator context
+    // This points to the iterator context that holds the LeafNode object
     IteratorContext *ic_p;
     KeyValuePair *kv_p;
     
