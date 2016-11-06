@@ -1728,8 +1728,7 @@ class BwTree {
      * Note that this is not called by Destroy() and instead it should be 
      * called by an external function that destroies a delta chain, since in one
      * instance of thie class there might be multiple nodes of different types
-     * so destroying should be dont individually with each type. The behavior
-     * here is different from the behavior of class IteratorContext
+     * so destroying should be dont individually with each type.
      */
     ~ElasticNode() {
       // Use two iterators to iterate through all existing elements
@@ -1981,6 +1980,13 @@ class BwTree {
     InnerNode(InnerNode &&) = delete;
     InnerNode &operator=(const InnerNode &) = delete;
     InnerNode &operator=(InnerNode &&) = delete;
+    
+    /*
+     * Destructor - Calls destructor of ElasticNode
+     */
+    ~InnerNode() {
+      this->~ElasticNode<KeyNodeIDPair>();
+    }
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -2046,6 +2052,13 @@ class BwTree {
     LeafNode(LeafNode &&) = delete;
     LeafNode &operator=(const LeafNode &) = delete;
     LeafNode &operator=(LeafNode &&) = delete;
+    
+    /*
+     * Destructor - Calls underlying ElasticNode d'tor
+     */
+    ~LeafNode() {
+      this->~ElasticNode<KeyValuePair>();
+    }
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
