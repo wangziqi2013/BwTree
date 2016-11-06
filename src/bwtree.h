@@ -8071,8 +8071,19 @@ try_join_again:
      * Comparing between two End() iterators are meaningless since the last
      * page might be different. Therefore, please always call IsEnd() to
      * detect end of iteration. 
+     *
+     * Note also that for empty iterators we always declare them as end iterator
+     * because this simplifies the construction of an End() iterator without
+     * actually traversing the tree
      */
     bool IsEnd() const {
+      // Empty iterator is naturally end iterator
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
+      
       // 1. Next node ID is INVALID_NODE_ID
       // 2. Current iterator pointer equals end_p stored in leaf node
       return (ic_p->GetLeafPage()->GetNextNodeID() == INVALID_NODE_ID) && \
@@ -8112,18 +8123,12 @@ try_join_again:
      * NOTE: It is possible that for an iterator, no raw keys are stored. This
      * happens when the tree is empty, or the requested key is larger than
      * all existing keys in the tree. In that case, end flag is set, so
-     * in this function we check end flag first
+     * in this function we check end flag first. However, we support comparing
+     * two end iterators since they are only semantically compared
      */
     inline bool operator<(const ForwardIterator &other) const {
-      if(other.is_end == true) {
-        if(is_end == true) {
-          // If both are end iterator then no one is less than another
-          return false;
-        } else {
-          // Otherwise, the left one is smaller as long as the
-          // RHS is an end iterator
-          return true;
-        }
+      if(IsEnd() == true && other.IsEnd() == true) {
+        return; 
       }
 
       // If none of them is end iterator, we simply do a key comparison
