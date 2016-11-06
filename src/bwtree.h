@@ -7770,6 +7770,13 @@ try_join_again:
     }
     
     /*
+     * GetTree() - Returns a tree instance 
+     */
+    inline BwTree *GetTree() {
+      return tree_p;
+    }
+    
+    /*
      * InnRef() - Increase reference counter
      *
      * This must be called when an object is newly constructed or is referecne
