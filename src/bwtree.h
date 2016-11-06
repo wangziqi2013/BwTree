@@ -8130,38 +8130,61 @@ try_join_again:
      * NOTE: It is possible that for an iterator, no raw keys are stored. This
      * happens when the tree is empty, or the requested key is larger than
      * all existing keys in the tree. In that case, end flag is set, so
-     * in this function we check end flag first. However, we support comparing
-     * two end iterators since they are only semantically compared
+     * in this function we check end flag first. 
+     *
+     * Comparison rules:
+     *   1. end iterator is no less than all other iterators
+     *     1.5. end iterator is not less than end iterator
+     *     1.75. end iterator is greater than all other non-end iterators
+     *   2. If both are not end iterator then simply compare their keys
+     *      currently pointed to by kv_p
+     *   3. Values are never compared
      */
     inline bool operator<(const ForwardIterator &other) const {
-      if(IsEnd() == true && other.IsEnd() == true) {
-        return; 
+      if(other.IsEnd() == true) {
+        if(IsEnd() == true) {
+          return false; 
+        } else {
+          return true; 
+        }
+      } else if(IsEnd() == true) {
+        return false; 
       }
+      
+      // After this point we know none of them is end iterator
 
       // If none of them is end iterator, we simply do a key comparison
       // using the iterator
-      return tree_p->KeyCmpLess(it->first, other.it->first);
+      // Note: We should check whether these two iterators are from
+      // the same tree
+      return ic_p->GetTree()->KeyCmpLess(kv_p->first, other.kv_p->first);
     }
 
     /*
      * operator==() - Compares whether two iterators refer to the same key
      *
-     * If both iterators are end iterator then we return true
-     * If one of them is not then the result is false
-     * Otherwise the result is the comparison result of current key
+     * Comparison rules:
+     *   1. end iterator equals end iterator
+     *   2. end iterator does not equal all non-end iterators
+     *   3. For all other cases, compare their key being currently pointed
+     *      to by kv_p
      */
     inline bool operator==(const ForwardIterator &other) const {
-      if(other.is_end == true) {
-        if(is_end == true) {
+      if(other.IsEnd() == true) {
+        if(IsEnd() == true) {
           // Two end iterators are equal to each other
           return true;
         } else {
           // Otherwise they are not equal
           return false;
         }
+      } else if(IsEnd() == true) {
+        return false;
       }
+      
+      // After this we know none of them are end iterators
 
-      return tree_p->KeyCmpEqual(it->first, other.it->first);
+      return tree_p->KeyCmpEqual(kv_p->first, other.kv_p->first);
     }
 
     /*
