@@ -8184,7 +8184,7 @@ try_join_again:
       
       // After this we know none of them are end iterators
 
-      return tree_p->KeyCmpEqual(kv_p->first, other.kv_p->first);
+      return ic_p->GetTree()->KeyCmpEqual(kv_p->first, other.kv_p->first);
     }
 
     /*
@@ -8197,6 +8197,9 @@ try_join_again:
     ~ForwardIterator() {
       if(ic_p != nullptr) {
         assert(kv_p != nullptr);
+        // If ic_p is not nullptr we know it is a valid reference and 
+        // just decrease reference counter for it. This might also call
+        // destructor for ic_p instance if we release the last reference
         ic_p->DecRef();
       } else {
         assert(kv_p == nullptr); 
@@ -8214,7 +8217,7 @@ try_join_again:
      * If the iterator is end() iterator then we do nothing
      */
     inline ForwardIterator &operator++() {
-      if(is_end == true) {
+      if(IsEnd() == true) {
         return *this;
       }
 
@@ -8229,25 +8232,17 @@ try_join_again:
      * For end() iterator we do not do anything but return the same iterator
      */
     inline ForwardIterator operator++(int) {
-      if(is_end == true) {
+      if(IsEnd() == true) {
         return *this;
       }
 
       // Make a copy of the current one before advancing
+      // This will increase ref count temporarily, but it is always consistent
       ForwardIterator temp = *this;
 
       MoveAheadByOne();
 
       return temp;
-    }
-
-    /*
-     * IsEnd() - Returns true if we have reached the end of iteration
-     *
-     * This is just a wrapper of the private member is_end
-     */
-    inline bool IsEnd() const {
-      return is_end;
     }
 
     /*
