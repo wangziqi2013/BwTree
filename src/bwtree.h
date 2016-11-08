@@ -7933,9 +7933,8 @@ try_join_again:
     /*
      * Constructor
      *
-     * NOTE: We try to load the first page using -Inf as the next key
-     * during construction in order to correctly identify the case where
-     * the tree is empty, and such that begin() iterator equals end() iterator
+     * NOTE: We load the first leaf page using FIRST_LEAF_NODE_ID since we
+     * know it is there
      */
     ForwardIterator(BwTree *p_tree_p) {
       // This also needs to be protected by epoch since we do access internal
@@ -7997,7 +7996,7 @@ try_join_again:
       kv_p{other.kv_p} {
       // Increase its reference count since now two iterators
       // share one IteratorContext object
-      ic_p->IncRef();
+      other.ic_p->IncRef();
 
       return;
     }
@@ -8027,7 +8026,7 @@ try_join_again:
       // Add a reference to the IteratorContext
       ic_p = other.ic_p;
       kv_p = other.kv_p;
-      ic_p->IncRef();
+      other.ic_p->IncRef();
 
       return *this;
     }
@@ -8306,8 +8305,8 @@ try_join_again:
         tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
         // Find the lower bound of the current start search key
-        // NOTE: Do not use start_key_p since it has been changed by the
-        // assignment to next_key_pair
+        // NOTE: Do not use start_key_p since the target it points to
+        // might have been destroyed because we already released the reference
         kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
                                 ic_p->GetLeafNode()->End(),
                                 std::make_pair(start_key, ValueType{}),
