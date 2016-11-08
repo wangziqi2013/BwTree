@@ -7871,8 +7871,9 @@ try_join_again:
                                   node_p->GetLowKeyPair(),
                                   node_p->GetHighKeyPair()};
       
-      // So after this function returns the ref count should be exactly 1               
+      // So after this function returns the ref count should be exactly 1
       ic_p->IncRef();
+      assert(ic_p->GetRefCount() == 1UL);
       
       return ic_p;
     }
@@ -8257,41 +8258,38 @@ try_join_again:
      * To address this problem, after loading a logical node, we need to advance
      * the key iterator to locate the first key that >= next_key
      *
-     * NOTE: If no argument is given then this function uses next_key_pair
-     * and checks for INVALID_NODE_ID. Otherwise it uses the given key
-     * as the starting point of iteration, and sets next_key_pair
-     *
-     * NOTE 2: A corner case is that a key that is bigger than all current keys
-     * in the system was given
+     * Note that the argument p_tree_p is required since this function might be 
+     * called with ic_p being nullptr, such that we need a reference to the tree
+     * instance
      */
-    void LowerBound(BwTree *p_tree_p, 
+    void LowerBound(BwTree *p_tree_p,
                     const KeyType *start_key_p) {
+      assert(start_key_p != nullptr);
       while(1) {
         // First join the epoch to prevent physical nodes being deallocated
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
-
-        // Traverse down the tree to get to leaf node
-        Context context{*start_key_p};
         
-        // This forces the traversal to stop at the first sight of a leaf node
-        // (of course after traversing its sibling)
+        // This traversal has the following characteristics:
+        //   1. It stops at the leaf level without traversing leaf with the key
+        //   2. It DOES finish partial SMO, consolidate overlengthed chain, etc.
+        //   3. It DOES traverse horizontally using sibling pointer
+        Context context{*start_key_p};
         tree_p->Traverse(&context, nullptr, nullptr);
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
         assert(node_p->IsOnLeafDeltaChain() == true);
 
+        // We are releasing the IteratorContext object currently held 
+        // because we are now going to the next page after it
         if(ic_p != nullptr) {
-          // This calls destructor of KeyValuePairs stored
-          ic_p->~IteratorContext();
-          // This frees memory
-          ic_p->Destroy();
+          ic_p->DecRef();
         }
         
         // Refresh the IteratorContext object and also refresh kv_p
         ic_p = IteratorContext::Get(p_tree_p, node_p);
-        ic_p->GetRefCount()++;        
+        assert(ic_p->GetRefCount() == 1UL);
 
         // Consolidate the current node and store all key value pairs
         // to the embedded leaf node 
