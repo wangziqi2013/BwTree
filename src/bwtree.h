@@ -63,6 +63,11 @@ using NodeID = uint64_t;
 #include "bloom_filter.h"
 #include "atomic_stack.h"
 
+// Copied from Linux kernel code to facilitate branch prediction unit on CPU
+// if there is one
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
 // We use this to control from the compiler
 #ifndef BWTREE_NODEBUG
 /*
@@ -1715,6 +1720,15 @@ class BwTree {
     
     /*
      * Destructor
+     *
+     * All element types are destroyed inside the destruction function. D'tor
+     * is called by Destroy(), and therefore should not be called directly
+     * by external functions.
+     *
+     * Note that this is not called by Destroy() and instead it should be 
+     * called by an external function that destroies a delta chain, since in one
+     * instance of thie class there might be multiple nodes of different types
+     * so destroying should be dont individually with each type.
      */
     ~ElasticNode() {
       // Use two iterators to iterate through all existing elements
@@ -1722,7 +1736,7 @@ class BwTree {
           element_p != End();
           element_p++) {
         // Manually calls destructor when the node is destroyed
-        element_p->~ElementType();      
+        element_p->~ElementType();
       }
       
       return;
@@ -1730,6 +1744,14 @@ class BwTree {
     
     /*
      * Destroy() - Frees the memory by calling AllocationMeta::Destroy()
+     *
+     * Note that function does not call destructor, and instead the destructor
+     * should be called first before this function is called
+     *
+     * Note that this function does not call destructor for the class since
+     * it holds multiple instances of tree nodes, we should call destructor 
+     * for each individual type outside of this class, and only frees memory
+     * when Destroy() is called.
      */
     void Destroy() const {
       // This finds the allocation header for this base node, and then
@@ -1958,6 +1980,13 @@ class BwTree {
     InnerNode(InnerNode &&) = delete;
     InnerNode &operator=(const InnerNode &) = delete;
     InnerNode &operator=(InnerNode &&) = delete;
+    
+    /*
+     * Destructor - Calls destructor of ElasticNode
+     */
+    ~InnerNode() {
+      this->~ElasticNode<KeyNodeIDPair>();
+    }
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -2019,18 +2048,17 @@ class BwTree {
   class LeafNode : public ElasticNode<KeyValuePair> {
    public:
     LeafNode() = delete;
-    //LeafNode(const LeafNode &) = delete;  -> This should be implemented
+    LeafNode(const LeafNode &) = delete;
     LeafNode(LeafNode &&) = delete;
     LeafNode &operator=(const LeafNode &) = delete;
     LeafNode &operator=(LeafNode &&) = delete;
-
+    
     /*
-     * Copy Constructor - This is needed to support iterators taking
-     *                    snapshot of the LeafNode
+     * Destructor - Calls underlying ElasticNode d'tor
      */
-    LeafNode(const LeafNode &other) :
-      ElasticNode<KeyValuePair>{other}
-    {}
+    ~LeafNode() {
+      this->~ElasticNode<KeyValuePair>();
+    }
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
@@ -4070,8 +4098,14 @@ abort_traverse:
    * This function is the non-recursive wrapper of the resursive core function.
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
+   *
+   * If leaf_node_p is nullptr (default) then a new leaf node instance is 
+   * created; Otherwise we simply use the existing pointer *WITHOUT* performing
+   * any initialization. This implies that the caller should initialize
+   * a valid LeafNode object before calling this function
    */
-  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p,
+                                   LeafNode *leaf_node_p=nullptr) {
     assert(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
@@ -4080,14 +4114,18 @@ abort_traverse:
     // Prepare new node
     /////////////////////////////////////////////////////////////////
 
-    LeafNode *leaf_node_p = \
-      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-        Get(node_p->GetItemCount(),
-            NodeType::LeafType,
-            0,
-            node_p->GetItemCount(),
-            node_p->GetLowKeyPair(),
-            node_p->GetHighKeyPair()));
+    if(likely(leaf_node_p == nullptr)) {
+      leaf_node_p = \
+        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
+          Get(node_p->GetItemCount(),
+              NodeType::LeafType,
+              0,
+              node_p->GetItemCount(),
+              node_p->GetLowKeyPair(),
+              node_p->GetHighKeyPair()));
+    }
+    
+    assert(leaf_node_p != nullptr);
     
     /////////////////////////////////////////////////////////////////
     // Prepare Delta Set
@@ -4392,7 +4430,7 @@ abort_traverse:
    * the vector, since at that time the snapshot object will be destroyed
    * which also freed up the logical node object
    */
-  inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) const {
+  static inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) {
     assert(context_p->current_level >= 0);
 
     return &context_p->current_snapshot;
@@ -7666,6 +7704,202 @@ try_join_again:
    */
 
   /*
+   * class IteratorContext - Buffers leaf page information for iterating on
+   *                         that page
+   *
+   * This page buffers the content of a leaf page in the tree. We do not 
+   * directly refer to a page because there is no protection from the page being
+   * recycled by SMR.
+   *
+   * Please note that this IteratorContext could only be used under single 
+   * threaded environment. This is a valid assumption since different threads
+   * could always start their own iterators
+   *
+   * Since the instance of this class is created as char[], with a class 
+   * ElasticNode<KeyValuePair> embedded, when destroy the instance we must
+   * manually call destructor first, and then call member Destroy() to free
+   * the chunk of memory as char[] rather than IteratorContext instance.
+   */
+  class IteratorContext {
+   private:
+    // We need this reference to traverse and also to call GC
+    BwTree *tree_p;
+
+    // This is a reference counter used for single threaded environment
+    // Note that if multiple threads modifies the reference counter concurrentl
+    // then we could not recycle it even if the ref count has droped to 0
+    size_t ref_count;
+    
+    // This is a stub that points to class LeafNode which is used to
+    // receive consolidated key value pairs from a leaf delta chain
+    LeafNode leaf_node_p[0];
+    
+    /*
+     * Constructor - Initialize class IteratorContext part
+     *
+     * Note that the LeafNode instance is initialized outside of this class
+     */
+    IteratorContext(BwTree *p_tree_p) :
+      tree_p{p_tree_p},
+      ref_count{0UL} 
+    {}
+    
+    /*
+     * Destructor
+     *
+     * Note that this could not be directly deleted by calling operator delete[]
+     * since we allocate it as char[], so the destructor must be called
+     * manually and then free the chunk of memory as char[] rather than as
+     * class IteratorContext instance
+     */
+    ~IteratorContext() {
+      // Call destructor to destruct all KeyValuePairs stored in its array
+      GetLeafNode()->~ElasticNode<KeyValuePair>();
+      
+      return;
+    }
+    
+   public:
+    
+    /*
+     * GetLeafNode() - Returns a pointer to the leaf node object embedded inside
+     *                 class IteratorContext object
+     */
+    inline LeafNode *GetLeafNode() {
+      return &leaf_node_p[0];
+    }
+    
+    /*
+     * GetTree() - Returns a tree instance 
+     */
+    inline BwTree *GetTree() {
+      return tree_p;
+    }
+    
+    /*
+     * InnRef() - Increase reference counter
+     *
+     * This must be called when an object is newly constructed or is referecne
+     * copied to another iterator instance
+     */
+    inline void IncRef() {
+      ref_count++;
+      assert(ref_count != 0UL);
+      
+      return;
+    }
+    
+    /*
+     * DecRef() - Decrease the refreence counter by 1
+     *
+     * If ref_count drops to zero after the decreament then call the destructor 
+     * of the current object to destroy it. External functions do not need
+     * to take care of the lifetime of the object
+     *
+     * Note that the reference count mechanism could only be used when there
+     * is only one thread accessing this instance. If multiple threads are 
+     * using the reference counter then the following is possible:
+     *   1. Thread 1 decreases ref count and it becomes 0
+     *   2. Thread 1 decides to destroy the object
+     *   3. Thread 2 refers to the object, and increases the ref count
+     *   4. Thread 1 frees memory
+     *   5. Thread 2 access invalid memory
+     *  
+     * An alternative way for this naive ref count would be to lock it using
+     * either implicit atomic variable or explicitly with a lock. Once ref
+     * count drops to 0, we lock it to avoid threads further accessing. 
+     */
+    inline void DecRef() {
+      // for unsigned long the only thing we could ensure
+      // is that it does not cross 0 boundary
+      assert(ref_count != 0UL);
+      
+      ref_count--;
+      if(ref_count == 0UL) {
+        // 1. calls d'tor of class IteratorContext which calls d'tor
+        //    for class ElasticNode
+        this->~IteratorContext();
+        // 2. Frees memory as char[]
+        this->Destroy();
+      }
+      
+      return;
+    }
+    
+    /*
+     * GetRefCount() - Returns the current reference counter
+     */
+    inline size_t GetRefCount() {
+      return ref_count;
+    }
+    
+    /*
+     * Get() - Static function that constructs an iterator context object
+     *
+     * Note that node_p is passed as the head node of a delta chain, and we
+     * only need its high key and item count field. Low key, depth and node type
+     * will be used to initialize the LeafNode instance embedded inside
+     * this object but they will not be used as part of the iteration
+     *
+     * Both class IteratorContext and class LeafNode is initialized when
+     * this function returns. CollectAllValuesOnLeaf() does not einitialize
+     * the leaf node if it is provided in the argument list.
+     */
+    inline static IteratorContext *Get(BwTree *p_tree_p, 
+                                       const BaseNode *node_p) {
+      // This is the size of the memory chunk we allocate for the leaf node
+      size_t size = \
+        sizeof(IteratorContext) + \
+        sizeof(LeafNode) + \
+        sizeof(KeyValuePair) * node_p->GetItemCount();
+      
+      // This is the size of memory we wish to initialize for IteratorContext
+      // plus data
+      IteratorContext *ic_p = \
+        reinterpret_cast<IteratorContext *>(new char[size]);
+      assert(ic_p != nullptr);
+      
+      // Initialize class IteratorContext part
+      new (ic_p) IteratorContext{p_tree_p};
+      
+      // Then initialize class LeafNode 
+      // i.e. class ElasticNode<KeyValuePair> part 
+      new (ic_p->GetLeafNode()) \
+        ElasticNode<KeyValuePair>{node_p->GetType(),
+                                  node_p->GetDepth(),
+                                  node_p->GetItemCount(),
+                                  node_p->GetLowKeyPair(),
+                                  node_p->GetHighKeyPair()};
+      
+      // So after this function returns the ref count should be exactly 1
+      ic_p->IncRef();
+      assert(ic_p->GetRefCount() == 1UL);
+      
+      return ic_p;
+    }
+    
+    /*
+     * Destroy() - Manually frees memory as char[]
+     *
+     * This function is necessary to ensure well defined bahavior of the
+     * class since the memory of "this" pointer is allocated through operator
+     * new[] of type char[], so we must reclaim memory using the same
+     * operator delete[] of type char[]
+     *
+     * Note that class ElasticNode<KeyValuePair> d'tor needs to be called
+     * before this function is called then it is deleted in the d'tor
+     */
+    inline void Destroy() {
+      // Note that we must cast it as char * before
+      // delete[] otherwise C++ will try to find the size of the array
+      // and call d'tor for each element
+      delete[] reinterpret_cast<char *>(this);
+      
+      return; 
+    }
+  };
+
+  /*
    * class ForwardIterator - Iterator that supports forward iteration of
    *                         tree elements
    *
@@ -7676,6 +7910,11 @@ try_join_again:
    * is both begin() and end() iterator at the same time
    */
   class ForwardIterator {
+   private:
+    // This points to the iterator context that holds the LeafNode object
+    IteratorContext *ic_p;
+    KeyValuePair *kv_p;
+    
    public:
     /*
      * Default Constructor - This acts as a place holder for some functions
@@ -7683,44 +7922,45 @@ try_join_again:
      *                       want to afford the overhead of loading a page into
      *                       the iterator
      *
-     * Only leaf_node_p is initialized to avoid destructor destructing the
-     * iterator, also to avoid assignment operator directly assign to it.
+     * All pointers are initialized to nullptr to indicate that it does not
+     * need any form of memory reclaim
      */
     ForwardIterator() :
-      leaf_node_p{nullptr}
+      ic_p{nullptr},
+      kv_p{nullptr}
     {}
 
     /*
      * Constructor
      *
-     * NOTE: We try to load the first page using -Inf as the next key
-     * during construction in order to correctly identify the case where
-     * the tree is empty, and such that begin() iterator equals end() iterator
+     * NOTE: We load the first leaf page using FIRST_LEAF_NODE_ID since we
+     * know it is there
      */
-    ForwardIterator(BwTree *p_tree_p) :
-      tree_p{p_tree_p},
-      is_end{false} {
+    ForwardIterator(BwTree *p_tree_p) {
+      // This also needs to be protected by epoch since we do access internal
+      // node that is possible to be reclaimed
+      EpochNode *epoch_node_p = p_tree_p->epoch_manager.JoinEpoch();
+        
       // Load the first leaf page
-      const BaseNode *node_p = tree_p->GetNode(FIRST_LEAF_NODE_ID);
-
+      const BaseNode *node_p = p_tree_p->GetNode(FIRST_LEAF_NODE_ID);
       assert(node_p != nullptr);
       assert(node_p->IsOnLeafDeltaChain() == true);
 
-      // Use the high key of current node as the next key locking
-      next_key_pair = node_p->GetHighKeyPair();
+      // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
+      ic_p = IteratorContext::Get(p_tree_p, node_p);
+      // This does not change after CollectAllValuesOnLeaf() is called
+      kv_p = ic_p->GetLeafNode()->Begin();
+      assert(ic_p->GetRefCount() == 1UL);
 
+      // Use this to collect all values
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
 
-      // Consolidate the current node (this does not change high key)
-      leaf_node_p = tree_p->CollectAllValuesOnLeaf(&snapshot);
-
-      it = leaf_node_p->Begin();
-
-      // Corner case: if the vector is itself empty
-      // then we should set the flag manually
-      if(leaf_node_p->GetSize() == 0) {
-        is_end = true;
-      }
+      // Consolidate the current node. Note that we pass in the leaf node
+      // object embedded inside the IteratorContext object
+      p_tree_p->CollectAllValuesOnLeaf(&snapshot, ic_p->GetLeafNode());
+      
+      // Leave epoch
+      p_tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
       return;
     }
@@ -7734,17 +7974,12 @@ try_join_again:
      */
     ForwardIterator(BwTree *p_tree_p,
                     const KeyType &start_key) :
-      tree_p{p_tree_p},
-      leaf_node_p{nullptr}, // This is used to singal LowerBound() that
-                            // no memory should be freed
-      is_end{false} {
-
-      // This sets all members, and might return with is_end == true
-      // Also this function
-      LowerBound(&start_key);
-
-      // After LowerBound(), either it points to KeyValuePair or
-      // is_end is set to true
+      ic_p{nullptr},
+      kv_p{nullptr} {
+      
+      // Load the corresponding page using the given key and store all its
+      // data into the iterator's embedded leaf page
+      LowerBound(p_tree_p, &start_key);
 
       return;
     }
@@ -7757,15 +7992,11 @@ try_join_again:
      * to this. So we should move the iterator manually
      */
     ForwardIterator(const ForwardIterator &other) :
-      tree_p{other.tree_p},
-      // This copy constructs all members recursively by default
-      leaf_node_p{reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p))},
-      next_key_pair{other.next_key_pair},
-      is_end{other.is_end} {
-
-      // Move the iterator ahead
-      it = leaf_node_p->Begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
+      ic_p{other.ic_p},
+      kv_p{other.kv_p} {
+      // Increase its reference count since now two iterators
+      // share one IteratorContext object
+      other.ic_p->IncRef();
 
       return;
     }
@@ -7773,9 +8004,8 @@ try_join_again:
     /*
      * operator= - Assigns one object to another
      *
-     * DONE: As an optimization we could define an assignment operation
-     * for logical leaf node, and direct assign the logical leaf node from
-     * the source object to the current object
+     * Note: For self-assignment special care must be taken to avoid
+     * operating on an object itself
      */
     ForwardIterator &operator=(const ForwardIterator &other) {
       // It is crucial to prevent self assignment since we do pointer
@@ -7784,27 +8014,19 @@ try_join_again:
         return *this;
       }
 
-      // For an empty iterator this branch is necessary
-      if(leaf_node_p == nullptr) {
-        leaf_node_p = reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::Copy(*other.leaf_node_p));
+      // If this is an empty iterator then do nothing; otherwise need to
+      // release a reference to the current ic_p first
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr); 
       } else {
-        // First copy the logical node into current instance
-        // DO NOT NEED new and delete; JUST DO A VALUE COPY
-        // since the storage has already been allocated during construction
-        // and the old value with be automatically dealt with LeafNode
-        // and vector's assignment operation
-        *leaf_node_p = *other.leaf_node_p;
+        assert(kv_p != nullptr); 
+        ic_p->DecRef();
       }
-
-      // Copy everything that could be copied
-      tree_p = other.tree_p;
-      next_key_pair = other.next_key_pair;
-
-      is_end = other.is_end;
-
-      // Move the iterator ahead
-      it = leaf_node_p->Begin() + \
-           std::distance(((const LeafNode *)other.leaf_node_p)->Begin(), other.it);
+      
+      // Add a reference to the IteratorContext
+      ic_p = other.ic_p;
+      kv_p = other.kv_p;
+      other.ic_p->IncRef();
 
       return *this;
     }
@@ -7817,32 +8039,62 @@ try_join_again:
      * and such that the iterator is not invalidated
      */
     ForwardIterator &operator=(ForwardIterator &&other) {
+      // Note that this is necessary since even if other has an address
+      // it could be transformed into a x-value using std::move()
       if(this == &other) {
         return *this;
       }
 
-      // For an empty iterator this branch is necessary
-      if(leaf_node_p != nullptr) {
-        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+      // For move assignment we do not touch the ref count
+      // and just nullify the other object 
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr); 
+      } else {
+        assert(kv_p != nullptr); 
       }
-
-      // Direcrly moves the leaf node pointer without copying
-      leaf_node_p = other.leaf_node_p;
-
-      // Since the leaf node does not change, the constructor is not invalidated
-      // we could just copy it here
-      it = other.it;
-
-      tree_p = other.tree_p;
-      next_key_pair = other.next_key_pair;
-
-      is_end = other.is_end;
-
-      // This is necessary to avoid the leaf node pointer being
-      // deleted when the other is destructed
-      other.leaf_node_p = nullptr;
+      
+      // Add a reference to the IteratorContext
+      ic_p = other.ic_p;
+      kv_p = other.kv_p;
+      // Nullify it to avoid from being used
+      other.ic_p = nullptr;
+      other.kv_p = nullptr;
 
       return *this;
+    }
+    
+    /*
+     * IsEnd() - Whether the current iterator caches the last page and 
+     *           the iterator points to the last element
+     *
+     * Note that since in a lock-free data structure it is impossible to
+     * derive a universal coordinate to denote where an iterator points to
+     * we only make use of the current cached page to determine whether this
+     * page is the last page (by looking at the next node ID stored in leaf
+     * page metadata) and whether the current kv_p points to the End() iterator
+     * of the currently cached page. If both are met then we claim it is an end
+     * iterator.
+     *
+     * Comparing between two End() iterators are meaningless since the last
+     * page might be different. Therefore, please always call IsEnd() to
+     * detect end of iteration. 
+     *
+     * Note also that for empty iterators we always declare them as end iterator
+     * because this simplifies the construction of an End() iterator without
+     * actually traversing the tree
+     */
+    bool IsEnd() const {
+      // Empty iterator is naturally end iterator
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
+      
+      // 1. Next node ID is INVALID_NODE_ID
+      // 2. Current iterator pointer equals end_p stored in leaf node
+      return (ic_p->GetLeafNode()->GetNextNodeID() == INVALID_NODE_ID) && \
+             (ic_p->GetLeafNode()->End() == kv_p);
     }
 
     /*
@@ -7854,7 +8106,7 @@ try_join_again:
      */
     inline const KeyValuePair &operator*() {
       // This itself is a ValueType reference
-      return (*it);
+      return *kv_p;
     }
 
     /*
@@ -7864,7 +8116,7 @@ try_join_again:
      * to access members of the value, but cannot modify
      */
     inline const KeyValuePair *operator->() {
-      return &(*it);
+      return &*kv_p;
     }
 
     /*
@@ -7878,56 +8130,79 @@ try_join_again:
      * NOTE: It is possible that for an iterator, no raw keys are stored. This
      * happens when the tree is empty, or the requested key is larger than
      * all existing keys in the tree. In that case, end flag is set, so
-     * in this function we check end flag first
+     * in this function we check end flag first. 
+     *
+     * Comparison rules:
+     *   1. end iterator is no less than all other iterators
+     *     1.5. end iterator is not less than end iterator
+     *     1.75. end iterator is greater than all other non-end iterators
+     *   2. If both are not end iterator then simply compare their keys
+     *      currently pointed to by kv_p
+     *   3. Values are never compared
      */
     inline bool operator<(const ForwardIterator &other) const {
-      if(other.is_end == true) {
-        if(is_end == true) {
-          // If both are end iterator then no one is less than another
-          return false;
+      if(other.IsEnd() == true) {
+        if(IsEnd() == true) {
+          return false; 
         } else {
-          // Otherwise, the left one is smaller as long as the
-          // RHS is an end iterator
-          return true;
+          return true; 
         }
+      } else if(IsEnd() == true) {
+        return false; 
       }
+      
+      // After this point we know none of them is end iterator
 
       // If none of them is end iterator, we simply do a key comparison
       // using the iterator
-      return tree_p->KeyCmpLess(it->first, other.it->first);
+      // Note: We should check whether these two iterators are from
+      // the same tree
+      return ic_p->GetTree()->KeyCmpLess(kv_p->first, other.kv_p->first);
     }
 
     /*
      * operator==() - Compares whether two iterators refer to the same key
      *
-     * If both iterators are end iterator then we return true
-     * If one of them is not then the result is false
-     * Otherwise the result is the comparison result of current key
+     * Comparison rules:
+     *   1. end iterator equals end iterator
+     *   2. end iterator does not equal all non-end iterators
+     *   3. For all other cases, compare their key being currently pointed
+     *      to by kv_p
      */
     inline bool operator==(const ForwardIterator &other) const {
-      if(other.is_end == true) {
-        if(is_end == true) {
+      if(other.IsEnd() == true) {
+        if(IsEnd() == true) {
           // Two end iterators are equal to each other
           return true;
         } else {
           // Otherwise they are not equal
           return false;
         }
+      } else if(IsEnd() == true) {
+        return false;
       }
+      
+      // After this we know none of them are end iterators
 
-      return tree_p->KeyCmpEqual(it->first, other.it->first);
+      return ic_p->GetTree()->KeyCmpEqual(kv_p->first, other.kv_p->first);
     }
 
     /*
      * Destructor
      *
-     * NOTE: Since we always make copies of logical node object when copy
-     * constructing the iterator, we could always safely delete the logical
-     * node, because its memory is not shared between iterators
+     * If the iterator is not null iterator then we decrease the reference
+     * count of the IteratorContext object which could possibly leads
+     * to the destruction of ic_p. Otherwise just return
      */
     ~ForwardIterator() {
-      if(leaf_node_p != nullptr) {
-        tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+      if(ic_p != nullptr) {
+        assert(kv_p != nullptr);
+        // If ic_p is not nullptr we know it is a valid reference and 
+        // just decrease reference counter for it. This might also call
+        // destructor for ic_p instance if we release the last reference
+        ic_p->DecRef();
+      } else {
+        assert(kv_p == nullptr); 
       }
 
       return;
@@ -7942,7 +8217,7 @@ try_join_again:
      * If the iterator is end() iterator then we do nothing
      */
     inline ForwardIterator &operator++() {
-      if(is_end == true) {
+      if(IsEnd() == true) {
         return *this;
       }
 
@@ -7957,62 +8232,18 @@ try_join_again:
      * For end() iterator we do not do anything but return the same iterator
      */
     inline ForwardIterator operator++(int) {
-      if(is_end == true) {
+      if(IsEnd() == true) {
         return *this;
       }
 
       // Make a copy of the current one before advancing
+      // This will increase ref count temporarily, but it is always consistent
       ForwardIterator temp = *this;
 
       MoveAheadByOne();
 
       return temp;
     }
-
-    /*
-     * IsEnd() - Returns true if we have reached the end of iteration
-     *
-     * This is just a wrapper of the private member is_end
-     */
-    inline bool IsEnd() const {
-      return is_end;
-    }
-
-   private:
-    // We need access to the tree in order to traverse down using
-    // a low key to leaf node level
-    BwTree *tree_p;
-
-    // This points to a consolidated leaf node
-    // The leaf node is not shared with any internal structure of
-    // BwTree and also not between iterators. Each iterator
-    // keeps an instance of LeafNode on which it iterates
-    LeafNode *leaf_node_p;
-
-    // The upper bound of current logical leaf node. Used to access the next
-    // position (i.e. leaf node) inside bwtree
-    // NOTE: We cannot use next_node_id to access next node since
-    // it might become invalid since the logical node was created. The only
-    // pivotal point we could rely on is the high key, which indicates a
-    // lowerbound of keys we have not seen
-    // NOTE 2: This has to be an object rather than pointer. The reason is that
-    // after this iterator is returned to the user, the actual bwtree node
-    // might be recycled by the epoch manager since thread has exited current
-    // epoch. Therefore we need to copy the wrapped key from bwtree physical
-    // node into the iterator
-    KeyNodeIDPair next_key_pair;
-
-    // This is the actual iterator
-    const KeyValuePair *it;
-
-    // We use this flag to indicate whether we have reached the end of
-    // iteration.
-    // NOTE: We could not directly check for next_key being +Inf, since
-    // there might still be keys not scanned yet even if next_key is +Inf
-    // LoadNextKey() checks whether the current page has no key >= next_key
-    // and the next key is +Inf for current page. If these two conditions hold
-    // then we know we have reached the last key of the last page
-    bool is_end;
 
     /*
      * LowerBound() - Load leaf page whose key >= start_key
@@ -8026,98 +8257,83 @@ try_join_again:
      * To address this problem, after loading a logical node, we need to advance
      * the key iterator to locate the first key that >= next_key
      *
-     * NOTE: If no argument is given then this function uses next_key_pair
-     * and checks for INVALID_NODE_ID. Otherwise it uses the given key
-     * as the starting point of iteration, and sets next_key_pair
-     *
-     * NOTE 2: A corner case is that a key that is bigger than all current keys
-     * in the system was given
+     * Note that the argument p_tree_p is required since this function might be 
+     * called with ic_p being nullptr, such that we need a reference to the tree
+     * instance
      */
-    void LowerBound(const KeyType *start_key_p = nullptr) {
-      // Caller needs to guarantee this function not being called if
-      // we have already reached the end
-      assert(is_end == false);
-
-      while(1) {
-        // If we use the nexy_key_pair (this happens if start_key_p was
-        // given from the beginning, or at the second iteration in the
-        // while loop)
-        if(start_key_p == nullptr) {
-          // If there is no next key, then just return
-          if(next_key_pair.second == INVALID_NODE_ID) {
-            // If there is no next key then we are at the end of the iteration
-            is_end = true;
-
-            // NOTE: If the leaf node p is valid at this point
-            // then the iterator carries a chunk of memory that needs to be
-            // destroied inside the destructor
-            return;
-          }
-
-          start_key_p = &next_key_pair.first;
-        }
-
-        // We need to save this since the start key pointer will be overwritten
-        const KeyType start_key = *start_key_p;
-
+    void LowerBound(BwTree *p_tree_p,
+                    const KeyType *start_key_p) {
+      assert(start_key_p != nullptr);
+      // This is required since start_key_p might be pointing inside the
+      // currently buffered IteratorContext which will be destroyed
+      // after new IteratorContext is created
+      KeyType start_key = *start_key_p;
+      
+      while(1) {  
         // First join the epoch to prevent physical nodes being deallocated
         // too early
-        EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
-
-        // Traverse down the tree to get to leaf node
-        Context context{*start_key_p};
+        EpochNode *epoch_node_p = p_tree_p->epoch_manager.JoinEpoch();
         
-        // NOTE: Even if ValueType is a value we will not test it here
-        // since Traverse() will not pass the pointer into NavigateLeafNode
-        // but rather just stop on the correct leaf node
-        tree_p->Traverse(&context, nullptr, nullptr);
+        // This traversal has the following characteristics:
+        //   1. It stops at the leaf level without traversing leaf with the key
+        //   2. It DOES finish partial SMO, consolidate overlengthed chain, etc.
+        //   3. It DOES traverse horizontally using sibling pointer
+        Context context{start_key};
+        p_tree_p->Traverse(&context, nullptr, nullptr);
 
-        NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+        NodeSnapshot *snapshot_p = BwTree::GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
-
-        // The page must be on a leaf delta chain
         assert(node_p->IsOnLeafDeltaChain() == true);
 
-        // Set high key pair for next call of this function
-        next_key_pair = node_p->GetHighKeyPair();
+        // After this point, start_key_p from the last page becomes invalid
 
-        // If this is nullptr then we are calling it from the constructor
-        if(leaf_node_p != nullptr) {
-          // Only we call it from the constructor will the start key pointer
-          // be a null pointer
-          assert(start_key_p != nullptr);
-
-          tree_p->epoch_manager.AddGarbageNode(leaf_node_p);
+        // We are releasing the IteratorContext object currently held 
+        // because we are now going to the next page after it
+        if(ic_p != nullptr) {
+          ic_p->DecRef();
         }
+        
+        // Refresh the IteratorContext object and also refresh kv_p
+        ic_p = IteratorContext::Get(p_tree_p, node_p);
+        assert(ic_p->GetRefCount() == 1UL);
 
-        // Consolidate the current node
-        leaf_node_p = tree_p->CollectAllValuesOnLeaf(snapshot_p);
+        // Consolidate the current node and store all key value pairs
+        // to the embedded leaf node 
+        p_tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
 
         // Leave the epoch, since we have already had all information
-        tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
-
-        // Then we need to find the start key in the leaf node until we have seen
-        // a larger key
+        p_tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
         // Find the lower bound of the current start search key
-        // NOTE: Do not use start_key_p since it has been changed by the
-        // assignment to next_key_pair
-        it = std::lower_bound(leaf_node_p->Begin(),
-                              leaf_node_p->End(),
-                              std::make_pair(start_key, ValueType{}),
-                              this->tree_p->key_value_pair_cmp_obj);
+        // NOTE: Do not use start_key_p since the target it points to
+        // might have been destroyed because we already released the reference
+        //
+        // There are three possible outcomes:
+        //   1. kv_p is in the middle of the leaf page: 
+        //      Everything is OK, normal case
+        //   2. kv_p points to End() of the leaf node and next node ID
+        //      is INVALID_NODE_ID: Return because we have reached End()
+        //   3. kv_p points to End() of the leaf node but next node ID
+        //      is a valid one: Try next page since the current page might have
+        //      been merged
+        kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
+                                ic_p->GetLeafNode()->End(),
+                                std::make_pair(start_key, ValueType{}),
+                                p_tree_p->key_value_pair_cmp_obj);
 
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
-        if(it != leaf_node_p->End()) {
-          return;
+        if(kv_p != ic_p->GetLeafNode()->End()) {
+          break;
+        } else if(IsEnd() == true) {
+          break;
+        } else {
+          // Must do a value copy since the current ic_p will be 
+          // destroyed before this variable is used
+          start_key = ic_p->GetLeafNode()->GetHighKeyPair().first;
         }
-
-        // Need to set this to nullptr to let the function to use next key pair
-        start_key_p = nullptr;
       } // while(1)
 
-      assert(false);
       return;
     }
 
@@ -8129,17 +8345,29 @@ try_join_again:
      */
     inline void MoveAheadByOne() {
       // Could not do this on an empty iterator
-      assert(leaf_node_p != nullptr);
+      assert(ic_p != nullptr);
+      assert(kv_p != nullptr);
+      
+      // We could not be on the last page, since before calling this
+      // function whether we are on the last page should be
+      // checked
+      assert(IsEnd() == false);
+      
+      kv_p++;
 
-      // Move the iterator on leaf node data list
-      it++;
-
-      // If we have reached the last element then either go to the next
-      // then just try to load the next key. This has the possibility
-      // that the is_end flag is set, but we do not care about it, and
-      // directly returns after LowerBound() returns
-      if(it == leaf_node_p->End()) {
-        LowerBound();
+      // If we have drained the current page, just use its high key to 
+      // go to the next page that contains the high key
+      if(kv_p == ic_p->GetLeafNode()->End()) {
+        // If the current status after increment is End() then just exit and 
+        // does not go to the next page
+        if(IsEnd() == true) {
+          return;  
+        }
+        
+        // This will replace the current ic_p with a new one
+        // all references to the ic_p will be invalidated
+        LowerBound(ic_p->GetTree(),
+                   &ic_p->GetLeafNode()->GetHighKeyPair().first);
       }
 
       return;

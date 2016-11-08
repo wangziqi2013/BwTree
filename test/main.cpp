@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_bwtree = false;
   bool run_benchmark_bwtree_full = false;
   bool run_benchmark_btree_full = false;
+  bool run_benchmark_art_full = false;
   bool run_stress = false;
   bool run_epoch_test = false;
   bool run_infinite_insert_test = false;
@@ -44,6 +45,8 @@ int main(int argc, char **argv) {
       run_benchmark_bwtree_full = true;
     } else if(strcmp(opt_p, "--benchmark-btree-full") == 0) {
       run_benchmark_btree_full = true;
+    } else if(strcmp(opt_p, "--benchmark-art-full") == 0) {
+      run_benchmark_art_full = true;
     } else if(strcmp(opt_p, "--stress-test") == 0) {
       run_stress = true;
     } else if(strcmp(opt_p, "--epoch-test") == 0) {
@@ -64,8 +67,9 @@ int main(int argc, char **argv) {
   }
 
   bwt_printf("RUN_BENCHMARK_ALL = %d\n", run_benchmark_all);
-  bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
   bwt_printf("RUN_BENCHMARK_BWTREE_FULL = %d\n", run_benchmark_bwtree_full);
+  bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
+  bwt_printf("RUN_BENCHMARK_ART_FULL = %d\n", run_benchmark_art_full);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
   bwt_printf("RUN_EPOCH_TEST = %d\n", run_epoch_test);
@@ -109,6 +113,31 @@ int main(int argc, char **argv) {
 
     DestroyTree(t1);
   }
+  
+  if(run_benchmark_art_full == true) {
+    ARTType t;
+    art_tree_init(&t);
+    
+    int key_num = 30 * 1024 * 1024;  
+    uint64_t thread_num = 1;
+    
+    printf("Initializing ART's external data array of size = %f MB\n", 
+           sizeof(long int) * key_num / 1024.0 / 1024.0);
+    
+    // This is the array for storing ART's data
+    // Sequential access of the array is fast through ART
+    long int *array = new long int[key_num];
+    for(int i = 0;i < key_num;i++) {
+      array[i] = i; 
+    }
+    
+    BenchmarkARTSeqInsert(&t, key_num, (int)thread_num, array);
+    BenchmarkARTSeqRead(&t, key_num, (int)thread_num);
+    BenchmarkARTRandRead(&t, key_num, (int)thread_num);    
+    BenchmarkARTZipfRead(&t, key_num, (int)thread_num);
+    
+    delete[] array;
+  }
 
   if(run_benchmark_btree_full == true) {
     BTreeType *t = GetEmptyBTree();
@@ -121,10 +150,13 @@ int main(int argc, char **argv) {
     uint64_t thread_num = GetThreadNum();
     
     BenchmarkBTreeSeqInsert(t, key_num, (int)thread_num);
+    
     // Let this go before any of the other
+    BenchmarkBTreeRandLocklessRead(t, key_num, (int)thread_num);
     BenchmarkBTreeZipfLockLessRead(t, key_num, (int)thread_num);
+    
     BenchmarkBTreeSeqRead(t, key_num, (int)thread_num);
-    BenchmarkBTreeRandRead(t, key_num, (int)thread_num);
+    BenchmarkBTreeRandRead(t, key_num, (int)thread_num);    
     BenchmarkBTreeZipfRead(t, key_num, (int)thread_num);
     
     DestroyBTree(t);
