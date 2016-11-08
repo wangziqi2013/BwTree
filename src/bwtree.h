@@ -8265,7 +8265,12 @@ try_join_again:
     void LowerBound(BwTree *p_tree_p,
                     const KeyType *start_key_p) {
       assert(start_key_p != nullptr);
-      while(1) {
+      // This is required since start_key_p might be pointing inside the
+      // currently buffered IteratorContext which will be destroyed
+      // after new IteratorContext is created
+      const KeyType start_key = *start_key_p;
+      
+      while(1) {  
         // First join the epoch to prevent physical nodes being deallocated
         // too early
         EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
@@ -8274,12 +8279,14 @@ try_join_again:
         //   1. It stops at the leaf level without traversing leaf with the key
         //   2. It DOES finish partial SMO, consolidate overlengthed chain, etc.
         //   3. It DOES traverse horizontally using sibling pointer
-        Context context{*start_key_p};
+        Context context{start_key};
         tree_p->Traverse(&context, nullptr, nullptr);
 
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
         assert(node_p->IsOnLeafDeltaChain() == true);
+
+        // After this point, start_key_p from the last page becomes invalid
 
         // We are releasing the IteratorContext object currently held 
         // because we are now going to the next page after it
@@ -8311,8 +8318,9 @@ try_join_again:
         if(kv_p != ic_p->GetLeafNode()->End()) {
           break;
         } else {
-          // Assign it to be the high key of the current node and retry
-          start_key_p = &ic_p->GetLeafNode()->GetHighKeyPair().first;
+          // Must do a value copy since the current ic_p will be 
+          // destroyed before this variable is used
+          start_key = ic_p->GetLeafNode()->GetHighKeyPair().first;
         }
       } // while(1)
 
