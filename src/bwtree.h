@@ -8335,17 +8335,22 @@ try_join_again:
      */
     inline void MoveAheadByOne() {
       // Could not do this on an empty iterator
-      assert(leaf_node_p != nullptr);
+      assert(ic_p != nullptr);
+      assert(kv_p != nullptr);
 
-      // Move the iterator on leaf node data list
-      it++;
+      kv_p++;
 
-      // If we have reached the last element then either go to the next
-      // then just try to load the next key. This has the possibility
-      // that the is_end flag is set, but we do not care about it, and
-      // directly returns after LowerBound() returns
-      if(it == leaf_node_p->End()) {
-        LowerBound();
+      // If we have drained the current page, just use its high key to 
+      // go to the next page that contains the high key
+      if(kv_p == ic_p->GetLeafNode()->End()) {
+        // We could not be on the last page, since before calling this
+        // function whether we are on the last page should be
+        // checked
+        assert(IsEnd() == false);
+        
+        // This will replace the current ic_p with a new one
+        // all references to the ic_p will be invalidated
+        LowerBound(&ic_p->GetLeafNode()->GetHighKeyPair().first);
       }
 
       return;
