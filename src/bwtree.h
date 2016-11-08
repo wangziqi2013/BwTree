@@ -4430,7 +4430,7 @@ abort_traverse:
    * the vector, since at that time the snapshot object will be destroyed
    * which also freed up the logical node object
    */
-  inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) const {
+  static inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) {
     assert(context_p->current_level >= 0);
 
     return &context_p->current_snapshot;
@@ -7732,7 +7732,7 @@ try_join_again:
     
     // This is a stub that points to class LeafNode which is used to
     // receive consolidated key value pairs from a leaf delta chain
-    ElasticNode<KeyValuePair> leaf_node_p[0];
+    LeafNode leaf_node_p[0];
     
     /*
      * Constructor - Initialize class IteratorContext part
@@ -7812,7 +7812,7 @@ try_join_again:
     inline void DecRef() {
       // for unsigned long the only thing we could ensure
       // is that it does not cross 0 boundary
-      assert(ret_count != 0UL);
+      assert(ref_count != 0UL);
       
       ref_count--;
       if(ref_count == 0UL) {
@@ -7939,7 +7939,7 @@ try_join_again:
     ForwardIterator(BwTree *p_tree_p) {
       // This also needs to be protected by epoch since we do access internal
       // node that is possible to be reclaimed
-      EpochNode *epoch_node_p = p_tree_p->JoinEpoch();
+      EpochNode *epoch_node_p = p_tree_p->epoch_manager.JoinEpoch();
         
       // Load the first leaf page
       const BaseNode *node_p = p_tree_p->GetNode(FIRST_LEAF_NODE_ID);
@@ -7960,7 +7960,7 @@ try_join_again:
       p_tree_p->CollectAllValuesOnLeaf(&snapshot, ic_p->GetLeafNode());
       
       // Leave epoch
-      p_tree_p->LeaveEpoch(epoch_node_p);
+      p_tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
       return;
     }
@@ -8093,8 +8093,8 @@ try_join_again:
       
       // 1. Next node ID is INVALID_NODE_ID
       // 2. Current iterator pointer equals end_p stored in leaf node
-      return (ic_p->GetLeafPage()->GetNextNodeID() == INVALID_NODE_ID) && \
-             (ic_p->GetLeafPage()->End() == kv_p);
+      return (ic_p->GetLeafNode()->GetNextNodeID() == INVALID_NODE_ID) && \
+             (ic_p->GetLeafNode()->End() == kv_p);
     }
 
     /*
@@ -8267,21 +8267,21 @@ try_join_again:
       // This is required since start_key_p might be pointing inside the
       // currently buffered IteratorContext which will be destroyed
       // after new IteratorContext is created
-      const KeyType start_key = *start_key_p;
+      KeyType start_key = *start_key_p;
       
       while(1) {  
         // First join the epoch to prevent physical nodes being deallocated
         // too early
-        EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
+        EpochNode *epoch_node_p = p_tree_p->epoch_manager.JoinEpoch();
         
         // This traversal has the following characteristics:
         //   1. It stops at the leaf level without traversing leaf with the key
         //   2. It DOES finish partial SMO, consolidate overlengthed chain, etc.
         //   3. It DOES traverse horizontally using sibling pointer
         Context context{start_key};
-        tree_p->Traverse(&context, nullptr, nullptr);
+        p_tree_p->Traverse(&context, nullptr, nullptr);
 
-        NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+        NodeSnapshot *snapshot_p = BwTree::GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
         assert(node_p->IsOnLeafDeltaChain() == true);
 
@@ -8299,14 +8299,23 @@ try_join_again:
 
         // Consolidate the current node and store all key value pairs
         // to the embedded leaf node 
-        tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
+        p_tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
 
         // Leave the epoch, since we have already had all information
-        tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
+        p_tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
 
         // Find the lower bound of the current start search key
         // NOTE: Do not use start_key_p since the target it points to
         // might have been destroyed because we already released the reference
+        //
+        // There are three possible outcomes:
+        //   1. kv_p is in the middle of the leaf page: 
+        //      Everything is OK, normal case
+        //   2. kv_p points to End() of the leaf node and next node ID
+        //      is INVALID_NODE_ID: Return because we have reached End()
+        //   3. kv_p points to End() of the leaf node but next node ID
+        //      is a valid one: Try next page since the current page might have
+        //      been merged
         kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
                                 ic_p->GetLeafNode()->End(),
                                 std::make_pair(start_key, ValueType{}),
@@ -8315,6 +8324,8 @@ try_join_again:
         // All keys in the leaf page are < start key. Switch the next key until
         // we have found the key or until we have reached end of tree
         if(kv_p != ic_p->GetLeafNode()->End()) {
+          break;
+        } else if(IsEnd() == true) {
           break;
         } else {
           // Must do a value copy since the current ic_p will be 
@@ -8336,20 +8347,27 @@ try_join_again:
       // Could not do this on an empty iterator
       assert(ic_p != nullptr);
       assert(kv_p != nullptr);
-
+      
+      // We could not be on the last page, since before calling this
+      // function whether we are on the last page should be
+      // checked
+      assert(IsEnd() == false);
+      
       kv_p++;
 
       // If we have drained the current page, just use its high key to 
       // go to the next page that contains the high key
       if(kv_p == ic_p->GetLeafNode()->End()) {
-        // We could not be on the last page, since before calling this
-        // function whether we are on the last page should be
-        // checked
-        assert(IsEnd() == false);
+        // If the current status after increment is End() then just exit and 
+        // does not go to the next page
+        if(IsEnd() == true) {
+          return;  
+        }
         
         // This will replace the current ic_p with a new one
         // all references to the ic_p will be invalidated
-        LowerBound(&ic_p->GetLeafNode()->GetHighKeyPair().first);
+        LowerBound(ic_p->GetTree(),
+                   &ic_p->GetLeafNode()->GetHighKeyPair().first);
       }
 
       return;
