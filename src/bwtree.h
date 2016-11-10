@@ -4547,6 +4547,9 @@ abort_traverse:
     NodeID left_sibling_id = FindLeftSibling(snapshot_p->node_p->GetLowKey(),
                                              parent_snapshot_p);
 
+    // Temporarily add this to check whether we hit this assertion or not
+    assert(left_sibling_id != removed_node_id); 
+
     // This might incur recursive update
     // We need to pass in the low key of left sibling node
     JumpToNodeID(left_sibling_id, context_p);
