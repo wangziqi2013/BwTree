@@ -538,13 +538,33 @@ class CacheMeter {
   // A list of results collected from the hardware performance counter
   long long counter_list[EVENT_COUNT];
   
+  /*
+   * CheckEvent() - Checks whether the event exists in this platform
+   *
+   * This function wraps PAPI function in C++. Note that PAPI events are 
+   * declared using anonymous enum which is directly translated into int
+   */
+  inline bool CheckEvent(int event) {
+    int ret = PAPI_query_event(event);
+    return ret == PAPI_OK;
+  }
+  
  public:
    
   /*
    * CacheMeter() - Initialize PAPI and events
    */
   CacheMeter() {
+    int ret = PAPI_library_init(PAPI_VER_CURRENT);
     
+    if (ret != PAPI_VER_CURRENT) {
+      fprintf(stderr, "ERROR: PAPI library failed to initialize\n");
+      exit(1);
+    }
+    
+    
+    
+    return;
   }
 };
 
