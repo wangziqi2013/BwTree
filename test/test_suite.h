@@ -514,6 +514,42 @@ class Zipfian {
    
 };
 
+#define USE_PAPI
+#ifdef USE_PAPI
+
+#include <papi.h>
+
+/*
+ * class CacheMeter - Measures cache usage using PAPI library
+ *
+ * This class is a high level encapsulation of the PAPI library designed for
+ * more comprehensive profiling purposes, only using a small feaction of its
+ * functionalities available. Also, the applicability of this library is highly
+ * platform dependent, so please check whether the platform is supported before
+ * using  
+ */
+class CacheMeter {
+ private:
+  static constexpr EVENT_COUNT = 2;
+  
+  // A list of events being collected
+  int event_list[EVENT_COUNT];
+  
+  // A list of results collected from the hardware performance counter
+  long long counter_list[EVENT_COUNT];
+  
+ public:
+   
+  /*
+   * CacheMeter() - Initialize PAPI and events
+   */
+  CacheMeter() {
+    
+  }
+};
+
+#endif
+
 /*
  * Initialize and destroy btree
  */
