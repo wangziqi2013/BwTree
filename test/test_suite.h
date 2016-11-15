@@ -558,8 +558,11 @@ class CacheMeter {
    
   /*
    * CacheMeter() - Initialize PAPI and events
+   *
+   * This function starts counting if the argument passed is true. By default
+   * it is false
    */
-  CacheMeter() {
+  CacheMeter(bool start=false) {
     int ret = PAPI_library_init(PAPI_VER_CURRENT);
     
     if (ret != PAPI_VER_CURRENT) {
@@ -568,7 +571,25 @@ class CacheMeter {
     }
     
     // Check whether L1 data cache access is present
-    if(CheckEvent(PAPI_L1_DCA))
+    if(CheckEvent(PAPI_L1_DCA) == false) {
+      fprintf(stderr, 
+              "ERROR: PAPI library does not support PAPI_L1_DCA"
+              " (L1 data cache access count)\n");
+      exit(1); 
+    }
+    
+    // Check whether L1 data cache access is present
+    if(CheckEvent(PAPI_L1_DCM) == false) {
+      fprintf(stderr, 
+              "ERROR: PAPI library does not support PAPI_L1_DCM"
+              " (L1 data cache miss count)\n");
+      exit(1); 
+    }
+    
+    // If we want to start the counter immediately just test this flag
+    if(start == true) {
+      
+    }
     
     return;
   }
