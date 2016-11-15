@@ -702,6 +702,22 @@ class CacheMeter {
               
     return;
   }
+  
+  /*
+   * PrintL1CacheUtilization() - Prints L1 cache utilization
+   */
+  void PrintL1CacheUtilization() {
+    // Return L3 total accesses and cache misses
+    auto l1_util = GetL1CacheUtilization();
+    
+    std::cout << "    LOAD/STORE total = " << l1_util.first << "; miss = " \
+              << l1_util.second << "; hit ratio = " \
+              << static_cast<double>(l1_util.first - l1_util.second) / \
+                 static_cast<double>(l1_util.first) \
+              << std::endl;
+              
+    return;
+  }
 };
 
 #endif
