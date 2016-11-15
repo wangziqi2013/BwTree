@@ -680,6 +680,14 @@ class CacheMeter {
   }
   
   /*
+   * GetL1CacheUtilization() - Returns L1 cache utilizations
+   */
+  std::pair<long long, long long> GetL1CacheUtilization() {
+    return std::make_pair(counter_list[4] + counter_list[5],
+                          counter_list[2] + counter_list[3]);
+  }
+  
+  /*
    * PrintL3CacheUtilization() - Prints L3 cache utilization
    */
   void PrintL3CacheUtilization() {
