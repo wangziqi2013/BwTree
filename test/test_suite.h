@@ -517,6 +517,11 @@ class Zipfian {
 #define USE_PAPI
 #ifdef USE_PAPI
 
+// This requires adding PAPI library during compilation
+// The linking flag of PAPI is:
+//   -lpapi 
+// To install PAPI under ubuntu please use the following command:
+//   sudo apt-get install libpapi-dev
 #include <papi.h>
 
 /*
@@ -542,7 +547,7 @@ class CacheMeter {
    * CheckEvent() - Checks whether the event exists in this platform
    *
    * This function wraps PAPI function in C++. Note that PAPI events are 
-   * declared using anonymous enum which is directly translated into int
+   * declared using anonymous enum which is directly translated into int type
    */
   inline bool CheckEvent(int event) {
     int ret = PAPI_query_event(event);
@@ -562,7 +567,8 @@ class CacheMeter {
       exit(1);
     }
     
-    
+    // Check whether L1 data cache access is present
+    if(CheckEvent(PAPI_L1_DCA))
     
     return;
   }
