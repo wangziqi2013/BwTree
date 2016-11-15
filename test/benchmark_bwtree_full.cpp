@@ -43,6 +43,7 @@ void BenchmarkBwTreeSeqInsert(TreeType *t,
     
     // Print L3 total accesses and cache misses
     cache.PrintL3CacheUtilization();
+    cache.PrintL1CacheUtilization();
 
     thread_time[thread_id] = duration;
 
@@ -105,6 +106,7 @@ void BenchmarkBwTreeSeqRead(TreeType *t,
               << " million read/sec" << "\n";
     
     cache.PrintL3CacheUtilization();
+    cache.PrintL1CacheUtilization();
     
     thread_time[thread_id] = duration;
 
@@ -173,6 +175,7 @@ void BenchmarkBwTreeRandRead(TreeType *t,
               << " million read (random)/sec" << "\n";
     
     cache.PrintL3CacheUtilization();
+    cache.PrintL1CacheUtilization();
     
     thread_time[thread_id] = duration;
 
@@ -255,6 +258,7 @@ void BenchmarkBwTreeZipfRead(TreeType *t,
               << " million read (zipfian)/sec" << "\n";
     
     cache.PrintL3CacheUtilization();
+    cache.PrintL1CacheUtilization();
     
     thread_time[thread_id] = duration;
 
