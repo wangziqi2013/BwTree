@@ -675,7 +675,16 @@ class CacheMeter {
    * PrintL3CacheUtilization() - Prints L3 cache utilization
    */
   void PrintL3CacheUtilization() {
+    // Return L3 total accesses and cache misses
+    auto l3_util = GetL3CacheUtilization();
     
+    std::cout << "    L3 total = " << l3_util.first << "; miss = " \
+              << l3_util.second << "; hit ratio = " \
+              << static_cast<double>(l3_util.second) / \
+                 static_cast<double>(l3_util.first - l3_util.second) \
+              << std::endl;
+              
+    return;
   }
 };
 
