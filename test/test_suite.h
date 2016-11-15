@@ -599,13 +599,27 @@ class CacheMeter {
    * If counter could not be started we just fail
    */
   void Start() {
-    // This is the list of events we intent to collect
-    // Note that even if this is static const, compiler should not optimize it
-    // into constant numbers, since we take its address
-    static const int event_list[EVENT_COUNT] = {PAPI_L1_DCA, PAPI_L1_DCM};
+    // Start counters
     if (PAPI_start_counters(event_list, EVENT_COUNT) != PAPI_OK) {
       fprintf(stderr, 
               "ERROR: Failed to start counters using PAPI_start_counters()\n");  
+      exit(1);
+    }
+    
+    return;
+  }
+  
+  /*
+   * Stop() - Stops all counters, and dump their values inside the local array
+   *
+   * This function will clear all counters after dumping them into the internal
+   * array of this object
+   */
+  void Stop() {
+    // Use counter list to hold counters
+    if (PAPI_start_counters(counter_list, EVENT_COUNT) != PAPI_OK) {
+      fprintf(stderr, 
+              "ERROR: Failed to start counters using PAPI_stop_counters()\n");  
       exit(1);
     }
     
