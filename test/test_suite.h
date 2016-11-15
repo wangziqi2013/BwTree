@@ -537,11 +537,10 @@ class CacheMeter {
  private:
   static constexpr EVENT_COUNT = 2;
   
-  // A list of events being collected
-  int event_list[EVENT_COUNT];
-  
   // A list of results collected from the hardware performance counter
   long long counter_list[EVENT_COUNT];
+  
+  //
   
   /*
    * CheckEvent() - Checks whether the event exists in this platform
@@ -588,7 +587,26 @@ class CacheMeter {
     
     // If we want to start the counter immediately just test this flag
     if(start == true) {
-      
+      Start();
+    }
+    
+    return;
+  }
+  
+  /*
+   * Start() - Starts the counter until Stop() is called
+   *
+   * If counter could not be started we just fail
+   */
+  void Start() {
+    // This is the list of events we intent to collect
+    // Note that even if this is static const, compiler should not optimize it
+    // into constant numbers, since we take its address
+    static const int event_list[EVENT_COUNT] = {PAPI_L1_DCA, PAPI_L1_DCM};
+    if (PAPI_start_counters(event_list, EVENT_COUNT) != PAPI_OK) {
+      fprintf(stderr, 
+              "ERROR: Failed to start counters using PAPI_start_counters()\n");  
+      exit(1);
     }
     
     return;
