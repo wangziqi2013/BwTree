@@ -535,12 +535,24 @@ class Zipfian {
  */
 class CacheMeter {
  private:
-  static constexpr EVENT_COUNT = 2;
+  // This is a list of events that we care about
+  static const int event_list[] = {
+    PAPI_L1_DCA, 
+    PAPI_L1_DCM
+  };
+  
+  // Use the length of the event_list to compute number of events we 
+  // are counting
+  static constexpr EVENT_COUNT = sizeof(event_list) / sizeof(int);
   
   // A list of results collected from the hardware performance counter
   long long counter_list[EVENT_COUNT];
   
-  //
+  // Use this to print out event names
+  static const char *event_name_list[EVENT_COUNT] = {
+    "PAPI_L1_DCA",
+    "PAPI_L1_DCM",
+  };
   
   /*
    * CheckEvent() - Checks whether the event exists in this platform
@@ -551,6 +563,18 @@ class CacheMeter {
   inline bool CheckEvent(int event) {
     int ret = PAPI_query_event(event);
     return ret == PAPI_OK;
+  }
+  
+  /*
+   * CheckAllEvents() - Checks all events that this object is going to use
+   *
+   * If the checking fails we just exit with error message indicating which one 
+   * failed
+   */
+  void CheckAllEvents() {
+    for(int i = 0;i < EVENT_COUNT;i++) {
+      
+    }
   }
   
  public:
