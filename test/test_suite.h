@@ -537,12 +537,14 @@ class CacheMeter {
  private:
   // This is a list of events that we care about
   int event_list[6] = {
+    PAPI_LD_INS,       // Load instructions
+    PAPI_L1_LDM,       // L1 load misses
+    
+    PAPI_SR_INS,       // Store instructions
+    PAPI_L1_STM,       // L1 store misses
+    
     PAPI_L3_TCA,       // L3 total cache access
     PAPI_L3_TCM,       // L3 total cache misses
-    PAPI_L1_LDM,       // L1 load misses
-    PAPI_L1_STM,       // L1 store misses
-    PAPI_LD_INS,       // Load instructions
-    PAPI_SR_INS,       // Store instructions
   };
   
   // Use the length of the event_list to compute number of events we 
@@ -554,13 +556,16 @@ class CacheMeter {
   
   // Use this to print out event names
   const char *event_name_list[EVENT_COUNT] = {
+    "PAPI_LD_INS",
+    "PAPI_L1_LDM",
+    "PAPI_SR_INS",
+    "PAPI_L1_STM",
     "PAPI_L3_TCA",
     "PAPI_L3_TCM",
-    "PAPI_L1_LDM",
-    "PAPI_L1_STM",
-    "PAPI_LD_INS",
-    "PAPI_SR_INS",
   };
+  
+  // The level of information we need to collect
+  int level;
   
   /*
    * CheckEvent() - Checks whether the event exists in this platform
@@ -581,7 +586,7 @@ class CacheMeter {
    */
   void CheckAllEvents() {
     // If any of the required events do not exist we just exit 
-    for(int i = 0;i < EVENT_COUNT;i++) {
+    for(int i = 0;i < level;i++) {
       if(CheckEvent(event_list[i]) == false) {
         fprintf(stderr, 
                 "ERROR: PAPI event %s is not supported\n", 
@@ -601,7 +606,8 @@ class CacheMeter {
    * This function starts counting if the argument passed is true. By default
    * it is false
    */
-  CacheMeter(bool start=false) {
+  CacheMeter(bool start=false, int p_level=2) :
+    level{p_level} {
     int ret = PAPI_library_init(PAPI_VER_CURRENT);
     
     if (ret != PAPI_VER_CURRENT) {
@@ -642,10 +648,13 @@ class CacheMeter {
    * If counter could not be started we just fail
    */
   void Start() {
+    int ret = PAPI_start_counters(event_list, level);
     // Start counters
-    if (PAPI_start_counters(event_list, EVENT_COUNT) != PAPI_OK) {
+    if (ret != PAPI_OK) {
       fprintf(stderr, 
-              "ERROR: Failed to start counters using PAPI_start_counters()\n");  
+              "ERROR: Failed to start counters using"
+              " PAPI_start_counters() (%d)\n",
+              ret);  
       exit(1);
     }
     
@@ -660,10 +669,15 @@ class CacheMeter {
    */
   void Stop() {
     // Use counter list to hold counters
-    if (PAPI_stop_counters(counter_list, EVENT_COUNT) != PAPI_OK) {
+    if (PAPI_stop_counters(counter_list, level) != PAPI_OK) {
       fprintf(stderr, 
               "ERROR: Failed to start counters using PAPI_stop_counters()\n");  
       exit(1);
+    }
+    
+    // Store zero to all unused counters
+    for(int i = level;i < EVENT_COUNT;i++) {
+      counter_list[i] = 0LL;
     }
     
     return;
@@ -676,15 +690,15 @@ class CacheMeter {
    * total cache accesses and the second element being L3 cache misses
    */
   std::pair<long long, long long> GetL3CacheUtilization() {
-    return std::make_pair(counter_list[0], counter_list[1]);
+    return std::make_pair(counter_list[4], counter_list[5]);
   }
   
   /*
    * GetL1CacheUtilization() - Returns L1 cache utilizations
    */
   std::pair<long long, long long> GetL1CacheUtilization() {
-    return std::make_pair(counter_list[4] + counter_list[5],
-                          counter_list[2] + counter_list[3]);
+    return std::make_pair(counter_list[0] + counter_list[2],
+                          counter_list[1] + counter_list[3]);
   }
   
   /*
