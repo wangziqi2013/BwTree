@@ -680,8 +680,8 @@ class CacheMeter {
     
     std::cout << "    L3 total = " << l3_util.first << "; miss = " \
               << l3_util.second << "; hit ratio = " \
-              << static_cast<double>(l3_util.second) / \
-                 static_cast<double>(l3_util.first - l3_util.second) \
+              << static_cast<double>(l3_util.first - l3_util.second) / \
+                 static_cast<double>(l3_util.first) \
               << std::endl;
               
     return;

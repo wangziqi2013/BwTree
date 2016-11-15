@@ -41,7 +41,7 @@ void BenchmarkBwTreeSeqInsert(TreeType *t,
               << (key_num / num_thread) / (1024.0 * 1024.0) / duration \
               << " million insert/sec" << "\n";
     
-    // Return L3 total accesses and cache misses
+    // Print L3 total accesses and cache misses
     cache.PrintL3CacheUtilization();
 
     thread_time[thread_id] = duration;
@@ -87,6 +87,7 @@ void BenchmarkBwTreeSeqRead(TreeType *t,
     v.reserve(1);
 
     Timer timer{true};
+    CacheMeter cache{true};
 
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
@@ -96,12 +97,15 @@ void BenchmarkBwTreeSeqRead(TreeType *t,
       }
     }
 
+    cache.Stop();
     double duration = timer.Stop();
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * key_num / (1024.0 * 1024.0)) / duration \
               << " million read/sec" << "\n";
-              
+    
+    cache.PrintL3CacheUtilization();
+    
     thread_time[thread_id] = duration;
 
     return;
@@ -148,6 +152,7 @@ void BenchmarkBwTreeRandRead(TreeType *t,
     SimpleInt64Random<0, 30 * 1024 * 1024> h{};
 
     Timer timer{true};
+    CacheMeter cache{true};
 
     for(int j = 0;j < iter;j++) {
       for(int i = 0;i < key_num;i++) {
@@ -160,12 +165,15 @@ void BenchmarkBwTreeRandRead(TreeType *t,
       }
     }
 
+    cache.Stop();
     double duration = timer.Stop();
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * key_num / (1024.0 * 1024.0)) / duration \
               << " million read (random)/sec" << "\n";
-              
+    
+    cache.PrintL3CacheUtilization();
+    
     thread_time[thread_id] = duration;
 
     return;
@@ -227,6 +235,7 @@ void BenchmarkBwTreeZipfRead(TreeType *t,
     v.reserve(1);
 
     Timer timer{true};
+    CacheMeter cache{true};
 
     for(int j = 0;j < iter;j++) {
       for(long i = start_index;i < end_index;i++) {
@@ -238,12 +247,15 @@ void BenchmarkBwTreeZipfRead(TreeType *t,
       }
     }
 
+    cache.Stop();
     double duration = timer.Stop();
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * (end_index - start_index) / (1024.0 * 1024.0)) / duration \
               << " million read (zipfian)/sec" << "\n";
-              
+    
+    cache.PrintL3CacheUtilization();
+    
     thread_time[thread_id] = duration;
 
     return;
