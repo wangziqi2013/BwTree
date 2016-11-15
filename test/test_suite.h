@@ -536,20 +536,20 @@ class Zipfian {
 class CacheMeter {
  private:
   // This is a list of events that we care about
-  static const int event_list[] = {
+  int event_list[2] = {
     PAPI_L1_DCA, 
-    PAPI_L1_DCM
+    PAPI_L1_DCM,
   };
   
   // Use the length of the event_list to compute number of events we 
   // are counting
-  static constexpr EVENT_COUNT = sizeof(event_list) / sizeof(int);
+  static constexpr int EVENT_COUNT = sizeof(event_list) / sizeof(int);
   
   // A list of results collected from the hardware performance counter
   long long counter_list[EVENT_COUNT];
   
   // Use this to print out event names
-  static const char *event_name_list[EVENT_COUNT] = {
+  const char *event_name_list[EVENT_COUNT] = {
     "PAPI_L1_DCA",
     "PAPI_L1_DCM",
   };
@@ -572,9 +572,17 @@ class CacheMeter {
    * failed
    */
   void CheckAllEvents() {
+    // If any of the required events do not exist we just exit 
     for(int i = 0;i < EVENT_COUNT;i++) {
-      
+      if(CheckEvent(event_list[i]) == false) {
+        fprintf(stderr, 
+                "ERROR: PAPI event %s is not supported\n", 
+                event_name_list[i]); 
+        exit(1);
+      }
     }
+    
+    return;
   }
   
  public:
@@ -593,21 +601,8 @@ class CacheMeter {
       exit(1);
     }
     
-    // Check whether L1 data cache access is present
-    if(CheckEvent(PAPI_L1_DCA) == false) {
-      fprintf(stderr, 
-              "ERROR: PAPI library does not support PAPI_L1_DCA"
-              " (L1 data cache access count)\n");
-      exit(1); 
-    }
-    
-    // Check whether L1 data cache access is present
-    if(CheckEvent(PAPI_L1_DCM) == false) {
-      fprintf(stderr, 
-              "ERROR: PAPI library does not support PAPI_L1_DCM"
-              " (L1 data cache miss count)\n");
-      exit(1); 
-    }
+    // If this does not pass just exit
+    CheckAllEvents(); 
     
     // If we want to start the counter immediately just test this flag
     if(start == true) {
@@ -615,6 +610,15 @@ class CacheMeter {
     }
     
     return;
+  }
+  
+  /*
+   * Destructor
+   */
+  ~CacheMeter() {
+    PAPI_shutdown();
+    
+    return; 
   }
   
   /*
@@ -641,7 +645,7 @@ class CacheMeter {
    */
   void Stop() {
     // Use counter list to hold counters
-    if (PAPI_start_counters(counter_list, EVENT_COUNT) != PAPI_OK) {
+    if (PAPI_stop_counters(counter_list, EVENT_COUNT) != PAPI_OK) {
       fprintf(stderr, 
               "ERROR: Failed to start counters using PAPI_stop_counters()\n");  
       exit(1);
