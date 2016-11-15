@@ -537,8 +537,8 @@ class CacheMeter {
  private:
   // This is a list of events that we care about
   int event_list[2] = {
-    PAPI_L1_DCA, 
-    PAPI_L1_DCM,
+    PAPI_L3_TCA,       // L3 total cache access
+    PAPI_L3_TCM,       // L3 total cache misses
   };
   
   // Use the length of the event_list to compute number of events we 
@@ -550,8 +550,8 @@ class CacheMeter {
   
   // Use this to print out event names
   const char *event_name_list[EVENT_COUNT] = {
-    "PAPI_L1_DCA",
-    "PAPI_L1_DCM",
+    "PAPI_L3_TCA",
+    "PAPI_L3_TCM",
   };
   
   /*
@@ -652,6 +652,16 @@ class CacheMeter {
     }
     
     return;
+  }
+  
+  /*
+   * GetL3CacheUtilization() - Returns L3 total cache accesses and misses
+   *
+   * These two values are returned in a tuple, the first element of which being 
+   * total cache accesses and the second element being L3 cache misses
+   */
+  std::pair<long long, long long> GetL3CacheUtilization() {
+    return std::make_pair(counter_list[0], counter_list[1]);
   }
 };
 
