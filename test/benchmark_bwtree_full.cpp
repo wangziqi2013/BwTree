@@ -28,16 +28,27 @@ void BenchmarkBwTreeSeqInsert(TreeType *t,
 
     // Declare timer and start it immediately
     Timer timer{true};
+    CacheMeter cache{true};
 
     for(int i = start_key;i < end_key;i++) {
       t->Insert(i, i);
     }
 
+    cache.Stop();
     double duration = timer.Stop();
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (key_num / num_thread) / (1024.0 * 1024.0) / duration \
               << " million insert/sec" << "\n";
+    
+    // Return L3 total accesses and cache misses
+    auto l3_util = cache.GetL3CacheUtilization();
+    
+    std::cout << "    L3 total = " << l3_util.first << "; miss = " \
+              << l3_util.second << "; hit ratio = " \
+              << static_cast<double>(l3_util.second) / \
+                 static_cast<double>(l3_util.second - l3_util.first) \
+              << std::endl;
 
     thread_time[thread_id] = duration;
 

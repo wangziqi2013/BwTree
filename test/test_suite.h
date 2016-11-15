@@ -601,6 +601,13 @@ class CacheMeter {
       exit(1);
     }
     
+    // Initialize pthread support
+    ret = PAPI_thread_init(pthread_self);
+    if(ret != PAPI_OK) {
+      fprintf(stderr, "ERROR: PAPI library failed to initialize for pthread\n");
+      exit(1);
+    }
+    
     // If this does not pass just exit
     CheckAllEvents(); 
     
@@ -662,6 +669,13 @@ class CacheMeter {
    */
   std::pair<long long, long long> GetL3CacheUtilization() {
     return std::make_pair(counter_list[0], counter_list[1]);
+  }
+  
+  /*
+   * PrintL3CacheUtilization() - Prints L3 cache utilization
+   */
+  void PrintL3CacheUtilization() {
+    
   }
 };
 
