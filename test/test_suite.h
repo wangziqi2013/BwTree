@@ -536,9 +536,13 @@ class Zipfian {
 class CacheMeter {
  private:
   // This is a list of events that we care about
-  int event_list[2] = {
+  int event_list[6] = {
     PAPI_L3_TCA,       // L3 total cache access
     PAPI_L3_TCM,       // L3 total cache misses
+    PAPI_L1_LDM,       // L1 load misses
+    PAPI_L1_STM,       // L1 store misses
+    PAPI_LD_INS,       // Load instructions
+    PAPI_SR_INS,       // Store instructions
   };
   
   // Use the length of the event_list to compute number of events we 
@@ -552,6 +556,10 @@ class CacheMeter {
   const char *event_name_list[EVENT_COUNT] = {
     "PAPI_L3_TCA",
     "PAPI_L3_TCM",
+    "PAPI_L1_LDM",
+    "PAPI_L1_STM",
+    "PAPI_LD_INS",
+    "PAPI_SR_INS",
   };
   
   /*
