@@ -3032,6 +3032,10 @@ abort_traverse:
     // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
+    
+    // For read only workload this is always true since we do not need
+    // to remember the node ID for read - read is always stateless until
+    // it has reached a leaf node
     //assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
@@ -4752,7 +4756,7 @@ abort_traverse:
    *
    * This function only delas with remove delta and abort node
    */
-  void FinishPartialSMOReadOptimized(Context *context_p) {
+  inline void FinishPartialSMOReadOptimized(Context *context_p) {
     // Note: If the top of the path list changes then this pointer
     // must also be updated
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4796,8 +4800,8 @@ before_switch:
    * complete the job since remove delta will not be present if the thread
    * posting the remove delta finally proceeds to finish its job
    */
-  void TakeNodeSnapshotReadOptimized(NodeID node_id,
-                                     Context *context_p) {
+  inline void TakeNodeSnapshotReadOptimized(NodeID node_id,
+                                            Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
 
     bwt_printf("Is leaf node (RO)? - %d\n", node_p->IsOnLeafDeltaChain());
@@ -4810,7 +4814,11 @@ before_switch:
     #endif
 
     context_p->current_snapshot.node_p = node_p;
-    //context_p->current_snapshot.node_id = node_id;
+    
+    // DO NOT REMOVE THIS!
+    // REMOVING THIS WOULD CAUSE ASSERTION FAILURE WHEN JUMPING
+    // TO RIGHT SIBLING SINCEI IT CHECKS NODE ID
+    context_p->current_snapshot.node_id = node_id;
 
     return;
   }
@@ -4823,7 +4831,7 @@ before_switch:
    * down. However, jumping to left sibling has the possibility to fail
    * so we still need to check abort flag after this function returns
    */
-  void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
+  inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
