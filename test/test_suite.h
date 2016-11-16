@@ -514,8 +514,24 @@ class Zipfian {
    
 };
 
-#define USE_PAPI
-#ifdef USE_PAPI
+#ifdef NO_USE_PAPI
+
+/*
+ * class CacheMeter - Placeholder for systems without PAPI
+ */
+class CacheMeter {
+ public: 
+  CacheMeter(bool) {}
+  ~CacheMeter() {}
+  void Start() {};
+  void Stop() {};
+  void PrintL3CacheUtilization() {};
+  void PrintL1CacheUtilization() {};
+  void GetL3CacheUtilization() {};
+  void GetL1CacheUtilization() {};
+};
+
+#else
 
 // This requires adding PAPI library during compilation
 // The linking flag of PAPI is:
