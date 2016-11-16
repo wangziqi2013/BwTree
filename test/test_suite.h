@@ -521,7 +521,8 @@ class Zipfian {
  */
 class CacheMeter {
  public: 
-  CacheMeter(bool) {}
+  CacheMeter() {};
+  CacheMeter(bool) {};
   ~CacheMeter() {}
   void Start() {};
   void Stop() {};
