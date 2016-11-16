@@ -2968,6 +2968,17 @@ abort_traverse:
     // which is out separator key
     return (it - 1)->second;
   }
+  
+  /*
+   * NavigateInnerNodeForBI() - Traverses an InnerNode for backward iteration
+   *
+   * This function serves the same purpose as NavigateInnerNode() in a sense
+   * that it also traverses down the delta chain of an InnerNode and returns 
+   * an next level NodeID for later traversal.
+   */
+  NodeID NavigateInnerNodeForBI(Context *context_p) {
+    
+  }
 
   /*
    * NavigateInnerNode() - Traverse down through the inner node delta chain
