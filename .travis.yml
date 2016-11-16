@@ -5,10 +5,12 @@ compiler:
 before_install:
     - sudo apt-get -y install gdb
     - pip install --user cpp-coveralls
+    - wget http://mirrors.kernel.org/ubuntu/pool/universe/p/papi/libpapi5.3_5.3.0-3_amd64.deb
+    - sudo dpkg -i *.deb
 
 install:
     # get c++11 support
-    - export CXX="g++-5" CC="gcc-5"
+    - export CXX="g++-5"
     - ulimit -c
 
 addons:
@@ -17,9 +19,7 @@ addons:
             - ubuntu-toolchain-r-test
             - boost-latest
         packages:
-            - gcc-5
             - g++-5
-            - libpapi-dev
 
 before_script:
     - ulimit -c unlimited -S
