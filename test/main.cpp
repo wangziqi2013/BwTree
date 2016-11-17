@@ -251,7 +251,7 @@ int main(int argc, char **argv) {
 
     // First insert from 0 to 1 million
     for(int i = 0;i < key_num;i++) {
-      t->Insert(i, i);
+      t1->Insert(i, i);
     }
 
     ForwardIteratorTest(t1, key_num);
