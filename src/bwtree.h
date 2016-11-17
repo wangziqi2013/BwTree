@@ -8594,6 +8594,22 @@ try_join_again:
 
       return;
     }
+    
+    /*
+     * MoveLeft() - Moves to the left key if there is one
+     *
+     * This function works by querying the tree using low key of the current 
+     * node (which must be nonempty), keeping going left until we have seen
+     * a node whose low key is higher than or equal to the current low key,
+     * thus locating the left node of the current node
+     *
+     * Note that when this function is called, the following must be satisfied:
+     *   (1) There must be a valid IteratorContext
+     *   (2) The current status must not be Begin() status
+     */
+    void MoveLeft() {
+      
+    }
 
     /*
      * MoveAheadByOne() - Move the iterator ahead by one
