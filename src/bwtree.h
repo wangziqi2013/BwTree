@@ -8385,7 +8385,7 @@ try_join_again:
         return true; 
       }
       
-      return (ic_p->GetLeafNode()->GetLowKeyNodeIDPair().second == INVALID_NODE_ID) && \
+      return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
              (ic_p->GetLeafNode()->Begin() == kv_p);
     }
 
@@ -8679,6 +8679,9 @@ try_join_again:
       assert(ic_p != nullptr);
       assert(IsBegin() == false);
       
+      // This is an invalid state
+      assert(kv_p != ic_p->GetLeafNode()->REnd());
+      
       // This will be used to call BwTree functions
       BwTree *tree_p = ic_p->GetTree();
       
@@ -8686,12 +8689,14 @@ try_join_again:
       // If there is no nodes to the left of the current node
       if(IsBegin() == true) {
         return; 
+      } else if(kv_p != ic_p->GetLeafNode()->REnd()) {
+        return; 
       }
       
       while(1) {
         // Saves the low key such that even if we release the reference to
         // the IteratorContext object, it is still valid key
-        const KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
+        KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
         
         // Traverse backward using the low key. This function will
         // try its best to reach the exact left page whose high key
@@ -8702,15 +8707,15 @@ try_join_again:
         
         // This function stops and does not traverse LeafNode after adjusting
         // itself by traversing sibling chain
-        TraverseBI(&context);
+        tree_p->TraverseBI(&context);
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
-        BaseNode *node_p = snapshot_p->node_p;
+        const BaseNode *node_p = snapshot_p->node_p;
         
         // We must have reached a node whose low key is less than the
         // low key we used as the search key
         // Either it has a -Inf low key, or the low key could be compared
         assert((node_p->GetLowKeyPair().second == INVALID_NODE_ID) ||
-               (KeyCmpLess(node_p->GetLowKey(), low_key) == true));
+               (tree_p->KeyCmpLess(node_p->GetLowKey(), low_key) == true));
         
         // Release the current leaf page, and 
         ic_p->DecRef();
