@@ -8368,6 +8368,13 @@ try_join_again:
       return (ic_p->GetLeafNode()->GetNextNodeID() == INVALID_NODE_ID) && \
              (ic_p->GetLeafNode()->End() == kv_p);
     }
+    
+    /*
+     *
+     */
+    bool IsBegin() const {
+      
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
@@ -8668,7 +8675,7 @@ try_join_again:
         // Now we could safely release the reference
         tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
         
-        // There are few cases:
+        // There are several possibilities:
         //    (1) kv_p stops at a key == low_key; kv_p--
         //    (2) kv_p stops at a key > low_key; kv_p--
         //        This implies the node has been merged into current node
@@ -8678,16 +8685,26 @@ try_join_again:
         //    (5) kv_p stops at Begin(); This is a special case of (1) or (2)
         //        kv_p-- will make it invalid, so if it is not Begin() then we
         //        need to take the current low key and retry
+        //    (6) If the leaf node itself is empty then kv_p == End() == Begin()
+        //        and kv_p-- is REnd()
         kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
                                 ic_p->GetLeafNode()->End(),
                                 std::make_pair(low_key, ValueType{}),
-                                p_tree_p->key_value_pair_cmp_obj);
-                                
-        assert(kv_p != ic_p->GetLeafNode()->Begin());
-        
-        kv_p--;
+                                p_tree_p->key_value_pair_cmp_obj) - 1;
+         
+        // If after decreament the kv_p points to the element before Begin()
+        // then we know we should try again                       
+        if(kv_p == ic_p->GetLeafNode()->REnd()) {
+          // If there is no low key (-Inf) then that's it
+          if(IsBegin() == true) {
+            return; 
+          } else {
+            low_key = ic_p->GetLeafNode()->GetLowKey(); 
+          }
+        }
       } // while(1)
       
+      return;
     }
 
     /*
