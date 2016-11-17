@@ -8596,7 +8596,7 @@ try_join_again:
     }
     
     /*
-     * MoveLeft() - Moves to the left key if there is one
+     * MoveLeftByOne() - Moves to the left key if there is one
      *
      * This function works by querying the tree using low key of the current 
      * node (which must be nonempty), keeping going left until we have seen
@@ -8607,7 +8607,22 @@ try_join_again:
      *   (1) There must be a valid IteratorContext
      *   (2) The current status must not be Begin() status
      */
-    void MoveLeft() {
+    void MoveLeftByOne() {
+      assert(kv_p != nullptr);
+      assert(ic_p != nullptr);
+      assert(IsBegin() == false);
+      
+      kv_p--;
+      // If there is no nodes to the left of the current node
+      if(IsBegin() == true) {
+        return; 
+      }
+      
+      while(1) {
+        // Saves the low key such that even if we release the reference to
+        // the IteratorContext object, it is still valid key
+        const KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
+      } // while(1)
       
     }
 
