@@ -3230,7 +3230,9 @@ abort_traverse:
    * an next level NodeID for later traversal.
    *
    * The difference between this function and NavigateInnerNode() is that
-   * this function will go left even if the search key is found
+   * this function will go left even if the search key is found. Similarly
+   * if the key happens to be the merge key in InnerMergeNode, we just take
+   * the left branch to avoid ending up in the node with low key == search key
    */
   NodeID NavigateInnerNodeForBI(Context *context_p) {
     NavigateSiblingChainBI(context_p);
@@ -3251,37 +3253,30 @@ abort_traverse:
 
       switch(type) {
         case NodeType::InnerType: {
-          const InnerNode *inner_node_p = \
-            static_cast<const InnerNode *>(node_p);
+          NodeID target_id = \
+            LocateSeparatorByKeyBI(search_key, 
+                                    static_cast<const InnerNode *>(node_p));
 
-          // We always use the ubound recorded inside the top of the
-          // delta chain
-          NodeID target_id = LocateSeparatorByKey(search_key, inner_node_p);
-
-          bwt_printf("Found child in inner node; child ID = %lu\n",
+          bwt_printf("Found child in inner node (BI); child ID = %lu\n",
                      target_id);
 
           return target_id;
-        } // case InnerType
-        case NodeType::InnerRemoveType: {
-          bwt_printf("ERROR: InnerRemoveNode not allowed\n");
-
-          assert(false);
-        } // case InnerRemoveType
+        } 
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
 
           const KeyNodeIDPair &insert_item = insert_node_p->item;
           const KeyNodeIDPair &next_item = insert_node_p->next_item;
-
-          // If the next item has +Inf as its key (checking that using
-          // next_node_id), or it > search key
           if((next_item.second == INVALID_NODE_ID) ||
              (KeyCmpLess(search_key, next_item.first))) {
-            // If search key >= insert key
-            if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
-              bwt_printf("Find target ID = %lu in insert delta\n",
+               
+            // *********************************************
+            // * NOTE: DO NOT PROCEED IF IT IS "==" RELATION
+            // *********************************************
+            
+            if(KeyCmpGreater(search_key, insert_item.first)) {
+              bwt_printf("Find target ID = %lu in insert delta (BI)\n",
                          insert_item.second);
 
               return insert_item.second;
@@ -3299,24 +3294,15 @@ abort_traverse:
           const KeyNodeIDPair &prev_item = delete_node_p->prev_item;
           const KeyNodeIDPair &next_item = delete_node_p->next_item;
 
-          // NOTE: Low key ID will not be changed (i.e. being deleted or
-          // being preceded by other key-NodeID pair)
-          // If the prev item is the leftmost item then we do not need to
-          // compare since we know the search key is definitely greater than
-          // or equal to the low key (this is necessary to prevent comparing
-          // with -Inf)
-          // NOTE: Even if the inner node is merged into its left sibling
-          // this is still true since we compared prev_item.second
-          // with the low key of the current delete node which always
-          // reflects the low key of this branch
+          // *********************************************
+          // * NOTE: DO NOT PROCEED IF IT IS "==" RELATION
+          // *********************************************
+
           if((delete_node_p->GetLowKeyNodeID() == prev_item.second) ||
-             (KeyCmpGreaterEqual(search_key, prev_item.first))) {
-            // If the next item is +Inf key then we also choose not to compare
-            // keys directly since we know the search key is definitely smaller
-            // then +Inf
+             (KeyCmpGreater(search_key, prev_item.first))) {
             if((next_item.second == INVALID_NODE_ID) ||
                (KeyCmpLess(search_key, next_item.first))) {
-              bwt_printf("Find target ID = %lu in delete delta\n",
+              bwt_printf("Find target ID = %lu in delete delta (BI)\n",
                          prev_item.second);
 
               return prev_item.second;
@@ -3328,16 +3314,7 @@ abort_traverse:
           break;
         } // InnerDeleteType
         case NodeType::InnerSplitType: {
-          const InnerSplitNode *split_node_p = \
-            static_cast<const InnerSplitNode *>(node_p);
-
-          // Since we have already finished jumping to the right
-          // sibling on the top level, it is unnecessary to
-          // jump when seeing an InnerSplitNode
-          // (The split key information has been observed on top
-          // node's high key)
-          node_p = split_node_p->child_node_p;
-
+          node_p = static_cast<const InnerSplitNode *>(node_p)->child_node_p;
           break;
         } // case InnerSplitType
         case NodeType::InnerMergeType: {
@@ -3346,16 +3323,17 @@ abort_traverse:
 
           const KeyType &merge_key = merge_node_p->delete_item.first;
 
-          // Here since we will only take one branch, so
-          // high key does not need to be updated
-          // Since we still could not know the high key
-          if(KeyCmpGreaterEqual(search_key, merge_key)) {
-            bwt_printf("Take merge right branch (ID = %lu)\n",
+          // ************************************************
+          // * NOTE: GO TO LEFT BRANCH IF IT IS "==" RELATION
+          // ************************************************
+
+          if(KeyCmpGreater(search_key, merge_key)) {
+            bwt_printf("Take merge right branch (ID = %lu) for BI\n",
                        snapshot_p->node_id);
 
             node_p = merge_node_p->right_merge_p;
           } else {
-            bwt_printf("Take merge left branch (ID = %lu)\n",
+            bwt_printf("Take merge left branch (ID = %lu) for BI\n",
                        snapshot_p->node_id);
 
             node_p = merge_node_p->child_node_p;
@@ -3364,7 +3342,7 @@ abort_traverse:
           break;
         } // InnerMergeType
         default: {
-          bwt_printf("ERROR: Unknown node type = %d",
+          bwt_printf("ERROR: Unknown or unsupported node type = %d",
                      static_cast<int>(type));
 
           assert(false);
