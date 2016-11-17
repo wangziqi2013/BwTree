@@ -857,7 +857,8 @@ void StressTest(uint64_t thread_id, TreeType *t);
 /*
  * Iterator test suite
  */
-void IteratorTest(TreeType *t);
+void ForwardIteratorTest(TreeType *t, int key_num);
+void BackwardIteratorTest(TreeType *t, int key_num);
 
 /*
  * Random test suite

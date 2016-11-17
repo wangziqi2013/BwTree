@@ -8375,7 +8375,7 @@ try_join_again:
      * We define Begin() iterator as follows:
      *   (1) kv_p and ic_p are empty
      *   (2) Otherwise either low key node ID is invalid node ID * and *
-     *       kv_p points to REnd() of the underlying leaf node 
+     *       kv_p points to Begin() of the underlying leaf node 
      */
     bool IsBegin() const {
       // This is both Begin() and End()
@@ -8386,7 +8386,7 @@ try_join_again:
       }
       
       return (ic_p->GetLeafNode()->GetLowKeyNodeIDPair().second == INVALID_NODE_ID) && \
-             (ic_p->GetLeafNode()->REnd() == kv_p);
+             (ic_p->GetLeafNode()->Begin() == kv_p);
     }
 
     /*
@@ -8556,7 +8556,7 @@ try_join_again:
     /*
      * PostFix operator-- - Move the iterator backward by one element
      */
-    inline ForardIterator operator--(int) {
+    inline ForwardIterator operator--(int) {
       if(IsBegin() == true) {
         return *this;
       }

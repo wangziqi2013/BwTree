@@ -247,9 +247,16 @@ int main(int argc, char **argv) {
     // This could print
     t1 = GetEmptyTree();
 
-    printf("Testing iterator...\n");
+    const int key_num = 1024 * 1024;
 
-    ForwardIteratorTest(t1);
+    // First insert from 0 to 1 million
+    for(int i = 0;i < key_num;i++) {
+      t->Insert(i, i);
+    }
+
+    ForwardIteratorTest(t1, key_num);
+    BackwardIteratorTest(t1, key_num);
+    
     PrintStat(t1);
 
     printf("Finised testing iterator\n");
