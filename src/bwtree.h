@@ -1784,6 +1784,20 @@ class BwTree {
     }
     
     /*
+     * REnd() - Returns the element before the first element
+     *
+     * Note that since we returned an invalid pointer into the array, the
+     * return value should not be modified and is therefore of const type
+     */
+    inline const ElementType *REnd() {
+      return start - 1; 
+    }
+    
+    inline const ElementType *REnd() const {
+      return start - 1; 
+    }
+    
+    /*
      * GetSize() - Returns the size of the embedded list
      *
      * Note that the return type is integer since we use integer to represent
