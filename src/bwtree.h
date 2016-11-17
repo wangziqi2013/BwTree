@@ -8612,6 +8612,9 @@ try_join_again:
       assert(ic_p != nullptr);
       assert(IsBegin() == false);
       
+      // This will be used to call BwTree functions
+      BwTree *tree_p = ic_p->GetTree();
+      
       kv_p--;
       // If there is no nodes to the left of the current node
       if(IsBegin() == true) {
@@ -8623,7 +8626,52 @@ try_join_again:
         // the IteratorContext object, it is still valid key
         const KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
         
+        // Traverse backward using the low key. This function will
+        // try its best to reach the exact left page whose high key
+        // <= current low key
+        Context context{low_key};
         
+        EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
+        
+        // This function stops and does not traverse LeafNode after adjusting
+        // itself by traversing sibling chain
+        TraverseBI(&context);
+        NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+        BaseNode *node_p = snapshot_p->node_p;
+        
+        // We must have reached a node whose low key is less than the
+        // low key we used as the search key
+        // Either it has a -Inf low key, or the low key could be compared
+        assert((node_p->GetLowKeyPair().second == INVALID_NODE_ID) ||
+               (KeyCmpLess(node_p->GetLowKey(), low_key) == true));
+        
+        // Release the current leaf page, and 
+        ic_p->DecRef();
+        ic_p = IteratorContext::Get(p_tree_p, node_p);
+        assert(ic_p->GetRefCount() == 1UL);
+        p_tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
+        
+        // Now we could safely release the reference
+        tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        // There are few cases:
+        //    (1) kv_p stops at a key == low_key; kv_p--
+        //    (2) kv_p stops at a key > low_key; kv_p--
+        //        This implies the node has been merged into current node
+        //        and the low key element is deleted
+        //    (3) kv_p stops at a key < low key; this is impossible 
+        //    (4) kv_p stops at End(); this is the usual case; kv_p--
+        //    (5) kv_p stops at Begin(); This is a special case of (1) or (2)
+        //        kv_p-- will make it invalid, so if it is not Begin() then we
+        //        need to take the current low key and retry
+        kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
+                                ic_p->GetLeafNode()->End(),
+                                std::make_pair(low_key, ValueType{}),
+                                p_tree_p->key_value_pair_cmp_obj);
+                                
+        assert(kv_p != ic_p->GetLeafNode()->Begin());
+        
+        kv_p--;
       } // while(1)
       
     }
