@@ -8370,10 +8370,23 @@ try_join_again:
     }
     
     /*
+     * IsBegin() - Returns whether the iterator is Begin() iterator
      *
+     * We define Begin() iterator as follows:
+     *   (1) kv_p and ic_p are empty
+     *   (2) Otherwise either low key node ID is invalid node ID * and *
+     *       kv_p points to REnd() of the underlying leaf node 
      */
     bool IsBegin() const {
+      // This is both Begin() and End()
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
       
+      return (ic_p->GetLeafNode()->GetLowKeyNodeIDPair().second == INVALID_NODE_ID) && \
+             (ic_p->GetLeafNode()->REnd() == kv_p);
     }
 
     /*
