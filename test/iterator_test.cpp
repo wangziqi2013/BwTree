@@ -62,10 +62,11 @@ void BackwardIteratorTest(TreeType *t, int key_num) {
     key--;
     it--;
   }
-  
+  printf("key = %ld\n", key);
   // Test for Begin()
   assert(it->first == it->second);
   assert(it->first == key);
+  assert(key == 0);
   
   return;
 }

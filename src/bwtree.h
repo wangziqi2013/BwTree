@@ -2208,7 +2208,7 @@ class BwTree {
               NodeType::LeafType,
               0,
               sibling_size,
-              std::make_pair(split_key, INVALID_NODE_ID),
+              std::make_pair(split_key, ~INVALID_NODE_ID),
               this->GetHighKeyPair()));
 
       // Copy data item into the new node using PushBack()
@@ -3238,7 +3238,7 @@ abort_traverse:
   }
   
   /*
-   * NavigateInnerNodeForBI() - Traverses an InnerNode for backward iteration
+   * NavigateInnerNodeBI() - Traverses an InnerNode for backward iteration
    *
    * This function serves the same purpose as NavigateInnerNode() in a sense
    * that it also traverses down the delta chain of an InnerNode and returns 
@@ -3249,7 +3249,7 @@ abort_traverse:
    * if the key happens to be the merge key in InnerMergeNode, we just take
    * the left branch to avoid ending up in the node with low key == search key
    */
-  NodeID NavigateInnerNodeForBI(Context *context_p) {
+  NodeID NavigateInnerNodeBI(Context *context_p) {
     NavigateSiblingChainBI(context_p);
     if(context_p->abort_flag == true) {
       return INVALID_NODE_ID;
@@ -5064,7 +5064,7 @@ retry_traverse:
     bwt_printf("Successfully loading root node ID for BI\n");
 
     while(1) {
-      NodeID child_node_id = NavigateInnerNode(context_p);
+      NodeID child_node_id = NavigateInnerNodeBI(context_p);
       if(context_p->abort_flag == true) {
         bwt_printf("Navigate Inner Node abort (BI). ABORT\n");
         assert(child_node_id == INVALID_NODE_ID);
@@ -8710,6 +8710,8 @@ try_join_again:
         tree_p->TraverseBI(&context);
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
+        
+        printf("low key = %ld; node_p->low key = %ld; low ID = %ld\n", low_key, node_p->GetLowKey(), node_p->GetLowKeyPair().second);
         
         // We must have reached a node whose low key is less than the
         // low key we used as the search key
