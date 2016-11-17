@@ -3000,7 +3000,37 @@ abort_traverse:
     return (it - 1)->second;
   }
   
-  
+  /*
+   * LocateSeparatorByKeyBI() - Same as locate separator by key but it 
+   *                            goes left when we see the selected separator
+   *                            being the search key
+   *
+   * This function guarantees to find a left key if we see the separator
+   * being the search key. This is because if there is not a left key then we
+   * we must have come down from a node where the search key is its separator
+   * key (remember that the separator key is the low key of ots child node)
+   */
+  inline NodeID LocateSeparatorByKeyBI(const KeyType &search_key,
+                                       const InnerNode *inner_node_p) {
+    assert(inner_node_p->GetSize() != 0UL);
+    auto it = std::upper_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
+                               std::make_pair(search_key, INVALID_NODE_ID),
+                               key_node_id_pair_cmp_obj);
+
+    it--;
+    if(KeyCmpEqual(it->first, search_key) == true) {
+      // If search key is the low key then we know we should have already
+      // gone left on the parent node
+      assert(it != inner_node_p->Begin());
+      
+      // Go to the left separator to find the left node with range < search key
+      // After decreament it might or might not be the low key
+      it--; 
+    }
+    
+    return it->second;
+  }
   
   /*
    * NavigateInnerNodeForBI() - Traverses an InnerNode for backward iteration
