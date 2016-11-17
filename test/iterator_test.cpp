@@ -39,6 +39,8 @@ void ForwardIteratorTest(TreeType *t, int key_num) {
 
   auto it4 = t->Begin(key_num + 1);
   assert(it4.IsEnd() == true);
+  
+  printf("PASS\n");
 
   return;
 }
@@ -67,6 +69,8 @@ void BackwardIteratorTest(TreeType *t, int key_num) {
   assert(it->first == it->second);
   assert(it->first == key);
   assert(key == 0);
+  
+  printf("PASS\n");
   
   return;
 }
