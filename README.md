@@ -56,6 +56,7 @@ You could either use git checkout to view these releases, or download them throu
 | Release Name | Description |
 |--------------|-------------|
 | baseline | A stable working version of BwTree used as testing baseline against design changes |
+| fixed-forward-iterator | Preallocation + fixed forward iterator |
 
 Misc 
 ====
