@@ -1784,6 +1784,20 @@ class BwTree {
     }
     
     /*
+     * REnd() - Returns the element before the first element
+     *
+     * Note that since we returned an invalid pointer into the array, the
+     * return value should not be modified and is therefore of const type
+     */
+    inline const ElementType *REnd() {
+      return start - 1; 
+    }
+    
+    inline const ElementType *REnd() const {
+      return start - 1; 
+    }
+    
+    /*
      * GetSize() - Returns the size of the embedded list
      *
      * Note that the return type is integer since we use integer to represent
@@ -2194,7 +2208,7 @@ class BwTree {
               NodeType::LeafType,
               0,
               sibling_size,
-              std::make_pair(split_key, INVALID_NODE_ID),
+              std::make_pair(split_key, ~INVALID_NODE_ID),
               this->GetHighKeyPair()));
 
       // Copy data item into the new node using PushBack()
@@ -2845,7 +2859,8 @@ retry_traverse:
     }
 
     if(context_p->abort_flag == true) {
-      bwt_printf("NavigateLeafNode aborts. ABORT\n");
+      bwt_printf("NavigateLeafNode() or NavigateSiblingChain()"
+                 " aborts. ABORT\n");
 
       goto abort_traverse;
     }
@@ -2930,7 +2945,7 @@ abort_traverse:
         JumpToNodeID(node_p->GetNextNodeID(), context_p);
 
         if(context_p->abort_flag == true) {
-          bwt_printf("JumpToNodeID aborts. ABORT\n");
+          bwt_printf("JumpToNodeID aborts(). ABORT\n");
 
           return;
         }
@@ -2939,6 +2954,37 @@ abort_traverse:
         break;
       }
     } while(1);
+    
+    return;
+  }
+  
+  /*
+   * NavigateSiblingChainBI() - Navigates sibling chain for backward iteration
+   *
+   * This function traverses to the right sibling of the current node only if
+   * the search key > current high key. In the case of search key == high key
+   * we stay on the same node to enable finding the left node of the node with
+   * the search key as low key
+   */
+  void NavigateSiblingChainBI(Context *context_p) {
+    while(1) {
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+      const BaseNode *node_p = snapshot_p->node_p;
+      if((node_p->GetNextNodeID() != INVALID_NODE_ID) &&
+         (KeyCmpGreater(context_p->search_key, node_p->GetHighKey()))) {
+        bwt_printf("Bounds checking for BI failed (id = %lu) - "
+                   "Go right.\n",
+                   snapshot_p->node_id);
+
+        JumpToNodeID(node_p->GetNextNodeID(), context_p);
+        if(context_p->abort_flag == true) {
+          bwt_printf("JumpToNodeID() aborts for BI. ABORT\n");
+          return;
+        }
+      } else {
+        break;
+      }
+    } // while(1)
     
     return;
   }
@@ -2961,12 +3007,43 @@ abort_traverse:
     auto it = std::upper_bound(inner_node_p->Begin() + 1,
                                inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj);
+                               key_node_id_pair_cmp_obj) - 1;
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
     // which is out separator key
-    return (it - 1)->second;
+    return it->second;
+  }
+  
+  /*
+   * LocateSeparatorByKeyBI() - Same as locate separator by key but it 
+   *                            goes left when we see the selected separator
+   *                            being the search key
+   *
+   * This function guarantees to find a left key if we see the separator
+   * being the search key. This is because if there is not a left key then we
+   * we must have come down from a node where the search key is its separator
+   * key (remember that the separator key is the low key of ots child node)
+   */
+  inline NodeID LocateSeparatorByKeyBI(const KeyType &search_key,
+                                       const InnerNode *inner_node_p) {
+    assert(inner_node_p->GetSize() != 0UL);
+    auto it = std::upper_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
+                               std::make_pair(search_key, INVALID_NODE_ID),
+                               key_node_id_pair_cmp_obj) - 1;
+
+    if(KeyCmpEqual(it->first, search_key) == true) {
+      // If search key is the low key then we know we should have already
+      // gone left on the parent node
+      assert(it != inner_node_p->Begin());
+      
+      // Go to the left separator to find the left node with range < search key
+      // After decreament it might or might not be the low key
+      it--; 
+    }
+    
+    return it->second;
   }
 
   /*
@@ -3021,6 +3098,10 @@ abort_traverse:
     // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
+    
+    // For read only workload this is always true since we do not need
+    // to remember the node ID for read - read is always stateless until
+    // it has reached a leaf node
     //assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
@@ -3144,6 +3225,139 @@ abort_traverse:
         } // InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown node type = %d",
+                     static_cast<int>(type));
+
+          assert(false);
+        }
+      } // switch type
+    } // while 1
+
+    // Should not reach here
+    assert(false);
+    return INVALID_NODE_ID;
+  }
+  
+  /*
+   * NavigateInnerNodeBI() - Traverses an InnerNode for backward iteration
+   *
+   * This function serves the same purpose as NavigateInnerNode() in a sense
+   * that it also traverses down the delta chain of an InnerNode and returns 
+   * an next level NodeID for later traversal.
+   *
+   * The difference between this function and NavigateInnerNode() is that
+   * this function will go left even if the search key is found. Similarly
+   * if the key happens to be the merge key in InnerMergeNode, we just take
+   * the left branch to avoid ending up in the node with low key == search key
+   */
+  NodeID NavigateInnerNodeBI(Context *context_p) {
+    NavigateSiblingChainBI(context_p);
+    if(context_p->abort_flag == true) {
+      return INVALID_NODE_ID;
+    }
+    
+    const KeyType &search_key = context_p->search_key;
+    NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    assert(snapshot_p->IsLeaf() == false);
+    assert(snapshot_p->node_p != nullptr);
+    bwt_printf("Navigating inner node delta chain for BI...\n");
+
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        case NodeType::InnerType: {
+          NodeID target_id = \
+            LocateSeparatorByKeyBI(search_key, 
+                                    static_cast<const InnerNode *>(node_p));
+
+          bwt_printf("Found child in inner node (BI); child ID = %lu\n",
+                     target_id);
+
+          return target_id;
+        } 
+        case NodeType::InnerInsertType: {
+          const InnerInsertNode *insert_node_p = \
+            static_cast<const InnerInsertNode *>(node_p);
+
+          const KeyNodeIDPair &insert_item = insert_node_p->item;
+          const KeyNodeIDPair &next_item = insert_node_p->next_item;
+          if((next_item.second == INVALID_NODE_ID) ||
+             (KeyCmpLess(search_key, next_item.first))) {
+               
+            // *********************************************
+            // * NOTE: DO NOT PROCEED IF IT IS "==" RELATION
+            // *********************************************
+            
+            if(KeyCmpGreater(search_key, insert_item.first)) {
+              bwt_printf("Find target ID = %lu in insert delta (BI)\n",
+                         insert_item.second);
+
+              return insert_item.second;
+            }
+          }
+
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // InnerInsertType
+        case NodeType::InnerDeleteType: {
+          const InnerDeleteNode *delete_node_p = \
+            static_cast<const InnerDeleteNode *>(node_p);
+
+          const KeyNodeIDPair &prev_item = delete_node_p->prev_item;
+          const KeyNodeIDPair &next_item = delete_node_p->next_item;
+
+          // *********************************************
+          // * NOTE: DO NOT PROCEED IF IT IS "==" RELATION
+          // *********************************************
+
+          if((delete_node_p->GetLowKeyNodeID() == prev_item.second) ||
+             (KeyCmpGreater(search_key, prev_item.first))) {
+            if((next_item.second == INVALID_NODE_ID) ||
+               (KeyCmpLess(search_key, next_item.first))) {
+              bwt_printf("Find target ID = %lu in delete delta (BI)\n",
+                         prev_item.second);
+
+              return prev_item.second;
+            }
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // InnerDeleteType
+        case NodeType::InnerSplitType: {
+          node_p = static_cast<const InnerSplitNode *>(node_p)->child_node_p;
+          break;
+        } // case InnerSplitType
+        case NodeType::InnerMergeType: {
+          const InnerMergeNode *merge_node_p = \
+            static_cast<const InnerMergeNode *>(node_p);
+
+          const KeyType &merge_key = merge_node_p->delete_item.first;
+
+          // ************************************************
+          // * NOTE: GO TO LEFT BRANCH IF IT IS "==" RELATION
+          // ************************************************
+
+          if(KeyCmpGreater(search_key, merge_key)) {
+            bwt_printf("Take merge right branch (ID = %lu) for BI\n",
+                       snapshot_p->node_id);
+
+            node_p = merge_node_p->right_merge_p;
+          } else {
+            bwt_printf("Take merge left branch (ID = %lu) for BI\n",
+                       snapshot_p->node_id);
+
+            node_p = merge_node_p->child_node_p;
+          }
+
+          break;
+        } // InnerMergeType
+        default: {
+          bwt_printf("ERROR: Unknown or unsupported node type = %d",
                      static_cast<int>(type));
 
           assert(false);
@@ -4741,7 +4955,7 @@ abort_traverse:
    *
    * This function only delas with remove delta and abort node
    */
-  void FinishPartialSMOReadOptimized(Context *context_p) {
+  inline void FinishPartialSMOReadOptimized(Context *context_p) {
     // Note: If the top of the path list changes then this pointer
     // must also be updated
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
@@ -4749,7 +4963,7 @@ abort_traverse:
 before_switch:
     switch(snapshot_p->node_p->GetType()) {
       case NodeType::InnerAbortType: {
-        bwt_printf("Observed Inner Abort Node; ABORT\n");
+        bwt_printf("Observed Inner Abort Node; Continue\n");
 
         snapshot_p->node_p = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
@@ -4785,8 +4999,8 @@ before_switch:
    * complete the job since remove delta will not be present if the thread
    * posting the remove delta finally proceeds to finish its job
    */
-  void TakeNodeSnapshotReadOptimized(NodeID node_id,
-                                     Context *context_p) {
+  inline void TakeNodeSnapshotReadOptimized(NodeID node_id,
+                                            Context *context_p) {
     const BaseNode *node_p = GetNode(node_id);
 
     bwt_printf("Is leaf node (RO)? - %d\n", node_p->IsOnLeafDeltaChain());
@@ -4799,7 +5013,11 @@ before_switch:
     #endif
 
     context_p->current_snapshot.node_p = node_p;
-    //context_p->current_snapshot.node_id = node_id;
+    
+    // DO NOT REMOVE THIS!
+    // REMOVING THIS WOULD CAUSE ASSERTION FAILURE WHEN JUMPING
+    // TO RIGHT SIBLING SINCEI IT CHECKS NODE ID
+    context_p->current_snapshot.node_id = node_id;
 
     return;
   }
@@ -4812,7 +5030,7 @@ before_switch:
    * down. However, jumping to left sibling has the possibility to fail
    * so we still need to check abort flag after this function returns
    */
-  void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
+  inline void LoadNodeIDReadOptimized(NodeID node_id, Context *context_p) {
     bwt_printf("Loading NodeID (RO) = %lu\n", node_id);
 
     // This pushes a new snapshot into stack
@@ -4826,18 +5044,72 @@ before_switch:
   }
 
   /*
-   * TraverseReadOptimized() - Read optimized tree traversal
+   * TraverseBI() - Read optimized traversal for backward iteration
    *
-   * This function differs from the standard version in a sense that it
-   * does not try to adjust node size and consolidate node - what it does
-   * is just navigating inner node and leaf node and return values for the
-   * given search key.
-   *
-   * However, there is one thing we must do, that is to jump to the left
-   * sibling of the current node when we see a remove delta. This is inevitable
-   * even if the thread is read only, since otherwise traversing down
-   * would become impossible.
+   * This function calls NavigateInnerNodeBI() to find the node with a smaller
+   * key than search key
    */
+  void TraverseBI(Context *context_p) {
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    NodeID start_node_id = root_id.load();
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+    LoadNodeID(start_node_id, context_p);
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID for BI\n");
+
+    while(1) {
+      NodeID child_node_id = NavigateInnerNodeBI(context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (BI). ABORT\n");
+        assert(child_node_id == INVALID_NODE_ID);
+        goto abort_traverse;
+      }
+
+      LoadNodeID(child_node_id, context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted (BI). ABORT\n");
+        goto abort_traverse;
+      }
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf (BI)\n");
+
+        // After reaching leaf level just traverse the sibling chain
+        // and stop before the search key
+        NavigateSiblingChainBI(context_p);
+        if(context_p->abort_flag == true) {
+          bwt_printf("NavigateSiblingChainBI() inside TraverseBI() aborts\n");
+
+          goto abort_traverse;
+        }
+    
+        return;
+      }
+    } //while(1)
+
+abort_traverse:
+    #ifdef BWTREE_DEBUG
+    assert(context_p->current_level >= 0);
+    context_p->current_level = -1;
+    context_p->abort_counter++;
+    #endif
+    
+    // This is used to identify root node
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+    context_p->abort_flag = false;
+    goto retry_traverse;
+
+    assert(false);
+    return;
+  }
+  
   void TraverseReadOptimized(Context *context_p,
                              std::vector<ValueType> *value_list_p) {
 retry_traverse:
@@ -8096,6 +8368,26 @@ try_join_again:
       return (ic_p->GetLeafNode()->GetNextNodeID() == INVALID_NODE_ID) && \
              (ic_p->GetLeafNode()->End() == kv_p);
     }
+    
+    /*
+     * IsBegin() - Returns whether the iterator is Begin() iterator
+     *
+     * We define Begin() iterator as follows:
+     *   (1) kv_p and ic_p are empty
+     *   (2) Otherwise either low key node ID is invalid node ID * and *
+     *       kv_p points to Begin() of the underlying leaf node 
+     */
+    bool IsBegin() const {
+      // This is both Begin() and End()
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
+      
+      return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
+             (ic_p->GetLeafNode()->Begin() == kv_p);
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
@@ -8225,6 +8517,22 @@ try_join_again:
 
       return *this;
     }
+    
+    /*
+     * Prefix operator-- - Move one element back relative to the current key
+     */
+    inline ForwardIterator &operator--() {
+      // This filters out:
+      //   (1) Pointers being nullptr
+      //   (2) Real begin iterator
+      if(IsBegin() == true) {
+        return *this; 
+      }
+      
+      MoveBackByOne();
+      
+      return *this;
+    }
 
     /*
      * Postfix operator++ - Move the iterator ahead, and return the old one
@@ -8241,6 +8549,23 @@ try_join_again:
       ForwardIterator temp = *this;
 
       MoveAheadByOne();
+
+      return temp;
+    }
+    
+    /*
+     * PostFix operator-- - Move the iterator backward by one element
+     */
+    inline ForwardIterator operator--(int) {
+      if(IsBegin() == true) {
+        return *this;
+      }
+      
+      // Make a copy of the current one before advancing
+      // This will increase ref count temporarily, but it is always consistent
+      ForwardIterator temp = *this;
+
+      MoveBackByOne();
 
       return temp;
     }
@@ -8334,6 +8659,104 @@ try_join_again:
         }
       } // while(1)
 
+      return;
+    }
+    
+    /*
+     * MoveBackByOne() - Moves to the left key if there is one
+     *
+     * This function works by querying the tree using low key of the current 
+     * node (which must be nonempty), keeping going left until we have seen
+     * a node whose low key is higher than or equal to the current low key,
+     * thus locating the left node of the current node
+     *
+     * Note that when this function is called, the following must be satisfied:
+     *   (1) There must be a valid IteratorContext
+     *   (2) The current status must not be Begin() status
+     */
+    void MoveBackByOne() {
+      assert(kv_p != nullptr);
+      assert(ic_p != nullptr);
+      assert(IsBegin() == false);
+      
+      // This is an invalid state
+      assert(kv_p != ic_p->GetLeafNode()->REnd());
+      
+      // This will be used to call BwTree functions
+      BwTree *tree_p = ic_p->GetTree();
+      
+      kv_p--;
+      // If there is no nodes to the left of the current node
+      if(IsBegin() == true) {
+        return; 
+      } else if(kv_p != ic_p->GetLeafNode()->REnd()) {
+        return; 
+      }
+      
+      while(1) {
+        // Saves the low key such that even if we release the reference to
+        // the IteratorContext object, it is still valid key
+        KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
+        
+        // Traverse backward using the low key. This function will
+        // try its best to reach the exact left page whose high key
+        // <= current low key
+        Context context{low_key};
+        
+        EpochNode *epoch_node_p = tree_p->epoch_manager.JoinEpoch();
+        
+        // This function stops and does not traverse LeafNode after adjusting
+        // itself by traversing sibling chain
+        tree_p->TraverseBI(&context);
+        NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
+        const BaseNode *node_p = snapshot_p->node_p;
+        
+        // We must have reached a node whose low key is less than the
+        // low key we used as the search key
+        // Either it has a -Inf low key, or the low key could be compared
+        assert((node_p->GetLowKeyPair().second == INVALID_NODE_ID) ||
+               (tree_p->KeyCmpLess(node_p->GetLowKey(), low_key) == true));
+        
+        // Release the current leaf page, and 
+        ic_p->DecRef();
+        ic_p = IteratorContext::Get(tree_p, node_p);
+        assert(ic_p->GetRefCount() == 1UL);
+        tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
+        
+        // Now we could safely release the reference
+        tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
+        
+        // There are several possibilities:
+        //    (1) kv_p stops at a key == low_key; kv_p--
+        //    (2) kv_p stops at a key > low_key; kv_p--
+        //        This implies the node has been merged into current node
+        //        and the low key element is deleted
+        //    (3) kv_p stops at a key < low key; this is impossible 
+        //    (4) kv_p stops at End(); this is the usual case; kv_p--
+        //    (5) kv_p stops at Begin(); This is a special case of (1) or (2)
+        //        kv_p-- will make it invalid, so if it is not Begin() then we
+        //        need to take the current low key and retry
+        //    (6) If the leaf node itself is empty then kv_p == End() == Begin()
+        //        and kv_p-- is REnd()
+        kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
+                                ic_p->GetLeafNode()->End(),
+                                std::make_pair(low_key, ValueType{}),
+                                tree_p->key_value_pair_cmp_obj) - 1;
+         
+        // If after decreament the kv_p points to the element before Begin()
+        // then we know we should try again                       
+        if(kv_p == ic_p->GetLeafNode()->REnd()) {
+          // If there is no low key (-Inf) then that's it
+          if(node_p->GetLowKeyPair().second == INVALID_NODE_ID) {
+            return; 
+          } else {
+            low_key = ic_p->GetLeafNode()->GetLowKey(); 
+          }
+        } else {
+          return; 
+        }
+      } // while(1)
+      
       return;
     }
 
