@@ -2992,12 +2992,12 @@ abort_traverse:
     auto it = std::upper_bound(inner_node_p->Begin() + 1,
                                inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj);
+                               key_node_id_pair_cmp_obj) - 1;
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
     // which is out separator key
-    return (it - 1)->second;
+    return it->second;
   }
   
   /*
@@ -3016,9 +3016,8 @@ abort_traverse:
     auto it = std::upper_bound(inner_node_p->Begin() + 1,
                                inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj);
+                               key_node_id_pair_cmp_obj) - 1;
 
-    it--;
     if(KeyCmpEqual(it->first, search_key) == true) {
       // If search key is the low key then we know we should have already
       // gone left on the parent node
