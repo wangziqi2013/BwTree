@@ -8517,6 +8517,22 @@ try_join_again:
 
       return *this;
     }
+    
+    /*
+     * Prefix operator-- - Move one element back relative to the current key
+     */
+    inline ForwardIterator &operator--() {
+      // This filters out:
+      //   (1) Pointers being nullptr
+      //   (2) Real begin iterator
+      if(IsBegin() == true) {
+        return *this; 
+      }
+      
+      MoveBackByOne();
+      
+      return *this;
+    }
 
     /*
      * Postfix operator++ - Move the iterator ahead, and return the old one
@@ -8536,6 +8552,8 @@ try_join_again:
 
       return temp;
     }
+    
+    //inline ForardIterato
 
     /*
      * LowerBound() - Load leaf page whose key >= start_key
@@ -8681,9 +8699,9 @@ try_join_again:
         
         // Release the current leaf page, and 
         ic_p->DecRef();
-        ic_p = IteratorContext::Get(p_tree_p, node_p);
+        ic_p = IteratorContext::Get(tree_p, node_p);
         assert(ic_p->GetRefCount() == 1UL);
-        p_tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
+        tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
         
         // Now we could safely release the reference
         tree_p->epoch_manager.LeaveEpoch(epoch_node_p);
@@ -8703,7 +8721,7 @@ try_join_again:
         kv_p = std::lower_bound(ic_p->GetLeafNode()->Begin(),
                                 ic_p->GetLeafNode()->End(),
                                 std::make_pair(low_key, ValueType{}),
-                                p_tree_p->key_value_pair_cmp_obj) - 1;
+                                tree_p->key_value_pair_cmp_obj) - 1;
          
         // If after decreament the kv_p points to the element before Begin()
         // then we know we should try again                       
