@@ -8711,8 +8711,6 @@ try_join_again:
         NodeSnapshot *snapshot_p = tree_p->GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
         
-        printf("low key = %ld; node_p->low key = %ld; low ID = %ld\n", low_key, node_p->GetLowKey(), node_p->GetLowKeyPair().second);
-        
         // We must have reached a node whose low key is less than the
         // low key we used as the search key
         // Either it has a -Inf low key, or the low key could be compared
@@ -8749,11 +8747,13 @@ try_join_again:
         // then we know we should try again                       
         if(kv_p == ic_p->GetLeafNode()->REnd()) {
           // If there is no low key (-Inf) then that's it
-          if(IsBegin() == true) {
+          if(node_p->GetLowKeyPair().second == INVALID_NODE_ID) {
             return; 
           } else {
             low_key = ic_p->GetLeafNode()->GetLowKey(); 
           }
+        } else {
+          return; 
         }
       } // while(1)
       
