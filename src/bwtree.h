@@ -8596,7 +8596,7 @@ try_join_again:
     }
     
     /*
-     * MoveLeftByOne() - Moves to the left key if there is one
+     * MoveBackByOne() - Moves to the left key if there is one
      *
      * This function works by querying the tree using low key of the current 
      * node (which must be nonempty), keeping going left until we have seen
@@ -8607,7 +8607,7 @@ try_join_again:
      *   (1) There must be a valid IteratorContext
      *   (2) The current status must not be Begin() status
      */
-    void MoveLeftByOne() {
+    void MoveBackByOne() {
       assert(kv_p != nullptr);
       assert(ic_p != nullptr);
       assert(IsBegin() == false);
@@ -8622,6 +8622,8 @@ try_join_again:
         // Saves the low key such that even if we release the reference to
         // the IteratorContext object, it is still valid key
         const KeyType low_key = ic_p->GetLeafNode()->GetLowKey();
+        
+        
       } // while(1)
       
     }
