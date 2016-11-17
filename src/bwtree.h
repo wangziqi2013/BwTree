@@ -5029,18 +5029,72 @@ before_switch:
   }
 
   /*
-   * TraverseReadOptimized() - Read optimized tree traversal
+   * TraverseBI() - Read optimized traversal for backward iteration
    *
-   * This function differs from the standard version in a sense that it
-   * does not try to adjust node size and consolidate node - what it does
-   * is just navigating inner node and leaf node and return values for the
-   * given search key.
-   *
-   * However, there is one thing we must do, that is to jump to the left
-   * sibling of the current node when we see a remove delta. This is inevitable
-   * even if the thread is read only, since otherwise traversing down
-   * would become impossible.
+   * This function calls NavigateInnerNodeBI() to find the node with a smaller
+   * key than search key
    */
+  void TraverseBI(Context *context_p) {
+retry_traverse:
+    assert(context_p->abort_flag == false);
+    assert(context_p->current_level == -1);
+
+    NodeID start_node_id = root_id.load();
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+    LoadNodeID(start_node_id, context_p);
+    if(context_p->abort_flag == true) {
+      goto abort_traverse;
+    }
+
+    bwt_printf("Successfully loading root node ID for BI\n");
+
+    while(1) {
+      NodeID child_node_id = NavigateInnerNode(context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("Navigate Inner Node abort (BI). ABORT\n");
+        assert(child_node_id == INVALID_NODE_ID);
+        goto abort_traverse;
+      }
+
+      LoadNodeID(child_node_id, context_p);
+      if(context_p->abort_flag == true) {
+        bwt_printf("LoadNodeID aborted (BI). ABORT\n");
+        goto abort_traverse;
+      }
+
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+      if(snapshot_p->IsLeaf() == true) {
+        bwt_printf("The next node is a leaf (BI)\n");
+
+        // After reaching leaf level just traverse the sibling chain
+        // and stop before the search key
+        NavigateSiblingChainBI(context_p);
+        if(context_p->abort_flag == true) {
+          bwt_printf("NavigateSiblingChainBI() inside TraverseBI() aborts\n");
+
+          goto abort_traverse;
+        }
+    
+        return;
+      }
+    } //while(1)
+
+abort_traverse:
+    #ifdef BWTREE_DEBUG
+    assert(context_p->current_level >= 0);
+    context_p->current_level = -1;
+    context_p->abort_counter++;
+    #endif
+    
+    // This is used to identify root node
+    context_p->current_snapshot.node_id = INVALID_NODE_ID;
+    context_p->abort_flag = false;
+    goto retry_traverse;
+
+    assert(false);
+    return;
+  }
+  
   void TraverseReadOptimized(Context *context_p,
                              std::vector<ValueType> *value_list_p) {
 retry_traverse:
