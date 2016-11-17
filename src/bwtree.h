@@ -8553,7 +8553,22 @@ try_join_again:
       return temp;
     }
     
-    //inline ForardIterato
+    /*
+     * PostFix operator-- - Move the iterator backward by one element
+     */
+    inline ForardIterator operator--(int) {
+      if(IsBegin() == true) {
+        return *this;
+      }
+      
+      // Make a copy of the current one before advancing
+      // This will increase ref count temporarily, but it is always consistent
+      ForwardIterator temp = *this;
+
+      MoveBackByOne();
+
+      return temp;
+    }
 
     /*
      * LowerBound() - Load leaf page whose key >= start_key
