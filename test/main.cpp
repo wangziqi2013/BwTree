@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
 
     printf("Testing iterator...\n");
 
-    IteratorTest(t1);
+    ForwardIteratorTest(t1);
     PrintStat(t1);
 
     printf("Finised testing iterator\n");
