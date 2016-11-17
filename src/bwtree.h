@@ -4948,7 +4948,7 @@ abort_traverse:
 before_switch:
     switch(snapshot_p->node_p->GetType()) {
       case NodeType::InnerAbortType: {
-        bwt_printf("Observed Inner Abort Node; ABORT\n");
+        bwt_printf("Observed Inner Abort Node; Continue\n");
 
         snapshot_p->node_p = \
           (static_cast<const DeltaNode *>(snapshot_p->node_p))->child_node_p;
