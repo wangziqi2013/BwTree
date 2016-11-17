@@ -47,12 +47,11 @@ void ForwardIteratorTest(TreeType *t, int key_num) {
  * BackwardIteratorTest() - Tests backward iteration
  */
 void BackwardIteratorTest(TreeType *t, int key_num) {
-  auto it = t->Begin(key_num - 1);
-  auto it2 = t->Begin(key_num);
+  printf("========== Backward Iteration Test ==========\n");
   
-  // Since they all points to the same key == (key_num - 1)
-  assert(it == it2);
-  assert(it.IsEnd() == true);
+  auto it = t->Begin(key_num - 1);
+  
+  assert(it.IsEnd() == false);
   assert(it.IsBegin() == false);
   
   // This does not test Begin()
