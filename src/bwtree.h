@@ -3030,30 +3030,66 @@ abort_traverse:
     
     return it->second;
   }
-  
+
   /*
-   * NavigateInnerNodeForBI() - Traverses an InnerNode for backward iteration
+   * NavigateInnerNode() - Traverse down through the inner node delta chain
+   *                       and probably horizontally to right sibling nodes
    *
-   * This function serves the same purpose as NavigateInnerNode() in a sense
-   * that it also traverses down the delta chain of an InnerNode and returns 
-   * an next level NodeID for later traversal.
+   * This function does not have to always reach the base node in order to
+   * find the target since we know for inner nodes it is always single key
+   * single node mapping. Therefore there is neither need to keep a delta
+   * pointer list to recover full key-value mapping, nor returning a base node
+   * pointer to test low key and high key.
    *
-   * The difference between this function and NavigateInnerNode() is that
-   * this function will go left even if the search key is found
+   * However, if we have reached a base node, for debugging purposes we
+   * need to test current search key against low key and high key
+   *
+   * NOTE: This function returns a NodeID, instead of NodeSnapshot since
+   * its behaviour is not dependent on the actual content of the physical
+   * pointer associated with the node ID, so we could choose to fix the
+   * snapshot later
+   *
+   * NOTE: This function will jump to a sibling if the current node is on
+   * a half split state. If this happens, then the flag inside snapshot_p
+   * is set to true, and also the corresponding NodeId and BaseNode *
+   * will be updated to reflect the newest sibling ID and pointer.
+   * After returning of this function please remember to check the flag
+   * and update path history. (Such jump may happen multiple times, so
+   * do not make any assumption about how jump is performed)
    */
-  NodeID NavigateInnerNodeForBI(Context *context_p) {
-    NavigateSiblingChainBI(context_p);
+  NodeID NavigateInnerNode(Context *context_p) {
+    // This will go to the right sibling until we have seen
+    // a node whose range match the search key
+    NavigateSiblingChain(context_p);
+
+    // If navigating sibling chain aborts then abort here
     if(context_p->abort_flag == true) {
       return INVALID_NODE_ID;
     }
     
+    /////////////////////////////////////////////////////////////////
+    // Only after this point could we get snapshot and node_p
+    /////////////////////////////////////////////////////////////////
+    
+    // This search key will not be changed during navigation
     const KeyType &search_key = context_p->search_key;
+
+    // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
+
+    // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
 
+    // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
-    bwt_printf("Navigating inner node delta chain for BI...\n");
+    
+    // For read only workload this is always true since we do not need
+    // to remember the node ID for read - read is always stateless until
+    // it has reached a leaf node
+    //assert(snapshot_p->node_id != INVALID_NODE_ID);
+
+    bwt_printf("Navigating inner node delta chain...\n");
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3185,66 +3221,30 @@ abort_traverse:
     assert(false);
     return INVALID_NODE_ID;
   }
-
+  
   /*
-   * NavigateInnerNode() - Traverse down through the inner node delta chain
-   *                       and probably horizontally to right sibling nodes
+   * NavigateInnerNodeForBI() - Traverses an InnerNode for backward iteration
    *
-   * This function does not have to always reach the base node in order to
-   * find the target since we know for inner nodes it is always single key
-   * single node mapping. Therefore there is neither need to keep a delta
-   * pointer list to recover full key-value mapping, nor returning a base node
-   * pointer to test low key and high key.
+   * This function serves the same purpose as NavigateInnerNode() in a sense
+   * that it also traverses down the delta chain of an InnerNode and returns 
+   * an next level NodeID for later traversal.
    *
-   * However, if we have reached a base node, for debugging purposes we
-   * need to test current search key against low key and high key
-   *
-   * NOTE: This function returns a NodeID, instead of NodeSnapshot since
-   * its behaviour is not dependent on the actual content of the physical
-   * pointer associated with the node ID, so we could choose to fix the
-   * snapshot later
-   *
-   * NOTE: This function will jump to a sibling if the current node is on
-   * a half split state. If this happens, then the flag inside snapshot_p
-   * is set to true, and also the corresponding NodeId and BaseNode *
-   * will be updated to reflect the newest sibling ID and pointer.
-   * After returning of this function please remember to check the flag
-   * and update path history. (Such jump may happen multiple times, so
-   * do not make any assumption about how jump is performed)
+   * The difference between this function and NavigateInnerNode() is that
+   * this function will go left even if the search key is found
    */
-  NodeID NavigateInnerNode(Context *context_p) {
-    // This will go to the right sibling until we have seen
-    // a node whose range match the search key
-    NavigateSiblingChain(context_p);
-
-    // If navigating sibling chain aborts then abort here
+  NodeID NavigateInnerNodeForBI(Context *context_p) {
+    NavigateSiblingChainBI(context_p);
     if(context_p->abort_flag == true) {
       return INVALID_NODE_ID;
     }
     
-    /////////////////////////////////////////////////////////////////
-    // Only after this point could we get snapshot and node_p
-    /////////////////////////////////////////////////////////////////
-    
-    // This search key will not be changed during navigation
     const KeyType &search_key = context_p->search_key;
-
-    // First get the snapshot from context
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-
-    // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
 
-    // Make sure the structure is valid
     assert(snapshot_p->IsLeaf() == false);
     assert(snapshot_p->node_p != nullptr);
-    
-    // For read only workload this is always true since we do not need
-    // to remember the node ID for read - read is always stateless until
-    // it has reached a leaf node
-    //assert(snapshot_p->node_id != INVALID_NODE_ID);
-
-    bwt_printf("Navigating inner node delta chain...\n");
+    bwt_printf("Navigating inner node delta chain for BI...\n");
 
     while(1) {
       NodeType type = node_p->GetType();
