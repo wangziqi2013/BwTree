@@ -2845,7 +2845,8 @@ retry_traverse:
     }
 
     if(context_p->abort_flag == true) {
-      bwt_printf("NavigateLeafNode aborts. ABORT\n");
+      bwt_printf("NavigateLeafNode() or NavigateSiblingChain()"
+                 " aborts. ABORT\n");
 
       goto abort_traverse;
     }
