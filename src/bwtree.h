@@ -3129,6 +3129,10 @@ abort_traverse:
     int end_index = \
       ElasticNode<KeyNodeIDPair>::GetNodeHeader(&node_p->GetLowKeyPair())->GetItemCount();
 
+    assert(
+      ElasticNode<KeyNodeIDPair>::GetNodeHeader(
+        &node_p->GetLowKeyPair())->GetType() == NodeType::InnerType);
+
     while(1) {
       NodeType type = node_p->GetType();
 
