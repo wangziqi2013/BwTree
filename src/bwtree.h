@@ -3223,7 +3223,7 @@ abort_traverse:
             }
           }
           
-          // Use the inserted key to do a divide - all keys less than
+          // Use the deleted key to do a divide - all keys less than
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
           if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
@@ -6511,7 +6511,7 @@ before_switch:
         index_pair_p->first = std::distance(inner_node_p->Begin(), it);
         
         // the first element does not have a valid key
-        assert(index_pair_p->first != 0);
+        assert(index_pair_p->first >= 1);
 
         if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
