@@ -8390,15 +8390,15 @@ try_join_again:
     }
     
     /*
-     * IsRBegin() - Whether the pointer is one slot before the Begin() pointer
+     * IsREnd() - Whether the pointer is one slot before the Begin() pointer
      *
-     * We define RBegin() as follows:
+     * We define REnd() as follows:
      *   (1) kv_p and ic_p are both empty
      *   (2) Otherwise the low key ID is invalid node ID to indicate it is the
      *       first leaf page of the tree, and also the kv_p pointer should
-     *       point to the RBegin() of the underlying leaf page
+     *       point to the REnd() of the underlying leaf page
      */
-    bool IsRBegin() const {
+    bool IsREnd() const {
       if(ic_p == nullptr) {
         assert(kv_p == nullptr);
         
@@ -8546,7 +8546,7 @@ try_join_again:
       // This filters out:
       //   (1) Pointers being nullptr
       //   (2) Real begin iterator
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return *this; 
       }
       
@@ -8578,7 +8578,7 @@ try_join_again:
      * PostFix operator-- - Move the iterator backward by one element
      */
     inline ForwardIterator operator--(int) {
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return *this;
       }
       
@@ -8698,7 +8698,7 @@ try_join_again:
     void MoveBackByOne() {
       assert(kv_p != nullptr);
       assert(ic_p != nullptr);
-      assert(IsBegin() == false);
+      assert(IsREnd() == false);
       
       // This is an invalid state
       assert(kv_p != ic_p->GetLeafNode()->REnd());
@@ -8708,7 +8708,7 @@ try_join_again:
       
       kv_p--;
       // If there is no nodes to the left of the current node
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return; 
       } else if(kv_p != ic_p->GetLeafNode()->REnd()) {
         return; 
