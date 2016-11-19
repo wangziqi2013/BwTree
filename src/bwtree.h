@@ -5238,7 +5238,8 @@ abort_traverse:
    */
   inline bool PostInnerInsertNode(Context *context_p,
                                   const KeyNodeIDPair &insert_item,
-                                  const KeyNodeIDPair &next_item) {
+                                  const KeyNodeIDPair &next_item,
+                                  std::pair<int, bool> index_pair) {
     // We post on the parent node, after which we check for size and decide whether
     // to consolidate and/or split the node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
@@ -5251,7 +5252,8 @@ abort_traverse:
                                 parent_snapshot_p->node_p,
                                 insert_item,
                                 next_item,
-                                parent_snapshot_p->node_p);
+                                parent_snapshot_p->node_p,
+                                index_pair);
 
     // CAS Index Term Insert Delta onto the parent node
     bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
@@ -5301,7 +5303,8 @@ abort_traverse:
   inline bool PostInnerDeleteNode(Context *context_p,
                                   const KeyNodeIDPair &delete_item,
                                   const KeyNodeIDPair &prev_item,
-                                  const KeyNodeIDPair &next_item) {
+                                  const KeyNodeIDPair &next_item,
+                                  std::pair<int, bool> index_pair) {
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
 
     // Arguments are:
@@ -5313,7 +5316,8 @@ abort_traverse:
                                 delete_item,
                                 prev_item,
                                 next_item,
-                                parent_snapshot_p->node_p);
+                                parent_snapshot_p->node_p,
+                                index_pair);
 
     // Assume parent has not changed, and CAS the index term delete delta
     // If CAS failed then parent has changed, and we have no idea how it
@@ -5571,7 +5575,9 @@ before_switch:
                             // Note that for leaf node the low key is not complete
                             std::make_pair(snapshot_p->node_p->GetLowKey(), snapshot_p->node_id),
                             // Also note that high key pair is valid for both leaf and inner
-                            right_merge_p->GetHighKeyPair());
+                            right_merge_p->GetHighKeyPair(),
+                            // This is index information passed to the constructor
+                            index_pair);
 
         return;
       } // case Inner/LeafMergeNode
@@ -5733,12 +5739,17 @@ before_switch:
 
             return;
           }
+          
+          // This is used to hold index information for InnerInsertNode
+          std::pair<int, bool> index_pair;
 
           // Find the split item that we intend to insert in the parent node
           // This function returns a pointer to the item if found, or
           // nullptr if not found
           const KeyNodeIDPair *found_item_p = \
-            NavigateInnerNode(parent_snapshot_p, insert_item_p->first);
+            NavigateInnerNode(parent_snapshot_p, 
+                              insert_item_p->first, 
+                              &index_pair);
 
           // If the item has been found then we do not post
           // InnerInsertNode onto the parent
@@ -5777,7 +5788,10 @@ before_switch:
           // consolidating the parent node again and again
           // Note: Even if this function aborts, since we return immediately
           // so do not have to test abort_flag here
-          PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
+          PostInnerInsertNode(context_p, 
+                              *insert_item_p, 
+                              *next_item_p, 
+                              index_pair);
 
           return;
         } // if split root / else not split root
