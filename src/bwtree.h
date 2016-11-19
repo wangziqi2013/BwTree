@@ -6436,7 +6436,7 @@ before_switch:
 
         if(KeyCmpEqual(insert_item.first, search_key) == true) {
           // Same key, same index
-          index_pair_p->first = insert_item.index_pair.first;
+          index_pair_p->first = static_cast<const InnerInsertNode *>(node_p)->index_pair.first;
           
           return &insert_item;
         }
@@ -6451,7 +6451,7 @@ before_switch:
           static_cast<const InnerDeleteNode *>(node_p)->item;
 
         if(KeyCmpEqual(delete_item.first, search_key) == true) {
-          index_pair_p->first = delete_item.index_pair.first;
+          index_pair_p->first = static_cast<const InnerDeleteNode *>(node_p)->index_pair.first;
           
           return nullptr;
         }
