@@ -3118,7 +3118,7 @@ abort_traverse:
     // For read only workload this is always true since we do not need
     // to remember the node ID for read - read is always stateless until
     // it has reached a leaf node
-    //assert(snapshot_p->node_id != INVALID_NODE_ID);
+    assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
     
