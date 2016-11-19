@@ -3122,7 +3122,8 @@ abort_traverse:
 
     bwt_printf("Navigating inner node delta chain...\n");
     
-    int start_index = 0;
+    // Always start with the first element
+    int start_index = 1;
     // Use low key pair to find base node and then use base node pointer to find
     // total number of elements in the array. We search in this array later
     int end_index = \
