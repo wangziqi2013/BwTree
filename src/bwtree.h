@@ -3027,13 +3027,14 @@ abort_traverse:
                                  (inner_node_p->Begin() + end_index),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
-                               
+#ifdef BWTREE_DEBUG
     auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
                                inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
                                
     assert(it == it2);
+#endif
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -3188,9 +3189,9 @@ abort_traverse:
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
           if(KeyCmpGreaterEqual(search_key, insert_item.first) == true) {
-            start_index = insert_node_p->index_pair.first;
+            start_index = std::max(insert_node_p->index_pair.first, start_index);
           } else {
-            end_index = insert_node_p->index_pair.first;
+            end_index = std::min(insert_node_p->index_pair.first, end_index);
           } 
           
           node_p = insert_node_p->child_node_p;
@@ -3232,9 +3233,9 @@ abort_traverse:
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
           if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
-            start_index = delete_node_p->index_pair.first;
+            start_index = std::max(delete_node_p->index_pair.first, start_index);
           } else {
-            end_index = delete_node_p->index_pair.first;
+            end_index = std::min(delete_node_p->index_pair.first, end_index);
           } 
 
           node_p = delete_node_p->child_node_p;
