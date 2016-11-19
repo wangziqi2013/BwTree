@@ -3135,7 +3135,11 @@ abort_traverse:
 
           // We always use the ubound recorded inside the top of the
           // delta chain
-          NodeID target_id = LocateSeparatorByKey(search_key, inner_node_p);
+          NodeID target_id = \
+            LocateSeparatorByKey(search_key, 
+                                 inner_node_p, 
+                                 start_index, 
+                                 end_index);
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
                      target_id);
@@ -3166,7 +3170,16 @@ abort_traverse:
               return insert_item.second;
             }
           }
-
+          
+          // Use the inserted key to do a divide - all keys less than
+          // it is on the left of the index recorded in this InnerInsertNode
+          // Otherwise it is to the right of it
+          if(KeyCmpGreaterEqual(search_key, insert_item.first) == true) {
+            start_index = insert_node_p->index_pair.first;
+          } else {
+            end_index = insert_node_p->index_pair.first;
+          } 
+          
           node_p = insert_node_p->child_node_p;
 
           break;
@@ -3201,6 +3214,15 @@ abort_traverse:
               return prev_item.second;
             }
           }
+          
+          // Use the inserted key to do a divide - all keys less than
+          // it is on the left of the index recorded in this InnerInsertNode
+          // Otherwise it is to the right of it
+          if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
+            start_index = delete_node_p->index_pair.first;
+          } else {
+            end_index = delete_node_p->index_pair.first;
+          } 
 
           node_p = delete_node_p->child_node_p;
 
