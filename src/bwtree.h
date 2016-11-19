@@ -8388,6 +8388,15 @@ try_join_again:
       return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
              (ic_p->GetLeafNode()->Begin() == kv_p);
     }
+    
+    /*
+     * IsRBegin() - Whether the pointer is one slot before the Begin() pointer
+     *
+     * We define RBegin() as follows
+     */
+    bool IsRBegin() const {
+      
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
