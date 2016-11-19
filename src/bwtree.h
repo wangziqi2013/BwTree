@@ -8392,10 +8392,22 @@ try_join_again:
     /*
      * IsRBegin() - Whether the pointer is one slot before the Begin() pointer
      *
-     * We define RBegin() as follows
+     * We define RBegin() as follows:
+     *   (1) kv_p and ic_p are both empty
+     *   (2) Otherwise the low key ID is invalid node ID to indicate it is the
+     *       first leaf page of the tree, and also the kv_p pointer should
+     *       point to the RBegin() of the underlying leaf page
      */
     bool IsRBegin() const {
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
       
+      // Note that it is leaf node's Begin() - 1
+      return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
+             ((ic_p->GetLeafNode()->Begin() - 1) == kv_p);
     }
 
     /*
