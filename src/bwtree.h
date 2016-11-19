@@ -3118,6 +3118,12 @@ abort_traverse:
     //assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
+    
+    int start_index = 0;
+    // Use low key pair to find base node and then use base node pointer to find
+    // total number of elements in the array. We search in this array later
+    int end_index = \
+      ElasticNode<KeyNodeIDPair>::GetNodeHeader(&node_p->GetLowKeyPair())->GetItemCount();
 
     while(1) {
       NodeType type = node_p->GetType();
