@@ -1260,10 +1260,12 @@ class BwTree {
      */
     InnerInsertNode(const KeyNodeIDPair &p_insert_item,
                     const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
+                    const BaseNode *p_child_node_p,
+                    std::pair<int, bool> p_index_pair) :
       InnerDataNode{p_insert_item,
                     NodeType::InnerInsertType,
                     p_child_node_p,
+                    p_index_pair,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
@@ -1312,10 +1314,12 @@ class BwTree {
     InnerDeleteNode(const KeyNodeIDPair &p_delete_item,
                     const KeyNodeIDPair &p_prev_item,
                     const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
+                    const BaseNode *p_child_node_p,
+                    std::pair<int, bool> p_index_pair) :
       InnerDataNode{p_delete_item,
                     NodeType::InnerDeleteType,
                     p_child_node_p,
+                    p_index_pair,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
