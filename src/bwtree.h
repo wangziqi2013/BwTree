@@ -3012,13 +3012,16 @@ abort_traverse:
    * since even if we know the low key of the first element
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
-                                     const InnerNode *inner_node_p) {
+                                     const InnerNode *inner_node_p,
+                                     int start_index,
+                                     int end_index) {
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
+    assert(start_index >= 1);
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(inner_node_p->Begin() + 1,
-                               inner_node_p->End(),
+    auto it = std::upper_bound(inner_node_p->Begin() + start_index,
+                               inner_node_p->Begin() + end_index,
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
 
