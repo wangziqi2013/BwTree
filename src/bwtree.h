@@ -3258,6 +3258,11 @@ abort_traverse:
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(node_p);
 
+          // Since all indices are not invalidated, we do not know on which
+          // branch it is referring to
+          start_index = 1;
+          end_index = -1;
+
           const KeyType &merge_key = merge_node_p->delete_item.first;
 
           // Here since we will only take one branch, so
