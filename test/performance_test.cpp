@@ -277,10 +277,11 @@ void TestCuckooHashTableInsertReadPerformance(int key_num) {
  *
  * 1. Sequential insert (key, key)
  * 2. Sequential read
- * 3. Sequential iterate
- * 4. Reverse order insert (key, key + 1)
- * 5. Reverse order read
- * 6. Remove all values
+ * 3. Forward iterate
+ * 4. Backward iterate
+ * 5. Reverse order insert (key, key + 1)
+ * 6. Reverse order read
+ * 7. Remove all values
  */
 void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
   std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -320,8 +321,9 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
             << " million read/sec" << "\n";
 
   ///////////////////////////////////////////////////////////////////
-  // Test Iterator (single value)
+  // Test Iterator (forward, single value)
   ///////////////////////////////////////////////////////////////////
+  
   start = std::chrono::system_clock::now();
   {
     for(int j = 0;j < iter;j++) {
@@ -332,16 +334,52 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num) {
         v.clear();
         it++;
       }
+      
+      it--;
+      if(it->first != key_num - 1) {
+        throw "Error: Forward iterating does not reach the end";
+      } 
     }
 
     end = std::chrono::system_clock::now();
 
     elapsed_seconds = end - start;
     std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
-              << " million iteration/sec" << "\n";
+              << " million forward iteration/sec" << "\n";
   }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Test Iterator (backward, single value)
+  ///////////////////////////////////////////////////////////////////
+  
+  start = std::chrono::system_clock::now();
+  {
+    for(int j = 0;j < iter;j++) {
+      auto it = t->Begin(key_num - 1);
+      while(it.IsREnd() == false) {
+        v.push_back(it->second);
 
-  // Insert again
+        v.clear();
+        it--;
+      }
+      
+      it++;
+      if(it->first != 0) {
+        throw "Error: Forward iterating does not reach the beginning";
+      } 
+    }
+    
+    end = std::chrono::system_clock::now();
+
+    elapsed_seconds = end - start;
+    std::cout << "BwTree: " << (iter * key_num / (1024.0 * 1024.0)) / elapsed_seconds.count()
+              << " million backward iteration/sec" << "\n";
+  }
+  
+  ///////////////////////////////////////////////////////////////////
+  // Insert 2nd value
+  ///////////////////////////////////////////////////////////////////
+  
   start = std::chrono::system_clock::now();
 
   for(int i = key_num - 1;i >= 0;i--) {
