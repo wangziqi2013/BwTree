@@ -3018,12 +3018,22 @@ abort_traverse:
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
     assert(start_index >= 1);
+    assert(end_index <= (inner_node_p->End() - inner_node_p->Begin()));
 
     // Hopefully std::upper_bound would use binary search here
     auto it = std::upper_bound(inner_node_p->Begin() + start_index,
-                               inner_node_p->Begin() + end_index,
+                               (end_index == -1) ? 
+                                 (inner_node_p->End()) : 
+                                 (inner_node_p->Begin() + end_index),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
+                               
+    auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
+                               inner_node_p->End(),
+                               std::make_pair(search_key, INVALID_NODE_ID),
+                               key_node_id_pair_cmp_obj) - 1;
+                               
+    assert(it == it2);
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -3126,12 +3136,7 @@ abort_traverse:
     int start_index = 1;
     // Use low key pair to find base node and then use base node pointer to find
     // total number of elements in the array. We search in this array later
-    int end_index = \
-      ElasticNode<KeyNodeIDPair>::GetNodeHeader(&node_p->GetLowKeyPair())->GetItemCount();
-
-    assert(
-      ElasticNode<KeyNodeIDPair>::GetNodeHeader(
-        &node_p->GetLowKeyPair())->GetType() == NodeType::InnerType);
+    int end_index = -1;
 
     while(1) {
       NodeType type = node_p->GetType();
