@@ -5542,9 +5542,14 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
+        // Use this to record the index of the search key
+        std::pair<int, bool> index_pair;
+
         // Find the deleted item
         const KeyNodeIDPair *found_pair_p = \
-          NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
+          NavigateInnerNode(parent_snapshot_p, 
+                            delete_item_p->first, 
+                            &index_pair);
           
         // If the item is found then next we post InnerDeleteNode
         if(found_pair_p != nullptr) {
@@ -6392,9 +6397,16 @@ before_switch:
    *
    * Note: This function does not abort. Any extra checking (e.g. whether
    * NodeIDs match, whether key is inside range) should be done by the caller
+   *
+   * Note 2: index_pair_p always reflects the relative position of the search
+   * key inside this InnerNode, no matter nullptr or non-null pointer is 
+   * returned, the integer inside the pair is always the index for all keys
+   * >= the search key. Currently the secong component is not set and not
+   * used
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
-                                         const KeyType &search_key) {
+                                         const KeyType &search_key,
+                                         std::pair<int, bool> *index_pair_p) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
@@ -6409,6 +6421,9 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(insert_item.first, search_key) == true) {
+          // Same key, same index
+          index_pair_p->first = insert_item.index_pair.first;
+          
           return &insert_item;
         }
 
@@ -6422,6 +6437,8 @@ before_switch:
           static_cast<const InnerDeleteNode *>(node_p)->item;
 
         if(KeyCmpEqual(delete_item.first, search_key) == true) {
+          index_pair_p->first = delete_item.index_pair.first;
+          
           return nullptr;
         }
 
@@ -6438,7 +6455,14 @@ before_switch:
                            inner_node_p->End(),
                            std::make_pair(search_key, INVALID_NODE_ID),
                            key_node_id_pair_cmp_obj);
-                                   
+
+        // Compute the index of the index that we found the lower bound of
+        // the key, and the beginning of the inner node
+        index_pair_p->first = std::distance(inner_node_p->Begin(), it);
+        
+        // the first element does not have a valid key
+        assert(index_pair_p->first != 0);
+
         if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
           // If the key does not exist then return nullptr
