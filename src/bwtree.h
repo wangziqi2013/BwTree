@@ -1309,11 +1309,11 @@ class BwTree {
                     const KeyNodeIDPair &p_prev_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p,
-                    std::pair<int, bool> p_index_pair) :
+                    const KeyNodeIDPair *p_location) :
       InnerDataNode{p_delete_item,
                     NodeType::InnerDeleteType,
                     p_child_node_p,
-                    p_index_pair,
+                    p_location,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
