@@ -3007,18 +3007,16 @@ abort_traverse:
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
                                      const InnerNode *inner_node_p,
-                                     int start_index,
-                                     int end_index) {
+                                     const KeyNodeIDPair *start_p,
+                                     const KeyNodeIDPair *end_p) {
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
     assert(start_index >= 1);
     assert(end_index <= (inner_node_p->End() - inner_node_p->Begin()));
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(inner_node_p->Begin() + start_index,
-                               (end_index == -1) ? 
-                                 (inner_node_p->End()) : 
-                                 (inner_node_p->Begin() + end_index),
+    auto it = std::upper_bound(start_p,
+                               end_p,
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
 #ifdef BWTREE_DEBUG
