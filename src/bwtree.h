@@ -6456,7 +6456,7 @@ before_switch:
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
                                          const KeyType &search_key,
-                                         std::pair<int, bool> *index_pair_p) {
+                                         const KeyNodeIDPair **location) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
@@ -6472,7 +6472,7 @@ before_switch:
 
         if(KeyCmpEqual(insert_item.first, search_key) == true) {
           // Same key, same index
-          index_pair_p->first = static_cast<const InnerInsertNode *>(node_p)->index_pair.first;
+          *location = static_cast<const InnerInsertNode *>(node_p)->location;
           
           return &insert_item;
         }
@@ -6487,7 +6487,7 @@ before_switch:
           static_cast<const InnerDeleteNode *>(node_p)->item;
 
         if(KeyCmpEqual(delete_item.first, search_key) == true) {
-          index_pair_p->first = static_cast<const InnerDeleteNode *>(node_p)->index_pair.first;
+          *location = static_cast<const InnerDeleteNode *>(node_p)->location;
           
           return nullptr;
         }
@@ -6506,9 +6506,8 @@ before_switch:
                            std::make_pair(search_key, INVALID_NODE_ID),
                            key_node_id_pair_cmp_obj);
 
-        // Compute the index of the index that we found the lower bound of
-        // the key, and the beginning of the inner node
-        index_pair_p->first = std::distance(inner_node_p->Begin(), it);
+        // Just give the location information by assigning to location
+        *location = it;
         
         // the first element does not have a valid key
         assert(index_pair_p->first >= 1);
