@@ -3128,10 +3128,12 @@ abort_traverse:
     bwt_printf("Navigating inner node delta chain...\n");
     
     // Always start with the first element
-    int start_index = 1;
+    const KeyNodeIDPair *start_p = \
+      InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->Begin() + 1;
     // Use low key pair to find base node and then use base node pointer to find
     // total number of elements in the array. We search in this array later
-    int end_index = -1;
+    const KeyNodeIDPair *end_p = \
+      InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->End();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3146,8 +3148,8 @@ abort_traverse:
           NodeID target_id = \
             LocateSeparatorByKey(search_key, 
                                  inner_node_p, 
-                                 start_index, 
-                                 end_index);
+                                 start_p, 
+                                 end_p);
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
                      target_id);
@@ -3174,13 +3176,11 @@ abort_traverse:
               return insert_item.second;
             }
             
-            start_index = std::max(start_index, insert_node_p->index_pair.first);
+            start_p = std::max(start_p, insert_node_p->location);
           } else {
-            end_index = std::min(end_index, insert_node_p->index_pair.first);
+            end_p = std::min(end_p, location);
           }
           
-          //node_p = insert_node_p->child_node_p;
-
           break;
         } // InnerInsertType
         case NodeType::InnerDeleteType: {
@@ -3218,36 +3218,19 @@ abort_traverse:
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
           if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
-            start_index = std::max(delete_node_p->index_pair.first, start_index);
+            start_p = std::max(delete_node_p->location, start_p);
           } else {
-            end_index = std::min(delete_node_p->index_pair.first, end_index);
+            end_p = std::min(delete_node_p->location, end_p);
           } 
-
-          //node_p = delete_node_p->child_node_p;
 
           break;
         } // InnerDeleteType
         case NodeType::InnerSplitType: {
-          const InnerSplitNode *split_node_p = \
-            static_cast<const InnerSplitNode *>(node_p);
-
-          // Since we have already finished jumping to the right
-          // sibling on the top level, it is unnecessary to
-          // jump when seeing an InnerSplitNode
-          // (The split key information has been observed on top
-          // node's high key)
-          //node_p = split_node_p->child_node_p;
-
           break;
         } // case InnerSplitType
         case NodeType::InnerMergeType: {
           const InnerMergeNode *merge_node_p = \
             static_cast<const InnerMergeNode *>(node_p);
-
-          // Since all indices are not invalidated, we do not know on which
-          // branch it is referring to
-          start_index = 1;
-          end_index = -1;
 
           const KeyType &merge_key = merge_node_p->delete_item.first;
 
@@ -3259,16 +3242,25 @@ abort_traverse:
                        snapshot_p->node_id);
 
             node_p = merge_node_p->right_merge_p;
-            
-            continue;
           } else {
             bwt_printf("Take merge left branch (ID = %lu)\n",
                        snapshot_p->node_id);
 
-            //node_p = merge_node_p->child_node_p;
+            node_p = merge_node_p->child_node_p;
           }
+          
+          // Since all indices are not invalidated, we do not know on which
+          // branch it is referring to
+          // After this point node_p has been updated as the newest branch we 
+          // are travelling on
+          const KeyNodeIDPair *start_p = \
+            InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->Begin() + 1;
+          const KeyNodeIDPair *end_p = \
+            InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->End();
 
-          break;
+          // Note that we should jump to the beginning of the loop without 
+          // going to child node any further
+          continue;
         } // InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown node type = %d",
