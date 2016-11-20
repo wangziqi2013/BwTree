@@ -283,36 +283,30 @@ class BwTree {
    * enum class NodeType - Bw-Tree node type
    */
   enum class NodeType : short {
-    LeafStart = 0,
-    // Data page type
-    LeafType = 1,
-
-    // Only valid for leaf
-    LeafInsertType,
-    LeafSplitType,
-    LeafDeleteType,
-    LeafRemoveType,
-    LeafMergeType,
-
-    // This serves as sentinel
-    LeafEnd,
-
     // We separate leaf and inner into two different intervals
     // to make it possible for compiler to optimize
 
-    InnerStart,
-
-    InnerType,
+    InnerType = 0,
 
     // Only valid for inner
-    InnerInsertType,
-    InnerSplitType,
-    InnerDeleteType,
-    InnerRemoveType,
-    InnerMergeType,
-    InnerAbortType, // Unconditional abort
+    InnerInsertType = 1,
+    InnerDeleteType = 2,
+    InnerSplitType = 3,
+    InnerRemoveType = 4,
+    InnerMergeType = 5,
+    InnerAbortType = 6, // Unconditional abort
+    
+    LeafStart = 7,
+    
+    // Data page type
+    LeafType = 7,
 
-    InnerEnd,
+    // Only valid for leaf
+    LeafInsertType = 8,
+    LeafSplitType = 9,
+    LeafDeleteType = 10,
+    LeafRemoveType = 11,
+    LeafMergeType = 12,
   };
 
   ///////////////////////////////////////////////////////////////////
@@ -857,7 +851,7 @@ class BwTree {
      *
      */
     inline bool IsOnLeafDeltaChain() const {
-      return GetType() < NodeType::LeafEnd;
+      return GetType() >= NodeType::LeafStart;
     }
 
     /*
@@ -3105,7 +3099,7 @@ abort_traverse:
     NavigateSiblingChain(context_p);
 
     // If navigating sibling chain aborts then abort here
-    if(context_p->abort_flag == true) {
+    if(unlikely(context_p->abort_flag == true)) {
       return INVALID_NODE_ID;
     }
     
@@ -3160,11 +3154,6 @@ abort_traverse:
 
           return target_id;
         } // case InnerType
-        case NodeType::InnerRemoveType: {
-          bwt_printf("ERROR: InnerRemoveNode not allowed\n");
-
-          assert(false);
-        } // case InnerRemoveType
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
@@ -3185,16 +3174,26 @@ abort_traverse:
             }
           }
           
+          start_index = \
+            ((insert_node_p->index_pair.first > start_index) && \
+            (KeyCmpGreaterEqual(search_key, insert_item.first))) ? \
+              insert_node_p->index_pair.first : start_index;
+          
+          end_index = \
+            ((insert_node_p->index_pair.first < end_index) && \
+            (KeyCmpLess(search_key, insert_item.first))) ? \
+              insert_node_p->index_pair.first : end_index;
+              
           // Use the inserted key to do a divide - all keys less than
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
-          if(KeyCmpGreaterEqual(search_key, insert_item.first) == true) {
-            start_index = std::max(insert_node_p->index_pair.first, start_index);
-          } else {
-            end_index = std::min(insert_node_p->index_pair.first, end_index);
-          } 
+          //if( == true) {
+          //  start_index = std::max(insert_node_p->index_pair.first, start_index);
+          //} else {
+          //  end_index = std::min(insert_node_p->index_pair.first, end_index);
+          //} 
           
-          node_p = insert_node_p->child_node_p;
+          //node_p = insert_node_p->child_node_p;
 
           break;
         } // InnerInsertType
@@ -3238,7 +3237,7 @@ abort_traverse:
             end_index = std::min(delete_node_p->index_pair.first, end_index);
           } 
 
-          node_p = delete_node_p->child_node_p;
+          //node_p = delete_node_p->child_node_p;
 
           break;
         } // InnerDeleteType
@@ -3251,7 +3250,7 @@ abort_traverse:
           // jump when seeing an InnerSplitNode
           // (The split key information has been observed on top
           // node's high key)
-          node_p = split_node_p->child_node_p;
+          //node_p = split_node_p->child_node_p;
 
           break;
         } // case InnerSplitType
@@ -3274,11 +3273,13 @@ abort_traverse:
                        snapshot_p->node_id);
 
             node_p = merge_node_p->right_merge_p;
+            
+            continue;
           } else {
             bwt_printf("Take merge left branch (ID = %lu)\n",
                        snapshot_p->node_id);
 
-            node_p = merge_node_p->child_node_p;
+            //node_p = merge_node_p->child_node_p;
           }
 
           break;
@@ -3290,6 +3291,8 @@ abort_traverse:
           assert(false);
         }
       } // switch type
+      
+      node_p = static_cast<const DeltaNode *>(node_p)->child_node_p; 
     } // while 1
 
     // Should not reach here
