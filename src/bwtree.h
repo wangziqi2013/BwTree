@@ -1208,17 +1208,17 @@ class BwTree {
    public:
     KeyNodeIDPair item;
     
-    // The second element is currently not being used
-    // The first element records an index, if the current search key >= item
-    // inside this node, then we could start searching at this index
-    // otherwise if it is smaller then we could search on index smaller than 
-    // this one (i.e. use it as search end indicator)
-    std::pair<int, bool> index_pair;
+    // This pointer points to the underlying InnerNode to indicate if
+    // the search key >= key recorded in this delta node then the binary
+    // search could start at this pointer's location; Similarly, if the 
+    // search key is smaller than this key then binary search could end before
+    // this pointer
+    KeyNodeIDPair *location;
 
     InnerDataNode(const KeyNodeIDPair &p_item,
                   NodeType p_type,
                   const BaseNode *p_child_node_p,
-                  std::pair<int, bool> p_index_pair,
+                  KeyNodeIDPair p_location,
                   const KeyNodeIDPair *p_low_key_p,
                   const KeyNodeIDPair *p_high_key_p,
                   int p_depth,
@@ -1230,7 +1230,7 @@ class BwTree {
                 p_depth,
                 p_item_count},
       item{p_item},
-      index_pair{p_index_pair}
+      location{p_location}
     {}
   }; 
 
