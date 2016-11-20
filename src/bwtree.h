@@ -5340,7 +5340,7 @@ abort_traverse:
                                   const KeyNodeIDPair &delete_item,
                                   const KeyNodeIDPair &prev_item,
                                   const KeyNodeIDPair &next_item,
-                                  std::pair<int, bool> index_pair) {
+                                  const KeyNodeIDPair *location) {
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
 
     // Arguments are:
@@ -5353,7 +5353,7 @@ abort_traverse:
                                 prev_item,
                                 next_item,
                                 parent_snapshot_p->node_p,
-                                index_pair);
+                                location);
 
     // Assume parent has not changed, and CAS the index term delete delta
     // If CAS failed then parent has changed, and we have no idea how it
@@ -5582,14 +5582,13 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
-        // Use this to record the index of the search key
-        std::pair<int, bool> index_pair;
+        KeyNodeIDPair *location;
 
         // Find the deleted item
         const KeyNodeIDPair *found_pair_p = \
           NavigateInnerNode(parent_snapshot_p, 
                             delete_item_p->first, 
-                            &index_pair);
+                            &location);
           
         // If the item is found then next we post InnerDeleteNode
         if(found_pair_p != nullptr) {
@@ -5612,8 +5611,8 @@ before_switch:
                             std::make_pair(snapshot_p->node_p->GetLowKey(), snapshot_p->node_id),
                             // Also note that high key pair is valid for both leaf and inner
                             right_merge_p->GetHighKeyPair(),
-                            // This is index information passed to the constructor
-                            index_pair);
+                            // This is location on InnerNode
+                            location);
 
         return;
       } // case Inner/LeafMergeNode
