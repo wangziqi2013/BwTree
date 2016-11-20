@@ -3011,8 +3011,6 @@ abort_traverse:
                                      const KeyNodeIDPair *end_p) {
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
-    assert(start_index >= 1);
-    assert(end_index <= (inner_node_p->End() - inner_node_p->Begin()));
 
     // Hopefully std::upper_bound would use binary search here
     auto it = std::upper_bound(start_p,
@@ -3127,11 +3125,11 @@ abort_traverse:
     
     // Always start with the first element
     const KeyNodeIDPair *start_p = \
-      InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->Begin() + 1;
+      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
     // Use low key pair to find base node and then use base node pointer to find
     // total number of elements in the array. We search in this array later
     const KeyNodeIDPair *end_p = \
-      InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->End();
+      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3176,7 +3174,7 @@ abort_traverse:
             
             start_p = std::max(start_p, insert_node_p->location);
           } else {
-            end_p = std::min(end_p, location);
+            end_p = std::min(end_p, insert_node_p->location);
           }
           
           break;
@@ -3251,10 +3249,10 @@ abort_traverse:
           // branch it is referring to
           // After this point node_p has been updated as the newest branch we 
           // are travelling on
-          const KeyNodeIDPair *start_p = \
-            InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->Begin() + 1;
-          const KeyNodeIDPair *end_p = \
-            InnerNode::GetNodeHeader(node_p->GetLowKeyPair())->End();
+          start_p = \
+            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
+          end_p = \
+            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
 
           // Note that we should jump to the beginning of the loop without 
           // going to child node any further
@@ -6497,9 +6495,6 @@ before_switch:
 
         // Just give the location information by assigning to location
         *location = it;
-        
-        // the first element does not have a valid key
-        assert(index_pair_p->first >= 1);
 
         if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
