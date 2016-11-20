@@ -1213,12 +1213,12 @@ class BwTree {
     // search could start at this pointer's location; Similarly, if the 
     // search key is smaller than this key then binary search could end before
     // this pointer
-    KeyNodeIDPair *location;
+    const KeyNodeIDPair *location;
 
     InnerDataNode(const KeyNodeIDPair &p_item,
                   NodeType p_type,
                   const BaseNode *p_child_node_p,
-                  KeyNodeIDPair p_location,
+                  const KeyNodeIDPair *p_location,
                   const KeyNodeIDPair *p_low_key_p,
                   const KeyNodeIDPair *p_high_key_p,
                   int p_depth,
@@ -1255,11 +1255,11 @@ class BwTree {
     InnerInsertNode(const KeyNodeIDPair &p_insert_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p,
-                    std::pair<int, bool> p_index_pair) :
+                    const KeyNodeIDPair *p_location) :
       InnerDataNode{p_insert_item,
                     NodeType::InnerInsertType,
                     p_child_node_p,
-                    p_index_pair,
+                    p_location,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
