@@ -5275,7 +5275,7 @@ abort_traverse:
   inline bool PostInnerInsertNode(Context *context_p,
                                   const KeyNodeIDPair &insert_item,
                                   const KeyNodeIDPair &next_item,
-                                  std::pair<int, bool> index_pair) {
+                                  const KeyNodeIDPair *location) {
     // We post on the parent node, after which we check for size and decide whether
     // to consolidate and/or split the node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
@@ -5289,7 +5289,7 @@ abort_traverse:
                                 insert_item,
                                 next_item,
                                 parent_snapshot_p->node_p,
-                                index_pair);
+                                location);
 
     // CAS Index Term Insert Delta onto the parent node
     bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
@@ -5582,7 +5582,7 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
-        KeyNodeIDPair *location;
+        const KeyNodeIDPair *location;
 
         // Find the deleted item
         const KeyNodeIDPair *found_pair_p = \
@@ -5776,7 +5776,7 @@ before_switch:
           }
           
           // This is used to hold index information for InnerInsertNode
-          std::pair<int, bool> index_pair;
+          const KeyNodeIDPair *location;
 
           // Find the split item that we intend to insert in the parent node
           // This function returns a pointer to the item if found, or
@@ -5784,7 +5784,7 @@ before_switch:
           const KeyNodeIDPair *found_item_p = \
             NavigateInnerNode(parent_snapshot_p, 
                               insert_item_p->first, 
-                              &index_pair);
+                              &location);
 
           // If the item has been found then we do not post
           // InnerInsertNode onto the parent
@@ -5826,7 +5826,7 @@ before_switch:
           PostInnerInsertNode(context_p, 
                               *insert_item_p, 
                               *next_item_p, 
-                              index_pair);
+                              location);
 
           return;
         } // if split root / else not split root
