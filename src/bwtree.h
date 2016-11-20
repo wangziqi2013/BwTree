@@ -3161,37 +3161,23 @@ abort_traverse:
           const KeyNodeIDPair &insert_item = insert_node_p->item;
           const KeyNodeIDPair &next_item = insert_node_p->next_item;
 
-          // If the next item has +Inf as its key (checking that using
-          // next_node_id), or it > search key
-          if((next_item.second == INVALID_NODE_ID) ||
-             (KeyCmpLess(search_key, next_item.first))) {
-            // If search key >= insert key
-            if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
+          // This comparison servers two purposes:
+          //   1. Check whether we could use it to do a quick jump
+          //   2. Update start_index or end_index depending on the 
+          //      result of comparison
+          if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
+            if((next_item.second == INVALID_NODE_ID) ||
+               (KeyCmpLess(search_key, next_item.first))) {
               bwt_printf("Find target ID = %lu in insert delta\n",
                          insert_item.second);
 
               return insert_item.second;
             }
+            
+            start_index = std::max(start_index, insert_node_p->index_pair.first);
+          } else {
+            end_index = std::min(end_index, insert_node_p->index_pair.first);
           }
-          
-          start_index = \
-            ((insert_node_p->index_pair.first > start_index) && \
-            (KeyCmpGreaterEqual(search_key, insert_item.first))) ? \
-              insert_node_p->index_pair.first : start_index;
-          
-          end_index = \
-            ((insert_node_p->index_pair.first < end_index) && \
-            (KeyCmpLess(search_key, insert_item.first))) ? \
-              insert_node_p->index_pair.first : end_index;
-              
-          // Use the inserted key to do a divide - all keys less than
-          // it is on the left of the index recorded in this InnerInsertNode
-          // Otherwise it is to the right of it
-          //if( == true) {
-          //  start_index = std::max(insert_node_p->index_pair.first, start_index);
-          //} else {
-          //  end_index = std::min(insert_node_p->index_pair.first, end_index);
-          //} 
           
           //node_p = insert_node_p->child_node_p;
 
