@@ -6447,6 +6447,10 @@ before_switch:
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
+     // This is used to recognize the leftmost branch if there is
+     // a merge node
+     const KeyNodeIDPair &low_key_pair = node_p->GetLowKeyPair();
+    
     // The caller must make sure this is true
     assert(node_p->GetNextNodeID() == INVALID_NODE_ID ||
            KeyCmpLess(search_key, node_p->GetHighKey()));
@@ -6487,8 +6491,22 @@ before_switch:
       case NodeType::InnerType: {
         const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
 
+        // DO NOT REMOVE THIS!!!!!!
+        // Unlike a NavigateInnerNode(Context *) which searches for child
+        // node ID, this function needs to cover all possible separators
+        // in the merged InnerNode (right branch)
+        const KeyNodeIDPair *start_it = inner_node_p->Begin();
+
+        // If we are on the leftmost branch of the inner node delta chain
+        // if there is a merge delta, then we should start searching from
+        // the second element. Otherwise always start search from the first
+        // element
+        if(low_key_pair.second == inner_node_p->At(0).second) {
+          start_it++;
+        }
+
         const KeyNodeIDPair *it = \
-          std::lower_bound(inner_node_p->Begin() + 1,
+          std::lower_bound(start_it,
                            inner_node_p->End(),
                            std::make_pair(search_key, INVALID_NODE_ID),
                            key_node_id_pair_cmp_obj);
