@@ -1,5 +1,5 @@
 
-SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp dcas_test.cpp partial_order_sort.cpp copy_backward.cpp new_zero_test.cpp
+SOURCE = unordered_set_malloc.cpp vector_capacity.cpp bloom_filter.cpp std_hash_speed.cpp dcas_test.cpp partial_order_sort.cpp copy_backward.cpp new_zero_test.cpp thread_local_test.cpp
 CXXFLAG = -O3 --std=gnu++11 -g -Wall
 
 all: $(SOURCE)
@@ -14,6 +14,7 @@ all: $(SOURCE)
 	g++ copy_backward.cpp -o ./bin/copy_backward.cpp $(CXXFLAG)
 	g++ offsetof_test.cpp -o ./bin/offset_of $(CXXFLAG)
 	g++ new_zero_test.cpp -o ./bin/new_zero_test $(CXXFLAG)
+	g++ thread_local_test.cpp -o ./bin/thread_local_test $(CXXFLAG)
 
 clean:
 	rm -f ./bin/*
