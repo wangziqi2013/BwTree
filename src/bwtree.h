@@ -3018,12 +3018,12 @@ abort_traverse:
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
 #ifdef BWTREE_DEBUG
-    auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
-                               inner_node_p->End(),
-                               std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj) - 1;
+    //auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
+    //                           inner_node_p->End(),
+    //                           std::make_pair(search_key, INVALID_NODE_ID),
+    //                           key_node_id_pair_cmp_obj) - 1;
                                
-    assert(it == it2);
+    //assert(it == it2);
 #endif
 
     // Since upper_bound returns the first element > given key
