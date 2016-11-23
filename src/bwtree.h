@@ -283,36 +283,30 @@ class BwTree {
    * enum class NodeType - Bw-Tree node type
    */
   enum class NodeType : short {
-    LeafStart = 0,
-    // Data page type
-    LeafType = 1,
-
-    // Only valid for leaf
-    LeafInsertType,
-    LeafSplitType,
-    LeafDeleteType,
-    LeafRemoveType,
-    LeafMergeType,
-
-    // This serves as sentinel
-    LeafEnd,
-
     // We separate leaf and inner into two different intervals
     // to make it possible for compiler to optimize
 
-    InnerStart,
-
-    InnerType,
+    InnerType = 0,
 
     // Only valid for inner
-    InnerInsertType,
-    InnerSplitType,
-    InnerDeleteType,
-    InnerRemoveType,
-    InnerMergeType,
-    InnerAbortType, // Unconditional abort
+    InnerInsertType = 1,
+    InnerDeleteType = 2,
+    InnerSplitType = 3,
+    InnerRemoveType = 4,
+    InnerMergeType = 5,
+    InnerAbortType = 6, // Unconditional abort
+    
+    LeafStart = 7,
+    
+    // Data page type
+    LeafType = 7,
 
-    InnerEnd,
+    // Only valid for leaf
+    LeafInsertType = 8,
+    LeafSplitType = 9,
+    LeafDeleteType = 10,
+    LeafRemoveType = 11,
+    LeafMergeType = 12,
   };
 
   ///////////////////////////////////////////////////////////////////
@@ -857,7 +851,7 @@ class BwTree {
      *
      */
     inline bool IsOnLeafDeltaChain() const {
-      return GetType() < NodeType::LeafEnd;
+      return GetType() >= NodeType::LeafStart;
     }
 
     /*
@@ -1213,10 +1207,18 @@ class BwTree {
   class InnerDataNode : public DeltaNode {
    public:
     KeyNodeIDPair item;
+    
+    // This pointer points to the underlying InnerNode to indicate if
+    // the search key >= key recorded in this delta node then the binary
+    // search could start at this pointer's location; Similarly, if the 
+    // search key is smaller than this key then binary search could end before
+    // this pointer
+    const KeyNodeIDPair *location;
 
     InnerDataNode(const KeyNodeIDPair &p_item,
                   NodeType p_type,
                   const BaseNode *p_child_node_p,
+                  const KeyNodeIDPair *p_location,
                   const KeyNodeIDPair *p_low_key_p,
                   const KeyNodeIDPair *p_high_key_p,
                   int p_depth,
@@ -1227,7 +1229,8 @@ class BwTree {
                 p_high_key_p,
                 p_depth,
                 p_item_count},
-      item{p_item}
+      item{p_item},
+      location{p_location}
     {}
   }; 
 
@@ -1251,10 +1254,12 @@ class BwTree {
      */
     InnerInsertNode(const KeyNodeIDPair &p_insert_item,
                     const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
+                    const BaseNode *p_child_node_p,
+                    const KeyNodeIDPair *p_location) :
       InnerDataNode{p_insert_item,
                     NodeType::InnerInsertType,
                     p_child_node_p,
+                    p_location,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
@@ -1303,10 +1308,12 @@ class BwTree {
     InnerDeleteNode(const KeyNodeIDPair &p_delete_item,
                     const KeyNodeIDPair &p_prev_item,
                     const KeyNodeIDPair &p_next_item,
-                    const BaseNode *p_child_node_p) :
+                    const BaseNode *p_child_node_p,
+                    const KeyNodeIDPair *p_location) :
       InnerDataNode{p_delete_item,
                     NodeType::InnerDeleteType,
                     p_child_node_p,
+                    p_location,
                     &p_child_node_p->GetLowKeyPair(),
                     &p_child_node_p->GetHighKeyPair(),
                     p_child_node_p->GetDepth() + 1,
@@ -2999,15 +3006,25 @@ abort_traverse:
    * since even if we know the low key of the first element
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
-                                     const InnerNode *inner_node_p) {
+                                     const InnerNode *inner_node_p,
+                                     const KeyNodeIDPair *start_p,
+                                     const KeyNodeIDPair *end_p) {
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(inner_node_p->Begin() + 1,
-                               inner_node_p->End(),
+    auto it = std::upper_bound(start_p,
+                               end_p,
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) - 1;
+#ifdef BWTREE_DEBUG
+    //auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
+    //                           inner_node_p->End(),
+    //                           std::make_pair(search_key, INVALID_NODE_ID),
+    //                           key_node_id_pair_cmp_obj) - 1;
+                               
+    //assert(it == it2);
+#endif
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
@@ -3078,7 +3095,7 @@ abort_traverse:
     NavigateSiblingChain(context_p);
 
     // If navigating sibling chain aborts then abort here
-    if(context_p->abort_flag == true) {
+    if(unlikely(context_p->abort_flag == true)) {
       return INVALID_NODE_ID;
     }
     
@@ -3102,9 +3119,17 @@ abort_traverse:
     // For read only workload this is always true since we do not need
     // to remember the node ID for read - read is always stateless until
     // it has reached a leaf node
-    //assert(snapshot_p->node_id != INVALID_NODE_ID);
+    assert(snapshot_p->node_id != INVALID_NODE_ID);
 
     bwt_printf("Navigating inner node delta chain...\n");
+    
+    // Always start with the first element
+    const KeyNodeIDPair *start_p = \
+      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
+    // Use low key pair to find base node and then use base node pointer to find
+    // total number of elements in the array. We search in this array later
+    const KeyNodeIDPair *end_p = \
+      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3116,18 +3141,17 @@ abort_traverse:
 
           // We always use the ubound recorded inside the top of the
           // delta chain
-          NodeID target_id = LocateSeparatorByKey(search_key, inner_node_p);
+          NodeID target_id = \
+            LocateSeparatorByKey(search_key, 
+                                 inner_node_p, 
+                                 start_p, 
+                                 end_p);
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
                      target_id);
 
           return target_id;
         } // case InnerType
-        case NodeType::InnerRemoveType: {
-          bwt_printf("ERROR: InnerRemoveNode not allowed\n");
-
-          assert(false);
-        } // case InnerRemoveType
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
             static_cast<const InnerInsertNode *>(node_p);
@@ -3135,21 +3159,24 @@ abort_traverse:
           const KeyNodeIDPair &insert_item = insert_node_p->item;
           const KeyNodeIDPair &next_item = insert_node_p->next_item;
 
-          // If the next item has +Inf as its key (checking that using
-          // next_node_id), or it > search key
-          if((next_item.second == INVALID_NODE_ID) ||
-             (KeyCmpLess(search_key, next_item.first))) {
-            // If search key >= insert key
-            if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
+          // This comparison servers two purposes:
+          //   1. Check whether we could use it to do a quick jump
+          //   2. Update start_index or end_index depending on the 
+          //      result of comparison
+          if(KeyCmpGreaterEqual(search_key, insert_item.first)) {
+            if((next_item.second == INVALID_NODE_ID) ||
+               (KeyCmpLess(search_key, next_item.first))) {
               bwt_printf("Find target ID = %lu in insert delta\n",
                          insert_item.second);
 
               return insert_item.second;
             }
+            
+            start_p = std::max(start_p, insert_node_p->location);
+          } else {
+            end_p = std::min(end_p, insert_node_p->location);
           }
-
-          node_p = insert_node_p->child_node_p;
-
+          
           break;
         } // InnerInsertType
         case NodeType::InnerDeleteType: {
@@ -3182,22 +3209,19 @@ abort_traverse:
               return prev_item.second;
             }
           }
-
-          node_p = delete_node_p->child_node_p;
+          
+          // Use the deleted key to do a divide - all keys less than
+          // it is on the left of the index recorded in this InnerInsertNode
+          // Otherwise it is to the right of it
+          if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
+            start_p = std::max(delete_node_p->location, start_p);
+          } else {
+            end_p = std::min(delete_node_p->location, end_p);
+          } 
 
           break;
         } // InnerDeleteType
         case NodeType::InnerSplitType: {
-          const InnerSplitNode *split_node_p = \
-            static_cast<const InnerSplitNode *>(node_p);
-
-          // Since we have already finished jumping to the right
-          // sibling on the top level, it is unnecessary to
-          // jump when seeing an InnerSplitNode
-          // (The split key information has been observed on top
-          // node's high key)
-          node_p = split_node_p->child_node_p;
-
           break;
         } // case InnerSplitType
         case NodeType::InnerMergeType: {
@@ -3220,8 +3244,19 @@ abort_traverse:
 
             node_p = merge_node_p->child_node_p;
           }
+          
+          // Since all indices are not invalidated, we do not know on which
+          // branch it is referring to
+          // After this point node_p has been updated as the newest branch we 
+          // are travelling on
+          start_p = \
+            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
+          end_p = \
+            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
 
-          break;
+          // Note that we should jump to the beginning of the loop without 
+          // going to child node any further
+          continue;
         } // InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown node type = %d",
@@ -3230,6 +3265,8 @@ abort_traverse:
           assert(false);
         }
       } // switch type
+      
+      node_p = static_cast<const DeltaNode *>(node_p)->child_node_p; 
     } // while 1
 
     // Should not reach here
@@ -5225,7 +5262,8 @@ abort_traverse:
    */
   inline bool PostInnerInsertNode(Context *context_p,
                                   const KeyNodeIDPair &insert_item,
-                                  const KeyNodeIDPair &next_item) {
+                                  const KeyNodeIDPair &next_item,
+                                  const KeyNodeIDPair *location) {
     // We post on the parent node, after which we check for size and decide whether
     // to consolidate and/or split the node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
@@ -5238,7 +5276,8 @@ abort_traverse:
                                 parent_snapshot_p->node_p,
                                 insert_item,
                                 next_item,
-                                parent_snapshot_p->node_p);
+                                parent_snapshot_p->node_p,
+                                location);
 
     // CAS Index Term Insert Delta onto the parent node
     bool ret = InstallNodeToReplace(parent_snapshot_p->node_id,
@@ -5288,7 +5327,8 @@ abort_traverse:
   inline bool PostInnerDeleteNode(Context *context_p,
                                   const KeyNodeIDPair &delete_item,
                                   const KeyNodeIDPair &prev_item,
-                                  const KeyNodeIDPair &next_item) {
+                                  const KeyNodeIDPair &next_item,
+                                  const KeyNodeIDPair *location) {
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
 
     // Arguments are:
@@ -5300,7 +5340,8 @@ abort_traverse:
                                 delete_item,
                                 prev_item,
                                 next_item,
-                                parent_snapshot_p->node_p);
+                                parent_snapshot_p->node_p,
+                                location);
 
     // Assume parent has not changed, and CAS the index term delete delta
     // If CAS failed then parent has changed, and we have no idea how it
@@ -5529,9 +5570,13 @@ before_switch:
           assert(false);
         } // If on type of merge node
 
+        const KeyNodeIDPair *location;
+
         // Find the deleted item
         const KeyNodeIDPair *found_pair_p = \
-          NavigateInnerNode(parent_snapshot_p, delete_item_p->first);
+          NavigateInnerNode(parent_snapshot_p, 
+                            delete_item_p->first, 
+                            &location);
           
         // If the item is found then next we post InnerDeleteNode
         if(found_pair_p != nullptr) {
@@ -5553,7 +5598,9 @@ before_switch:
                             // Note that for leaf node the low key is not complete
                             std::make_pair(snapshot_p->node_p->GetLowKey(), snapshot_p->node_id),
                             // Also note that high key pair is valid for both leaf and inner
-                            right_merge_p->GetHighKeyPair());
+                            right_merge_p->GetHighKeyPair(),
+                            // This is location on InnerNode
+                            location);
 
         return;
       } // case Inner/LeafMergeNode
@@ -5715,12 +5762,17 @@ before_switch:
 
             return;
           }
+          
+          // This is used to hold index information for InnerInsertNode
+          const KeyNodeIDPair *location;
 
           // Find the split item that we intend to insert in the parent node
           // This function returns a pointer to the item if found, or
           // nullptr if not found
           const KeyNodeIDPair *found_item_p = \
-            NavigateInnerNode(parent_snapshot_p, insert_item_p->first);
+            NavigateInnerNode(parent_snapshot_p, 
+                              insert_item_p->first, 
+                              &location);
 
           // If the item has been found then we do not post
           // InnerInsertNode onto the parent
@@ -5759,7 +5811,10 @@ before_switch:
           // consolidating the parent node again and again
           // Note: Even if this function aborts, since we return immediately
           // so do not have to test abort_flag here
-          PostInnerInsertNode(context_p, *insert_item_p, *next_item_p);
+          PostInnerInsertNode(context_p, 
+                              *insert_item_p, 
+                              *next_item_p, 
+                              location);
 
           return;
         } // if split root / else not split root
@@ -6379,15 +6434,22 @@ before_switch:
    *
    * Note: This function does not abort. Any extra checking (e.g. whether
    * NodeIDs match, whether key is inside range) should be done by the caller
+   *
+   * Note 2: index_pair_p always reflects the relative position of the search
+   * key inside this InnerNode, no matter nullptr or non-null pointer is 
+   * returned, the integer inside the pair is always the index for all keys
+   * >= the search key. Currently the secong component is not set and not
+   * used
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
-                                         const KeyType &search_key) {
+                                         const KeyType &search_key,
+                                         const KeyNodeIDPair **location) {
     // Save some keystrokes
     const BaseNode *node_p = snapshot_p->node_p;
     
-    // This is used to recognize the leftmost branch if there is
-    // a merge node
-    const KeyNodeIDPair &low_key_pair = node_p->GetLowKeyPair();
+     // This is used to recognize the leftmost branch if there is
+     // a merge node
+     const KeyNodeIDPair &low_key_pair = node_p->GetLowKeyPair();
     
     // The caller must make sure this is true
     assert(node_p->GetNextNodeID() == INVALID_NODE_ID ||
@@ -6400,6 +6462,9 @@ before_switch:
           static_cast<const InnerInsertNode *>(node_p)->item;
 
         if(KeyCmpEqual(insert_item.first, search_key) == true) {
+          // Same key, same index
+          *location = static_cast<const InnerInsertNode *>(node_p)->location;
+          
           return &insert_item;
         }
 
@@ -6413,6 +6478,8 @@ before_switch:
           static_cast<const InnerDeleteNode *>(node_p)->item;
 
         if(KeyCmpEqual(delete_item.first, search_key) == true) {
+          *location = static_cast<const InnerDeleteNode *>(node_p)->location;
+          
           return nullptr;
         }
 
@@ -6423,6 +6490,11 @@ before_switch:
       } // InnerDeleteNode
       case NodeType::InnerType: {
         const InnerNode *inner_node_p = static_cast<const InnerNode *>(node_p);
+
+        // DO NOT REMOVE THIS!!!!!!
+        // Unlike a NavigateInnerNode(Context *) which searches for child
+        // node ID, this function needs to cover all possible separators
+        // in the merged InnerNode (right branch)
         const KeyNodeIDPair *start_it = inner_node_p->Begin();
 
         // If we are on the leftmost branch of the inner node delta chain
@@ -6438,7 +6510,10 @@ before_switch:
                            inner_node_p->End(),
                            std::make_pair(search_key, INVALID_NODE_ID),
                            key_node_id_pair_cmp_obj);
-                                   
+
+        // Just give the location information by assigning to location
+        *location = it;
+
         if(it == inner_node_p->End()) {
           // This is special case since we could not compare the iterator
           // If the key does not exist then return nullptr
@@ -8388,6 +8463,27 @@ try_join_again:
       return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
              (ic_p->GetLeafNode()->Begin() == kv_p);
     }
+    
+    /*
+     * IsREnd() - Whether the pointer is one slot before the Begin() pointer
+     *
+     * We define REnd() as follows:
+     *   (1) kv_p and ic_p are both empty
+     *   (2) Otherwise the low key ID is invalid node ID to indicate it is the
+     *       first leaf page of the tree, and also the kv_p pointer should
+     *       point to the REnd() of the underlying leaf page
+     */
+    bool IsREnd() const {
+      if(ic_p == nullptr) {
+        assert(kv_p == nullptr);
+        
+        return true; 
+      }
+      
+      // Note that it is leaf node's Begin() - 1
+      return (ic_p->GetLeafNode()->GetLowKeyPair().second == INVALID_NODE_ID) && \
+             ((ic_p->GetLeafNode()->Begin() - 1) == kv_p);
+    }
 
     /*
      * operator*() - Return the value reference currently pointed to by this
@@ -8525,7 +8621,7 @@ try_join_again:
       // This filters out:
       //   (1) Pointers being nullptr
       //   (2) Real begin iterator
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return *this; 
       }
       
@@ -8557,7 +8653,7 @@ try_join_again:
      * PostFix operator-- - Move the iterator backward by one element
      */
     inline ForwardIterator operator--(int) {
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return *this;
       }
       
@@ -8677,7 +8773,7 @@ try_join_again:
     void MoveBackByOne() {
       assert(kv_p != nullptr);
       assert(ic_p != nullptr);
-      assert(IsBegin() == false);
+      assert(IsREnd() == false);
       
       // This is an invalid state
       assert(kv_p != ic_p->GetLeafNode()->REnd());
@@ -8687,7 +8783,7 @@ try_join_again:
       
       kv_p--;
       // If there is no nodes to the left of the current node
-      if(IsBegin() == true) {
+      if(IsREnd() == true) {
         return; 
       } else if(kv_p != ic_p->GetLeafNode()->REnd()) {
         return; 
