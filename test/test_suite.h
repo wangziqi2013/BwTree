@@ -842,9 +842,32 @@ class Permutation {
   }
    
   /*
-   * Constructor - Initialize vector and allocate storage
+   * Constructor
    */
   Permutation() {}
+  
+  /*
+   * Constructor - Starts the generation process
+   */
+  Permutation(size_t count, IntType start=IntType{0}) {
+    Generate(count, start);
+    
+    return;
+  }
+  
+  /*
+   * operator[] - Accesses random elements
+   *
+   * Note that return type is reference type, so element could be
+   * modified using this method 
+   */
+  inline IntType &operator[](size_t index) {
+    return data[index];
+  }
+  
+  inline const IntType &operator[](size_t index) const {
+    return data[index];
+  }
 };
 
 /*
