@@ -221,6 +221,14 @@ class BwTreeBase {
     // Make an empty object here to facilitate node deletion since we should put
     // a pointer on the first node when deleting its successors
     GarbageNode gc_header;
+    
+    /*
+     * Default constructor
+     */
+    GCMetaData() :
+      counter{0UL},
+      gc_header{}
+    {}
   };
   
   // Make sure class Data does not exceed one cache line
@@ -239,6 +247,15 @@ class BwTreeBase {
     
     // This is where real data goes
     DataType data;
+    
+    /*
+     * Default constructor - This is called if DataType could be initialized
+     *                       without any constructor
+     */
+    PaddedData() :
+      data{}
+    {}
+    
    private:
     char padding[ALIGNMENT - sizeof(DataType)];  
   };
@@ -273,7 +290,7 @@ class BwTreeBase {
    * Constructor - Initialize GC data structure
    */
   BwTreeBase() {
-    thread_num = total_thread_num.load();
+    size_t thread_num = total_thread_num.load();
     
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
@@ -283,7 +300,7 @@ class BwTreeBase {
     assert(original_p != nullptr);
     
     // Align the address to cache line boundary
-    gc_metadata_p = static_cast<PaddedGCMetadata *>(
+    gc_metadata_p = reinterpret_cast<PaddedGCMetadata *>(
       original_p + ((CACHE_LINE_SIZE - 1) & CACHE_LINE_MASK));
     
     // Make sure it is aligned
@@ -291,6 +308,11 @@ class BwTreeBase {
     // Make sure we do not overflow the chunk of memory
     assert(((size_t)gc_metadata_p + thread_num * CACHE_LINE_SIZE) <= \
              ((size_t)original_p + (thread_num + 1) * CACHE_LINE_SIZE));
+    
+    // At last call constructor of the class; we use placement new
+    for(size_t i = 0;i < thread_num;i++) {
+      new (gc_metadata_p + i) PaddedGCMetadata{};
+    }
     
     return;
   }
