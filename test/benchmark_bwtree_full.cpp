@@ -108,6 +108,8 @@ void BenchmarkBwTreeSeqInsert(TreeType *t,
     cache.Stop();
     double duration = timer.Stop();
 
+    thread_time[thread_id] = duration;
+
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (key_num / num_thread) / (1024.0 * 1024.0) / duration \
               << " million insert/sec" << "\n";
@@ -115,8 +117,6 @@ void BenchmarkBwTreeSeqInsert(TreeType *t,
     // Print L3 total accesses and cache misses
     cache.PrintL3CacheUtilization();
     cache.PrintL1CacheUtilization();
-
-    thread_time[thread_id] = duration;
 
     return;
   };
@@ -171,6 +171,8 @@ void BenchmarkBwTreeSeqRead(TreeType *t,
 
     cache.Stop();
     double duration = timer.Stop();
+    
+    thread_time[thread_id] = duration;
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * key_num / (1024.0 * 1024.0)) / duration \
@@ -178,8 +180,6 @@ void BenchmarkBwTreeSeqRead(TreeType *t,
     
     cache.PrintL3CacheUtilization();
     cache.PrintL1CacheUtilization();
-    
-    thread_time[thread_id] = duration;
 
     return;
   };
@@ -240,6 +240,8 @@ void BenchmarkBwTreeRandRead(TreeType *t,
 
     cache.Stop();
     double duration = timer.Stop();
+    
+    thread_time[thread_id] = duration;
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * key_num / (1024.0 * 1024.0)) / duration \
@@ -248,8 +250,6 @@ void BenchmarkBwTreeRandRead(TreeType *t,
     cache.PrintL3CacheUtilization();
     cache.PrintL1CacheUtilization();
     
-    thread_time[thread_id] = duration;
-
     return;
   };
 
@@ -323,6 +323,8 @@ void BenchmarkBwTreeZipfRead(TreeType *t,
 
     cache.Stop();
     double duration = timer.Stop();
+    
+    thread_time[thread_id] = duration;
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
               << (iter * (end_index - start_index) / (1024.0 * 1024.0)) / duration \
@@ -330,8 +332,6 @@ void BenchmarkBwTreeZipfRead(TreeType *t,
     
     cache.PrintL3CacheUtilization();
     cache.PrintL1CacheUtilization();
-    
-    thread_time[thread_id] = duration;
 
     return;
   };
