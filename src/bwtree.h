@@ -209,9 +209,9 @@ class BwTreeBase {
   };
   
   /*
-   * class Data - Actual cache line data
+   * class GCMetaData - Metadata for performing GC on per-thread basis
    */
-  class Data {
+  class GCMetaData {
    public: 
     uint64_t counter;
     
@@ -221,25 +221,27 @@ class BwTreeBase {
   };
   
   // Make sure class Data does not exceed one cache line
-  static_assert(sizeof(Data) < CACHE_LINE_SIZE,
+  static_assert(sizeof(GCMetaData) < CACHE_LINE_SIZE,
                 "class Data size exceeds cache line length!");
   
   /*
    * class PaddedData - Padded data to the length of a cache line 
    */
+  template<typename DataType, size_t Alignment> 
   class PaddedData {
    public: 
     // This is the alignment of padded data - we adjust its alignment
     // after malloc() a chunk of memory
-    static constexpr size_t ALIGNMENT = 64UL;
+    static constexpr size_t ALIGNMENT = Alignment;
     
     // This is where real data goes
-    Data data;
+    DataType data;
    private:
-    char padding[ALIGNMENT - sizeof(Data)];  
+    char padding[ALIGNMENT - sizeof(DataType)];  
   };
   
-  static_assert(sizeof(PaddedData) == PaddedData::ALIGNMENT, 
+  static_assert(sizeof(PaddedData<GCMetaData, CACHE_LINE_SIZE>) == \
+                  PaddedData::ALIGNMENT, 
                 "class PaddedData size does not conform to the alignment!");
  
  private: 
@@ -253,8 +255,22 @@ class BwTreeBase {
   // We use this number to initialize GC data structure
   static std::atomic<size_t> total_thread_num;
   
- public: 
+  // This is the array being allocated for performing GC
+  // The allocation aligns its address to cache line boundary
+  PaddedData<GCMetaData, CACHE_LINE_SIZE> *gc_metadata_p;
   
+ public: 
+
+  /*
+   * Constructor - Initialize GC data structure
+   */
+  BwTreeBase() {
+    gc_metadata_p = \
+      aligned_alloc(CACHE_LINE_SIZE, CACHE_LINE_SIZE * total_thread_num.load());
+    assert(gc_metadata_p != nullptr);
+      
+    return;
+  }
 };
 
 /*
