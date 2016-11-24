@@ -196,13 +196,13 @@ class BwTreeBase {
    */
   class GarbageNode {
    public:
-    void *node_p;  
+    void *node_p;
     GarbageNode *next_p;
     
     /*
      * Constructor
      */
-    GarabgeNode() :
+    GarbageNode() :
       node_p{nullptr},
       next_p{nullptr}
     {}
@@ -215,7 +215,8 @@ class BwTreeBase {
    public: 
     uint64_t counter;
     
-    // Make an empty object here to facilitate node deletion
+    // Make an empty object here to facilitate node deletion since we should put
+    // a pointer on the first node when deleting its successors
     GarbageNode gc_header;
   };
   
@@ -248,7 +249,12 @@ class BwTreeBase {
   // threads and unregistered threads
   static thread_local int gc_id;
   
+  // This is used to count the number of threads participating GC process
+  // We use this number to initialize GC data structure
+  static std::atomic<size_t> total_thread_num;
+  
  public: 
+  
 };
 
 /*
