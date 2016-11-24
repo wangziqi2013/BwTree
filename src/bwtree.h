@@ -224,9 +224,6 @@ class BwTreeBase {
   // threads and unregistered threads
   static thread_local int gc_id;
   
- private:
-  
-  
  public: 
 };
 
