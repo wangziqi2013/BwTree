@@ -181,6 +181,15 @@ extern bool print_flag;
                                                     ) T{__VA_ARGS__} ))
 
 /*
+ * class BwTreeBase - Base class of BwTree that stores some common members
+ */
+class BwTreeBase {
+ private:
+   
+ public: 
+};
+
+/*
  * class BwTree - Lock-free BwTree index implementation
  *
  * Template Arguments:
