@@ -187,6 +187,9 @@ class BwTreeBase {
   // This is the presumed size of cache line
   static constexpr size_t CACHE_LINE_SIZE = 64;
   
+  // This is the mask we used for address alignment (AND with this)
+  static constexpr size_t CACHE_LINE_MASK = ~(CACHE_LINE_SIZE - 1);
+  
   /*
    * class GarbageNode - Garbage node used to represent delayed allocation
    *
@@ -260,18 +263,26 @@ class BwTreeBase {
   // The allocation aligns its address to cache line boundary
   PaddedGCMetadata *gc_metadata_p;
   
+  // We use this to compute aligned memory address to be
+  // used as the gc metadata array
+  unsigned char *original_p;
+  
  public: 
 
   /*
    * Constructor - Initialize GC data structure
    */
   BwTreeBase() {
-    gc_metadata_p = \
-      static_cast<PaddedGCMetadata *>(
-        aligned_alloc(
-          CACHE_LINE_SIZE, CACHE_LINE_SIZE * total_thread_num.load()));
-    assert(gc_metadata_p != nullptr);
-      
+    // This is the unaligned base address
+    // We allocate one more element than requested as the buffer
+    // for doing alignment
+    original_p = static_cast<unsigned char *>(
+      malloc(CACHE_LINE_SIZE * (total_thread_num.load() + 1)));
+    assert(original_p != nullptr);
+    
+    gc_metadata_p = static_cast<PaddedGCMetadata *>(
+      original_p + ((CACHE_LINE_SIZE - 1) & CACHE_LINE_MASK));
+    
     return;
   }
 };
