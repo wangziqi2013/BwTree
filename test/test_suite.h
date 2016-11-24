@@ -24,6 +24,8 @@
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
+#else
+using namespace wangziqi2013::bwtree;
 #endif
 
 using namespace stx;
