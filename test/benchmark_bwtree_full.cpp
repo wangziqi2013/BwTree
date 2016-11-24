@@ -16,7 +16,7 @@
  */
 void BenchmarkBwTreeRandInsert(int key_num, int thread_num) {
   // Get an empty trrr; do not print its construction message
-  TyeeType *t = GetEmptyTree(true);
+  TreeType *t = GetEmptyTree(true);
   
   // This is used to record time taken for each individual thread
   double thread_time[thread_num];
@@ -25,13 +25,14 @@ void BenchmarkBwTreeRandInsert(int key_num, int thread_num) {
   }
   
   // This generates a permutation on [0, key_num)
-  Permutation<long long int> perm{key_num, 0};
+  Permutation<long long int> perm{(size_t)key_num, 0};
   
   auto func = [key_num, 
                &thread_time, 
-               num_thread](uint64_t thread_id, TreeType *t) {
-    long int start_key = key_num / num_thread * (long)thread_id;
-    long int end_key = start_key + key_num / num_thread;
+               thread_num,
+               &perm](uint64_t thread_id, TreeType *t) {
+    long int start_key = key_num / thread_num * (long)thread_id;
+    long int end_key = start_key + key_num / thread_num;
 
     // Declare timer and start it immediately
     Timer timer{true};
@@ -49,7 +50,7 @@ void BenchmarkBwTreeRandInsert(int key_num, int thread_num) {
     thread_time[thread_id] = duration;
 
     std::cout << "[Thread " << thread_id << " Done] @ " \
-              << (key_num / num_thread) / (1024.0 * 1024.0) / duration \
+              << (key_num / thread_num) / (1024.0 * 1024.0) / duration \
               << " million random insert/sec" << "\n";
 
     // Print L3 total accesses and cache misses
@@ -59,15 +60,15 @@ void BenchmarkBwTreeRandInsert(int key_num, int thread_num) {
     return;
   };
 
-  LaunchParallelTestID(num_thread, func, t);
+  LaunchParallelTestID(thread_num, func, t);
 
   double elapsed_seconds = 0.0;
-  for(int i = 0;i < num_thread;i++) {
+  for(int i = 0;i < thread_num;i++) {
     elapsed_seconds += thread_time[i];
   }
 
-  std::cout << num_thread << " Threads BwTree: overall "
-            << (key_num / (1024.0 * 1024.0) * num_thread) / elapsed_seconds
+  std::cout << thread_num << " Threads BwTree: overall "
+            << (key_num / (1024.0 * 1024.0) * thread_num) / elapsed_seconds
             << " million random insert/sec" << "\n";
   
   // Remove the tree instance
