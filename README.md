@@ -57,6 +57,7 @@ You could either use git checkout to view these releases, or download them throu
 |--------------|-------------|
 | baseline | A stable working version of BwTree used as testing baseline against design changes |
 | fixed-forward-iterator | Preallocation + fixed forward iterator |
+| inner-search-hint | Search hint inside InnerNode traversal |
 
 Misc 
 ====
