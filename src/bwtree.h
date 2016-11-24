@@ -284,13 +284,17 @@ class BwTreeBase {
   // used as the gc metadata array
   unsigned char *original_p;
   
+  // This is the number of thread that this instance could support
+  size_t thread_num;
+  
  public: 
 
   /*
    * Constructor - Initialize GC data structure
    */
   BwTreeBase() {
-    size_t thread_num = total_thread_num.load();
+    // Save this into a data member and it will be used later
+    thread_num = total_thread_num.load();
     
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
@@ -312,6 +316,18 @@ class BwTreeBase {
     // At last call constructor of the class; we use placement new
     for(size_t i = 0;i < thread_num;i++) {
       new (gc_metadata_p + i) PaddedGCMetadata{};
+    }
+    
+    return;
+  }
+  
+  /*
+   * Destructor
+   */
+  ~BwTreeBase() {
+    // Manually call destructor
+    for(size_t i = 0;i < thread_num;i++) {
+      (gc_metadata_p + i)->~PaddedGCMetadata();
     }
     
     return;
