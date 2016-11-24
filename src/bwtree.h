@@ -305,7 +305,8 @@ class BwTreeBase {
     
     // Align the address to cache line boundary
     gc_metadata_p = reinterpret_cast<PaddedGCMetadata *>(
-      (original_p + CACHE_LINE_SIZE - 1) & CACHE_LINE_MASK);
+      (reinterpret_cast<size_t>(original_p) + CACHE_LINE_SIZE - 1) & \
+        CACHE_LINE_MASK);
     
     bwt_printf("GC Metadata ptr = %p\n", gc_metadata_p);
     
