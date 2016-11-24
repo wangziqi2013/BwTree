@@ -308,8 +308,6 @@ class BwTreeBase {
       (reinterpret_cast<size_t>(original_p) + CACHE_LINE_SIZE - 1) & \
         CACHE_LINE_MASK);
     
-    bwt_printf("GC Metadata ptr = %p\n", gc_metadata_p);
-    
     // Make sure it is aligned
     assert(((size_t)gc_metadata_p % CACHE_LINE_SIZE) == 0);
     
@@ -326,13 +324,43 @@ class BwTreeBase {
   }
   
   /*
-   * Destructor
+   * Destructor - Manually call destructor and then frees the memory 
    */
   ~BwTreeBase() {
     // Manually call destructor
     for(size_t i = 0;i < thread_num;i++) {
       (gc_metadata_p + i)->~PaddedGCMetadata();
     }
+    
+    // Free memory using original pointer rather than adjusted pointer
+    free(original_p);
+    
+    return;
+  }
+  
+  /*
+   * RegisterThread() - Registers a thread for GC for all instances of BwTree
+   *                    in the current process's address space
+   *
+   * This function assigns an ID to a thread starting from 0, which could be 
+   * used as thread ID for the garbage collection process. 
+   *
+   * Also note that only threads registered before an instance is created will
+   * be considered as being eligible for GC for that thread
+   *
+   * This function does not return any value, and instead it uses an atomic 
+   * counter to counter the number of threads currently in this system, and
+   * assigns the thread ID to a thread local variable called gc_id decleared
+   * inside this class
+   *
+   * Each thread being allocated a GC ID has a context for garbage collection
+   * that is aligned to cache lines. The context will be allocated for every
+   * thread being registered, even if it has already exited. Therefore, this
+   * approach is only suitable for thread pools where the number of threads
+   * is fixed at startup time.
+   */
+  static void RegisterThread() {
+    gc_id = total_thread_num.fetch_add(1);
     
     return;
   }
