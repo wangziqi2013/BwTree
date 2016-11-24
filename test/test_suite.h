@@ -146,6 +146,49 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
 }
 
 /*
+ * class Random - A random number generator
+ *
+ * This generator is a template class letting users to choose the number
+ *
+ * Note that this object uses C++11 library generator which is slow, and super
+ * non-scalable.
+ */
+template <typename IntType,
+          IntType lower,
+          IntType upper>
+class Random {
+ private:
+  std::random_device device;
+  std::default_random_engine engine;
+  std::uniform_int_distribution<IntType> dist;
+
+ public:
+  
+  /*
+   * Constructor - Initialize random seed and distribution object
+   */
+  Random() :
+    device{},
+    engine{device()},
+    dist{lower, upper}
+  {}
+  
+  /*
+   * Get() - Get a random number of specified type
+   */
+  inline IntType Get() {
+    return dist(engine);
+  }
+  
+  /*
+   * operator() - Grammar sugar
+   */
+  inline IntType operator()() {
+    return Get(); 
+  }
+};
+
+/*
  * class SimpleInt64Random - Simple paeudo-random number generator 
  *
  * This generator does not have any performance bottlenect even under
@@ -754,6 +797,8 @@ class CacheMeter {
 };
 
 #endif
+
+
 
 /*
  * Initialize and destroy btree
