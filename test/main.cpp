@@ -179,7 +179,9 @@ int main(int argc, char **argv) {
     uint64_t thread_num = GetThreadNum();
 
     if(run_benchmark_bwtree_full == true) {
-      // First we rely on this test to fill bwtree with 30 million keys
+      // Benchmark random insert performance
+      BenchmarkBwTreeRandInsert(key_num, (int)thread_num);
+      // Then we rely on this test to fill bwtree with 30 million keys
       BenchmarkBwTreeSeqInsert(t1, key_num, (int)thread_num);
       // And then do a multithreaded sequential read
       BenchmarkBwTreeSeqRead(t1, key_num, (int)thread_num);
