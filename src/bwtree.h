@@ -287,15 +287,23 @@ class BwTreeBase {
   // This is the number of thread that this instance could support
   size_t thread_num;
   
+  // This is current epoch
+  // Note that we do not need to make it atomic, since neither prefetching
+  // nor read-write reordering will affect correctness - reading a stale 
+  // value only delays memory reclamation but does not affect correctness
+  uint64_t epoch;
+  
  public: 
 
   /*
    * Constructor - Initialize GC data structure
    */
-  BwTreeBase() {
-    // Save this into a data member and it will be used later
-    thread_num = total_thread_num.load();
-    
+  BwTreeBase() :
+    gc_metadata_p{nullptr},
+    original_p{nullptr},
+    thread_num{total_thread_num.load()},
+    epoch{0UL} {
+        
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
     // for doing alignment
@@ -363,6 +371,13 @@ class BwTreeBase {
     gc_id = total_thread_num.fetch_add(1);
     
     return;
+  }
+  
+  /*
+   * IncreaseEpoch() - Go to the next epoch by increasing the counter
+   */
+  inline void IncreaseEpoch() {
+    
   }
 };
 
