@@ -798,7 +798,33 @@ class CacheMeter {
 
 #endif
 
-
+/*
+ * class Permutation - Generates permutation of k numbers, ranging from 
+ *                     0 to k - 1
+ *
+ * This is usually used to randomize insert() to a data structure such that
+ *   (1) Each Insert() call could hit the data structure
+ *   (2) There is no extra overhead for failed insertion because all keys are
+ *       unique
+ */
+template <typename IntType> 
+class Permutation {
+ private:
+  std::vector<IntType> data;
+  
+  size_t count;
+ public:
+   
+  /*
+   * Constructor - Initialize vector and allocate storage
+   */
+  Permutation(size_t p_count) :
+    count{p_count} {
+    data.reserve(count);
+    
+    return;
+  }
+};
 
 /*
  * Initialize and destroy btree
