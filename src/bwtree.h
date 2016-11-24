@@ -185,38 +185,47 @@ extern bool print_flag;
  */
 class BwTreeBase {
   // This is the presumed size of cache line
-  static constexpr CACHE_LINE_SIZE = 64;
+  static constexpr size_t CACHE_LINE_SIZE = 64;
   
   /*
    * class Data - Actual cache line data
    */
   class Data {
    public: 
-    uint64_t counter;  
+    uint64_t counter;
   };
   
   // Make sure class Data does not exceed one cache line
-  static_assert(sizeof(Data) < CACHE_LINE_SIZE);
+  static_assert(sizeof(Data) < CACHE_LINE_SIZE,
+                "class Data size exceeds cache line length!");
   
   /*
    * class PaddedData - Padded data to the length of a cache line 
    */
   class PaddedData {
+   public: 
     // This is the alignment of padded data - we adjust its alignment
     // after malloc() a chunk of memory
     static constexpr size_t ALIGNMENT = 64UL;
-   public:
+    
+    // This is where real data goes
     Data data;
    private:
-    char padding[alignment - sizeof(Data)];  
+    char padding[ALIGNMENT - sizeof(Data)];  
   };
   
-  static_assert(sizeof(PaddedData) == PaddedData::ALIGNMENT);
-  
+  static_assert(sizeof(PaddedData) == PaddedData::ALIGNMENT, 
+                "class PaddedData size does not conform to the alignment!");
+ 
+ private: 
   // This is used as the garbage collection ID, and is maintained in a per
   // thread level
-  static thread_local gc_id;
+  // This is initialized to -1 in order to distinguish between registered 
+  // threads and unregistered threads
+  static thread_local int gc_id;
+  
  private:
+  
   
  public: 
 };
