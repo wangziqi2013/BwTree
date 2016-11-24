@@ -40,14 +40,15 @@ Compile and Run
 |make full-speed | Compiles without debugging flag. Better performance (-O3)|
 |make small-size | Compiles without debugging flag, but also optimized for smaller code size (-Os)|
 |make benchmark-bwtree | Compiles and runs benchmark (seq. and random) for bwtree|
-|make benchmark-all | This compiles and runs benchmark for bwtree, std::map, std::unordered_map, stx::btree and stx::bwtree_multimap|
+|make benchmark-all | This compiles and runs benchmark for bwtree, std::map, std::unordered\_map, stx::btree and stx::bwtree\_multimap|
 |make stress-test | Runs stress test on BwTree|
 |make test        | Runs insert-read-delete test for multiple times with different patterns|
 |make epoch-test  | Runs epoch manager test|
 |make infinite-insert-test | Runs random insert test on a random pattern|
 |make email-test | Runs email test. This requires a special email input file that we will not provide for some reason|
 |make mixed-test | Runs insert-delete extremely high contention test. This test is the one that fails most implementations|
-|make benchmark-btree-full | Run the same benchmark as those in 'benchmark-bwtree-full' for stx::btree_multimap|
+|make benchmark-btree-full | Run the same benchmark as those in 'benchmark-bwtree-full' for stx::btree\_multimap|
+| make benchmark-bwtree-full | Runs insert-seq read-rand read-zipf read workload for BwTree on 30 Milltion keys. Use THREAD\_NUM=xxx before make command to specify the number of threads used for testing |
 
 Releases
 ========
