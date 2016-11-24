@@ -305,10 +305,13 @@ class BwTreeBase {
     
     // Align the address to cache line boundary
     gc_metadata_p = reinterpret_cast<PaddedGCMetadata *>(
-      original_p + ((CACHE_LINE_SIZE - 1) & CACHE_LINE_MASK));
+      (original_p + CACHE_LINE_SIZE - 1) & CACHE_LINE_MASK);
+    
+    bwt_printf("GC Metadata ptr = %p\n", gc_metadata_p);
     
     // Make sure it is aligned
     assert(((size_t)gc_metadata_p % CACHE_LINE_SIZE) == 0);
+    
     // Make sure we do not overflow the chunk of memory
     assert(((size_t)gc_metadata_p + thread_num * CACHE_LINE_SIZE) <= \
              ((size_t)original_p + (thread_num + 1) * CACHE_LINE_SIZE));
