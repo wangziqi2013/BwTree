@@ -155,9 +155,7 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
  *
  * NOTE 2: lower and upper are closed interval!!!!
  */
-template <typename IntType,
-          IntType lower,
-          IntType upper>
+template <typename IntType>
 class Random {
  private:
   std::random_device device;
@@ -169,7 +167,7 @@ class Random {
   /*
    * Constructor - Initialize random seed and distribution object
    */
-  Random() :
+  Random(IntType lower, IntType upper) :
     device{},
     engine{device()},
     dist{lower, upper}
@@ -828,7 +826,7 @@ class Permutation {
     std::iota(data.begin(), data.end(), start);
     
     // The two arguments define a closed interval, NOT open interval
-    Random<IntType, start, start + count - 1> rand{};
+    Random<IntType> rand{start, (IntType)start + (IntType)count - 1};
     
     // Then swap all elements with a random position
     for(size_t i = 0;i < count;i++) {
