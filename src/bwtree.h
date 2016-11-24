@@ -99,6 +99,9 @@ using NodeID = uint64_t;
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
+#else
+namespace wangziqi2013 {
+namespace bwtree {
 #endif
 
 // This needs to be always here
@@ -8895,9 +8898,7 @@ try_join_again:
 
 }; // class BwTree
 
-#ifdef BWTREE_PELOTON
-}  // End index namespace
-}  // End peloton namespace
-#endif
+}  // End index/bwtree namespace
+}  // End peloton/wangziqi2013 namespace
 
 #endif
