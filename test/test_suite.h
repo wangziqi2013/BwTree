@@ -152,6 +152,8 @@ void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
  *
  * Note that this object uses C++11 library generator which is slow, and super
  * non-scalable.
+ *
+ * NOTE 2: lower and upper are closed interval!!!!
  */
 template <typename IntType,
           IntType lower,
@@ -812,18 +814,37 @@ class Permutation {
  private:
   std::vector<IntType> data;
   
-  size_t count;
  public:
+  
+  /*
+   * Generate() - Generates a permutation and store them inside data
+   */
+  void Generate(size_t count, IntType start=IntType{0}) {
+    // Extend data vector to fill it with elements
+    data.resize(count);  
+
+    // This function fills the vector with IntType ranging from
+    // start to start + count - 1
+    std::iota(data.begin(), data.end(), start);
+    
+    // The two arguments define a closed interval, NOT open interval
+    Random<IntType, start, start + count - 1> rand{};
+    
+    // Then swap all elements with a random position
+    for(size_t i = 0;i < count;i++) {
+      IntType random_key = rand();
+      
+      // Swap two numbers
+      std::swap(data[i], data[random_key]);
+    }
+    
+    return;
+  }
    
   /*
    * Constructor - Initialize vector and allocate storage
    */
-  Permutation(size_t p_count) :
-    count{p_count} {
-    data.reserve(count);
-    
-    return;
-  }
+  Permutation() {}
 };
 
 /*
