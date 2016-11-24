@@ -240,9 +240,10 @@ class BwTreeBase {
     char padding[ALIGNMENT - sizeof(DataType)];  
   };
   
-  static_assert(sizeof(PaddedData<GCMetaData, CACHE_LINE_SIZE>) == \
-                  PaddedData::ALIGNMENT, 
-                "class PaddedData size does not conform to the alignment!");
+  using PaddedGCMetadata = PaddedData<GCMetaData, CACHE_LINE_SIZE>;
+  
+  static_assert(sizeof(PaddedGCMetadata) == PaddedGCMetadata::ALIGNMENT, 
+                "class PaddedGCMetadata size does not conform to the alignment!");
  
  private: 
   // This is used as the garbage collection ID, and is maintained in a per
@@ -257,7 +258,7 @@ class BwTreeBase {
   
   // This is the array being allocated for performing GC
   // The allocation aligns its address to cache line boundary
-  PaddedData<GCMetaData, CACHE_LINE_SIZE> *gc_metadata_p;
+  PaddedGCMetadata *gc_metadata_p;
   
  public: 
 
@@ -266,7 +267,9 @@ class BwTreeBase {
    */
   BwTreeBase() {
     gc_metadata_p = \
-      aligned_alloc(CACHE_LINE_SIZE, CACHE_LINE_SIZE * total_thread_num.load());
+      static_cast<PaddedGCMetadata *>(
+        aligned_alloc(
+          CACHE_LINE_SIZE, CACHE_LINE_SIZE * total_thread_num.load()));
     assert(gc_metadata_p != nullptr);
       
     return;
