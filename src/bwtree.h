@@ -377,7 +377,9 @@ class BwTreeBase {
    * IncreaseEpoch() - Go to the next epoch by increasing the counter
    */
   inline void IncreaseEpoch() {
+    epoch++;
     
+    return;
   }
 };
 
