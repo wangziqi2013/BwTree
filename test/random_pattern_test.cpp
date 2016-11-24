@@ -140,6 +140,8 @@ void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
   // will hit an empty slot
   for(size_t i = 0;i < key_num * 2;i++) {
     int key = uniform_dist(e1);
+    
+    t->Insert(key, key);
   }
 
   end = std::chrono::system_clock::now();
