@@ -924,6 +924,7 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 
 // Multithreaded benchmark
+void BenchmarkBwTreeRandInsert(int key_num, int thread_num);
 void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
