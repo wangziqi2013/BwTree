@@ -188,11 +188,35 @@ class BwTreeBase {
   static constexpr size_t CACHE_LINE_SIZE = 64;
   
   /*
+   * class GarbageNode - Garbage node used to represent delayed allocation
+   *
+   * Note that since we could not know the actual definition of BaseNode here,
+   * all garbage pointer to BaseNode should be represented as void *, and are
+   * casted to appropriate type manually
+   */
+  class GarbageNode {
+   public:
+    void *node_p;  
+    GarbageNode *next_p;
+    
+    /*
+     * Constructor
+     */
+    GarabgeNode() :
+      node_p{nullptr},
+      next_p{nullptr}
+    {}
+  };
+  
+  /*
    * class Data - Actual cache line data
    */
   class Data {
    public: 
     uint64_t counter;
+    
+    // Make an empty object here to facilitate node deletion
+    GarbageNode gc_header;
   };
   
   // Make sure class Data does not exceed one cache line
