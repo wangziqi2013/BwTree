@@ -184,8 +184,40 @@ extern bool print_flag;
  * class BwTreeBase - Base class of BwTree that stores some common members
  */
 class BwTreeBase {
+  // This is the presumed size of cache line
+  static constexpr CACHE_LINE_SIZE = 64;
+  
+  /*
+   * class Data - Actual cache line data
+   */
+  class Data {
+   public: 
+    uint64_t counter;  
+  };
+  
+  // Make sure class Data does not exceed one cache line
+  static_assert(sizeof(Data) < CACHE_LINE_SIZE);
+  
+  /*
+   * class PaddedData - Padded data to the length of a cache line 
+   */
+  class PaddedData {
+    // This is the alignment of padded data - we adjust its alignment
+    // after malloc() a chunk of memory
+    static constexpr size_t ALIGNMENT = 64UL;
+   public:
+    Data data;
+   private:
+    char padding[alignment - sizeof(Data)];  
+  };
+  
+  static_assert(sizeof(PaddedData) == PaddedData::ALIGNMENT);
+  
+  // This is used as the garbage collection ID, and is maintained in a per
+  // thread level
+  static thread_local gc_id;
  private:
-   
+  
  public: 
 };
 
@@ -239,7 +271,7 @@ template <typename KeyType,
           typename KeyHashFunc = std::hash<KeyType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
-class BwTree {
+class BwTree : public BwTreeBase {
  /*
   * Private & Public declaration
   */
