@@ -16,11 +16,13 @@
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
+#else
+namespace wangziqi2013 {
+namespace bwtree {
 #endif
 
 bool print_flag = true;
 
-#ifdef BWTREE_PELOTON
-}  // End index namespace
-}  // End peloton namespace
-#endif
+}  // End index/bwtree namespace
+}  // End peloton/wangziqi2013 namespace
+
