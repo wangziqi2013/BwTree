@@ -159,6 +159,8 @@ extern bool print_flag;
 #define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
+#define PREALLOCATE_THREAD_NUM ((size_t)1024)
+
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
  *                               initialize it using placement new and then 
@@ -334,7 +336,7 @@ class BwTreeBase {
   /*
    * Constructor - Initialize GC data structure
    */
-  BwTreeBase(size_t p_thread_num=total_thread_num.load()) :
+  BwTreeBase() :
     gc_metadata_p{nullptr},
     original_p{nullptr},
     thread_num{total_thread_num.load()},
@@ -350,15 +352,39 @@ class BwTreeBase {
    * Destructor - Manually call destructor and then frees the memory 
    */
   ~BwTreeBase() {
+    // Frees all metadata
+    DestroyThreadLocal();
+    
+    bwt_printf("Finished destroying class BwTreeBase\n")
+    
+    return;
+  }
+  
+  /*
+   * DestroyThreadLocal() - Destroies thread local
+   *
+   * This function calls destructor for each metadata element and then
+   * frees the memory
+   *
+   * NOTE: We should also free all garbage nodes before this is called. However
+   * since we do not know the type of garbage nodes yet, we should call the
+   * function inside BwTree destructor
+   *
+   * This function must be called when the garbage pool is empty
+   */
+  void DestroyThreadLocal() {
+    // There must already be metadata allocated
+    assert(original_p != nullptr);
+    
     // Manually call destructor
     for(size_t i = 0;i < thread_num;i++) {
+      assert((gc_metadata_p + i)->data.header.next_p == nullptr);
+      
       (gc_metadata_p + i)->~PaddedGCMetadata();
     }
     
     // Free memory using original pointer rather than adjusted pointer
     free(original_p);
-    
-    bwt_printf("Finished destroying class BwTreeBase\n")
     
     return;
   }
@@ -2586,6 +2612,7 @@ class BwTree : public BwTreeBase {
          KeyHashFunc p_key_hash_obj = KeyHashFunc{},
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
          ValueHashFunc p_value_hash_obj = ValueHashFunc{}) :
+      BwTreeBase(),
       // Key comparator, equality checker and hasher
       key_cmp_obj{p_key_cmp_obj},
       key_eq_obj{p_key_eq_obj},
