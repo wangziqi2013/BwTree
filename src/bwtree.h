@@ -209,7 +209,14 @@ class BwTreeBase {
     /*
      * Constructor
      */
+    GarbageNode(uint64_t p_delete_epoch, void *p_node_p) :
+      delete_epoch{p_delete_epoch},
+      node_p{p_node_p},
+      next_p{nullptr}
+    {}
+    
     GarbageNode() :
+      delete_epoch{0UL},
       node_p{nullptr},
       next_p{nullptr}
     {}
@@ -229,7 +236,7 @@ class BwTreeBase {
     
     // Make an empty object here to facilitate node deletion since we should put
     // a pointer on the first node when deleting its successors
-    GarbageNode gc_header;
+    GarbageNode gc_header; 
     
     /*
      * Default constructor
