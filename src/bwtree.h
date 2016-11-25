@@ -415,6 +415,21 @@ class BwTreeBase {
   }
   
   /*
+   * UpdateLastActiveEpoch() - Updates the last active epoch field of thread 
+   *                           local storage
+   *
+   * This is the core of GC algorithm. Its implication is that all garbage nodes
+   * unlinked before this epoch could be safely collected since at the time 
+   * the thread local counter is updated, we know all references to shared
+   * resources have been released
+   */
+  inline void UpdateLastActiveEpoch() {
+    GetCurrentGCMetaData()->last_active_epoch = GetGlobalEpoch();
+    
+    return;
+  }
+  
+  /*
    * GetGlocalEpoch() - Returns the current global epoch counter
    *
    * Note that this function might return a stale value, which does not affect
