@@ -234,9 +234,8 @@ class BwTreeBase {
     // be recycled
     uint64_t last_active_epoch;
     
-    // Make an empty object here to facilitate node deletion since we should put
-    // a pointer on the first node when deleting its successors
-    GarbageNode gc_header; 
+    // We only need a pointer
+    GarbageNode header; 
     
     // This points to the last node in the garbage node linked list
     // We always append new nodes to this pointer, and thus inside one
@@ -246,13 +245,18 @@ class BwTreeBase {
     // until we see an epoch >= GC epoch
     GarbageNode *last_p;
     
+    // The number of nodes inside this GC context
+    // We use this as a threshold to trigger GC
+    uint64_t node_count;
+    
     /*
      * Default constructor
      */
     GCMetaData() :
       last_active_epoch{0UL},
       gc_header{},
-      last_p{&gc_header}
+      last_p{&gc_header},
+      node_count{0UL}
     {}
   };
   
@@ -288,7 +292,8 @@ class BwTreeBase {
   using PaddedGCMetadata = PaddedData<GCMetaData, CACHE_LINE_SIZE>;
   
   static_assert(sizeof(PaddedGCMetadata) == PaddedGCMetadata::ALIGNMENT, 
-                "class PaddedGCMetadata size does not conform to the alignment!");
+                "class PaddedGCMetadata size does"
+                " not conform to the alignment!");
  
  private: 
   // This is used as the garbage collection ID, and is maintained in a per
@@ -368,6 +373,8 @@ class BwTreeBase {
     // Free memory using original pointer rather than adjusted pointer
     free(original_p);
     
+    bwt_printf("Finished destroying class BwTreeBase\n")
+    
     return;
   }
   
@@ -408,14 +415,14 @@ class BwTreeBase {
   }
   
   /*
-   * GetCurrentEpoch() - Returns the current epoch counter
+   * GetGlocalEpoch() - Returns the current global epoch counter
    *
    * Note that this function might return a stale value, which does not affect
    * correctness as long as unlinking the node form data structure is atomic
    * since all refreshing operations will read the same or smaller value
    * when it reads the counter
    */
-  inline uint64_t GetCurrentEpoch() {
+  inline uint64_t GetGlocalEpoch() {
     return epoch; 
   }
   
@@ -433,6 +440,9 @@ class BwTreeBase {
     // and then update last_p
     GetCurrentGCMetaData()->last_p->next_p = garbage_node_p;
     GetCurrentGCMetaData()->last_p = garbage_node_p;
+    
+    // Update the counter 
+    GetCurrentGCMetaData()->node_count++;
     
     return;
   }
@@ -476,6 +486,42 @@ class BwTreeBase {
     }
     
     return min_epoch;
+  }
+  
+  /*
+   * PerformGC() - This function performs GC on the current thread's garbage 
+   *               chain using the call back function
+   *
+   * Note that this function only collects for the current thread. Therefore
+   * this function does not have to be atomic since its 
+   */
+  void PerformGC(std::function<void(void *)> callback) {
+    // First of all get the minimum epoch of all active threads
+    // This is the upper bound for deleted epoch in garbage node
+    uint64_t min_epoch = SummarizeGCEpoch();
+    
+    // This is the pointer we use to perform GC
+    GarbageNode *header_p = &GetCurrentGCMetaData()->header; 
+    GarbageNode *first_p = header_p->next_p;
+    GarbageNode *last_p = GetCurrentGCMetaData()->last_p
+    
+    // Then traverse the linked list
+    // Only reclaim memory when the deleted epoch < min epoch
+    while(first_p != nullptr && \
+          first_p->last_active_epoch < min_epoch) {
+      // First unlink the current node from the linked list
+      // This could set it to nullptr
+      header_p->next_p = first_p->next_p;
+      
+      // Then use the callback to perform memory reclaimation
+      callback(first_p->node_p);
+      
+      delete first_p;
+      
+      first_p = header_p->next_p;
+    }
+    
+    return;
   }
 };
 
