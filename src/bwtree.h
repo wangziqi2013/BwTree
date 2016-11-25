@@ -254,8 +254,8 @@ class BwTreeBase {
      */
     GCMetaData() :
       last_active_epoch{0UL},
-      gc_header{},
-      last_p{&gc_header},
+      header{},
+      last_p{&header},
       node_count{0UL}
     {}
   };
@@ -433,7 +433,7 @@ class BwTreeBase {
    * process does not require any atomicity 
    */
   void AddGarbageNode(void *node_p) {
-    GarbageNode *garbage_node_p = new GarbageNode{GetCurrentEpoch(), node_p};
+    GarbageNode *garbage_node_p = new GarbageNode{GetGlocalEpoch(), node_p};
     assert(garbage_node_p != nullptr);
     
     // Link this new node to the end of the linked list
@@ -501,14 +501,14 @@ class BwTreeBase {
     uint64_t min_epoch = SummarizeGCEpoch();
     
     // This is the pointer we use to perform GC
+    // Note that we only fetch the metadata using the current thread-local id
     GarbageNode *header_p = &GetCurrentGCMetaData()->header; 
     GarbageNode *first_p = header_p->next_p;
-    GarbageNode *last_p = GetCurrentGCMetaData()->last_p
     
     // Then traverse the linked list
     // Only reclaim memory when the deleted epoch < min epoch
     while(first_p != nullptr && \
-          first_p->last_active_epoch < min_epoch) {
+          first_p->delete_epoch < min_epoch) {
       // First unlink the current node from the linked list
       // This could set it to nullptr
       header_p->next_p = first_p->next_p;
@@ -517,8 +517,13 @@ class BwTreeBase {
       callback(first_p->node_p);
       
       delete first_p;
-      
       first_p = header_p->next_p;
+    }
+    
+    // If we have freed all nodes in the linked list we should 
+    // reset last_p to the header
+    if(first_p == nullptr) {
+      GetCurrentGCMetaData()->last_p = header_p;
     }
     
     return;
