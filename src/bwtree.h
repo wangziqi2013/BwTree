@@ -190,6 +190,9 @@ class BwTreeBase {
   // This is the mask we used for address alignment (AND with this)
   static constexpr size_t CACHE_LINE_MASK = ~(CACHE_LINE_SIZE - 1);
   
+  // We invoke the GC procedure after this has been reached
+  static constexpr size_t GC_NODE_COUNT_THREADHOLD = 1024;
+  
   /*
    * class GarbageNode - Garbage node used to represent delayed allocation
    *
@@ -318,10 +321,14 @@ class BwTreeBase {
   size_t thread_num;
   
   // This is current epoch
-  // Note that we do not need to make it atomic, since neither prefetching
-  // nor read-write reordering will affect correctness - reading a stale 
-  // value only delays memory reclamation but does not affect correctness
+  // We need to make it atomic since multiple threads might try to modify it
   uint64_t epoch;
+  
+  // This is the call back function registered by derived class to 
+  // free its node
+  // The function differs by KeyType and ValueType, so we should not
+  // assume a single static function
+  std::function<void(void *)> callback;
   
  public: 
 
@@ -333,7 +340,7 @@ class BwTreeBase {
     original_p{nullptr},
     thread_num{total_thread_num.load()},
     epoch{0UL} {
-        
+  
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
     // for doing alignment
@@ -365,6 +372,18 @@ class BwTreeBase {
    * Destructor - Manually call destructor and then frees the memory 
    */
   ~BwTreeBase() {
+    // First of all we clean all remaining garbage nodes
+    for(size_t i = 0;i < thread_num;i++) {
+      // Make it to be the maximum value possible such that all nodes
+      // will be collected
+      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(-1);
+      PerformGC(i);
+      
+      // This will collect all nodes since we have adjusted the currenr thread
+      // GC ID
+      assert(GetGCMetaData(i)->node_count == 0);
+    }
+    
     // Manually call destructor
     for(size_t i = 0;i < thread_num;i++) {
       (gc_metadata_p + i)->~PaddedGCMetadata();
@@ -407,6 +426,9 @@ class BwTreeBase {
   
   /*
    * IncreaseEpoch() - Go to the next epoch by increasing the counter
+   *
+   * Note that this should not be called by worker threads since 
+   * it will cause contention
    */
   inline void IncreaseEpoch() {
     epoch++;
@@ -459,6 +481,15 @@ class BwTreeBase {
     // Update the counter 
     GetCurrentGCMetaData()->node_count++;
     
+    // It is possible that we could not free enough number of nodes to
+    // make it less than this threshold
+    // So it is important to let the epoch counter be constantly increased
+    // to guarantee progress
+    if(GetCurrentGCMetaData()->node_count > GC_NODE_COUNT_THREADHOLD) {
+      // Use current thread's gc id to perform GC
+      PerformGC(gc_id);
+    }
+    
     return;
   }
   
@@ -509,15 +540,18 @@ class BwTreeBase {
    *
    * Note that this function only collects for the current thread. Therefore
    * this function does not have to be atomic since its 
+   *
+   * Note that this function should be used with thread_id, since it will
+   * also be called inside the destructor
    */
-  void PerformGC(std::function<void(void *)> callback) {
+  void PerformGC(int thread_id) {
     // First of all get the minimum epoch of all active threads
     // This is the upper bound for deleted epoch in garbage node
     uint64_t min_epoch = SummarizeGCEpoch();
     
     // This is the pointer we use to perform GC
     // Note that we only fetch the metadata using the current thread-local id
-    GarbageNode *header_p = &GetCurrentGCMetaData()->header; 
+    GarbageNode *header_p = &GetGCMetaData(thread_id)->header; 
     GarbageNode *first_p = header_p->next_p;
     
     // Then traverse the linked list
