@@ -427,7 +427,54 @@ class BwTreeBase {
    */
   void AddGarbageNode(void *node_p) {
     GarbageNode *garbage_node_p = new GarbageNode{GetCurrentEpoch(), node_p};
+    assert(garbage_node_p != nullptr);
     
+    // Link this new node to the end of the linked list
+    // and then update last_p
+    GetCurrentGCMetaData()->last_p->next_p = garbage_node_p;
+    GetCurrentGCMetaData()->last_p = garbage_node_p;
+    
+    return;
+  }
+  
+  /*
+   * GetGCMetaData() - Returns the thread-local metadata for GC for a specified
+   *                   thread
+   */
+  inline GCMetaData *GetGCMetaData(int thread_id) {
+    // The thread ID must be within the range
+    assert(thread_id >= 0 && thread_id < static_cast<int>(thread_num));
+    
+    return &(gc_metadata_p + thread_id)->data;
+  }
+  
+  /*
+   * GetCurrentGCMetaData() - Returns the metadata for the current thread
+   */
+  inline GCMetaData *GetCurrentGCMetaData() {
+    return GetGCMetaData(gc_id); 
+  }
+  
+  /*
+   * SummarizeGCEpoch() - Returns the minimum epochs among the current epoch
+   *                      counters of all threads
+   *
+   * Note that if this is called then it must be true that there are at least
+   * one thread participating into the GC process
+   */
+  uint64_t SummarizeGCEpoch() {
+    assert(thread_num >= 1);
+    
+    uint64_t min_epoch = gc_metadata_p[0].data.last_active_epoch;
+    
+    // This might not be executed if there is only one thread
+    for(int i = 1;i < static_cast<int>(thread_num);i++) {
+      // This will be compiled into using CMOV which is more efficient
+      // than CMP and JMP
+      min_epoch = std::min(gc_metadata_p[i].data.last_active_epoch, min_epoch);
+    }
+    
+    return min_epoch;
   }
 };
 
