@@ -334,12 +334,41 @@ class BwTreeBase {
   /*
    * Constructor - Initialize GC data structure
    */
-  BwTreeBase() :
+  BwTreeBase(size_t p_thread_num=total_thread_num.load()) :
     gc_metadata_p{nullptr},
     original_p{nullptr},
     thread_num{total_thread_num.load()},
     epoch{0UL} {
+    
+    // Allocate memory for thread local data structure
+    PrepareThreadLocal();
+    
+    return;
+  }
   
+  /*
+   * Destructor - Manually call destructor and then frees the memory 
+   */
+  ~BwTreeBase() {
+    // Manually call destructor
+    for(size_t i = 0;i < thread_num;i++) {
+      (gc_metadata_p + i)->~PaddedGCMetadata();
+    }
+    
+    // Free memory using original pointer rather than adjusted pointer
+    free(original_p);
+    
+    bwt_printf("Finished destroying class BwTreeBase\n")
+    
+    return;
+  }
+  
+  /*
+   * PrepareThreadLocal() - Initialize thread local variables
+   *
+   * This function uses thread_num to initialize number of threads
+   */
+  void PrepareThreadLocal() {
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
     // for doing alignment
@@ -364,24 +393,7 @@ class BwTreeBase {
       new (gc_metadata_p + i) PaddedGCMetadata{};
     }
     
-    return;
-  }
-  
-  /*
-   * Destructor - Manually call destructor and then frees the memory 
-   */
-  ~BwTreeBase() {
-    // Manually call destructor
-    for(size_t i = 0;i < thread_num;i++) {
-      (gc_metadata_p + i)->~PaddedGCMetadata();
-    }
-    
-    // Free memory using original pointer rather than adjusted pointer
-    free(original_p);
-    
-    bwt_printf("Finished destroying class BwTreeBase\n")
-    
-    return;
+    return; 
   }
   
   /*
@@ -8034,7 +8046,7 @@ try_join_again:
      * AddGarbageNode() - This encapsulates BwTree::AddGarbageNode()
      */
     inline void AddGarbageNode(const BaseNode *node_p) {
-      tree_p->AddGarbageNode((void *)node_p); 
+      tree_p->AddGarbageNode(node_p); 
       
       return;
     }
@@ -9268,9 +9280,9 @@ try_join_again:
    * Since the thread local GC context is only accessed by this thread, this
    * process does not require any atomicity 
    */
-  void AddGarbageNode(BaseNode *node_p) {
+  void AddGarbageNode(const BaseNode *node_p) {
     GarbageNode *garbage_node_p = \
-      new GarbageNode{GetGlobalEpoch(), static_cast<void *>(node_p)};
+      new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
     assert(garbage_node_p != nullptr);
     
     // Link this new node to the end of the linked list
