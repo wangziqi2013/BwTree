@@ -8030,6 +8030,34 @@ try_join_again:
 
 #else  // #ifdef USE_OLD_EPOCH
 
+    /*
+     * AddGarbageNode() - This encapsulates BwTree::AddGarbageNode()
+     */
+    inline void AddGarbageNode(const BaseNode *node_p) {
+      tree_p->AddGarbageNode((void *)node_p); 
+      
+      return;
+    }
+    
+    inline EpochNode *JoinEpoch() {
+      tree_p->UpdateLastActiveEpoch();
+      
+      return nullptr;
+    }
+    
+    inline void LeaveEpoch(EpochNode *epoch_p) {
+      tree_p->UpdateLastActiveEpoch();
+      
+      (void)epoch_p;
+      return;
+    }
+    
+    inline void PerformGarbageCollection() {
+      tree_p->IncreaseEpoch();
+      
+      return;
+    }
+    
 #endif // #ifdef USE_OLD_EPOCH
 
     /*
