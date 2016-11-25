@@ -465,13 +465,14 @@ class BwTreeBase {
   uint64_t SummarizeGCEpoch() {
     assert(thread_num >= 1);
     
-    uint64_t min_epoch = gc_metadata_p[0].data.last_active_epoch;
+    // Use the first metadata's epoch as min and update it on the fly
+    uint64_t min_epoch = GetGCMetaData(0)->last_active_epoch;
     
     // This might not be executed if there is only one thread
     for(int i = 1;i < static_cast<int>(thread_num);i++) {
       // This will be compiled into using CMOV which is more efficient
       // than CMP and JMP
-      min_epoch = std::min(gc_metadata_p[i].data.last_active_epoch, min_epoch);
+      min_epoch = std::min(GetGCMetaData(i)->last_active_epoch, min_epoch);
     }
     
     return min_epoch;
