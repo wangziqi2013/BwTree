@@ -517,6 +517,9 @@ class BwTreeBase {
       callback(first_p->node_p);
       
       delete first_p;
+      assert(GetCurrentGCMetaData()->node_count != 0UL);
+      GetCurrentGCMetaData()->node_count--;
+      
       first_p = header_p->next_p;
     }
     
