@@ -430,14 +430,14 @@ class BwTreeBase {
   }
   
   /*
-   * GetGlocalEpoch() - Returns the current global epoch counter
+   * GetGlobalEpoch() - Returns the current global epoch counter
    *
    * Note that this function might return a stale value, which does not affect
    * correctness as long as unlinking the node form data structure is atomic
    * since all refreshing operations will read the same or smaller value
    * when it reads the counter
    */
-  inline uint64_t GetGlocalEpoch() {
+  inline uint64_t GetGlobalEpoch() {
     return epoch; 
   }
   
@@ -448,7 +448,7 @@ class BwTreeBase {
    * process does not require any atomicity 
    */
   void AddGarbageNode(void *node_p) {
-    GarbageNode *garbage_node_p = new GarbageNode{GetGlocalEpoch(), node_p};
+    GarbageNode *garbage_node_p = new GarbageNode{GetGlobalEpoch(), node_p};
     assert(garbage_node_p != nullptr);
     
     // Link this new node to the end of the linked list
