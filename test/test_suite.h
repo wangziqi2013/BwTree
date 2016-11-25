@@ -826,7 +826,7 @@ class Permutation {
     std::iota(data.begin(), data.end(), start);
     
     // The two arguments define a closed interval, NOT open interval
-    Random<IntType> rand{start, (IntType)start + (IntType)count - 1};
+    Random<IntType> rand{0, static_cast<IntType>(count) - 1};
     
     // Then swap all elements with a random position
     for(size_t i = 0;i < count;i++) {
