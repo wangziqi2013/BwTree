@@ -199,6 +199,10 @@ class BwTreeBase {
    */
   class GarbageNode {
    public:
+    // The epoch that this node is unlinked
+    // This do not have to be exact - just make sure it is no earlier than the
+    // actual epoch it is unlinked from the data structure
+    uint64_t delete_epoch;
     void *node_p;
     GarbageNode *next_p;
     
@@ -216,7 +220,12 @@ class BwTreeBase {
    */
   class GCMetaData {
    public: 
-    uint64_t counter;
+    // This is the last active epoch counter; all garbages before this counter
+    // are guaranteed to be not being used by this thread
+    // So if we take a global minimum of this value, that minimum could be
+    // be used as the global epoch value to decide whether a garbage node could
+    // be recycled
+    uint64_t last_active_epoch;
     
     // Make an empty object here to facilitate node deletion since we should put
     // a pointer on the first node when deleting its successors
@@ -226,7 +235,7 @@ class BwTreeBase {
      * Default constructor
      */
     GCMetaData() :
-      counter{0UL},
+      last_active_epoch{0UL},
       gc_header{}
     {}
   };
@@ -380,6 +389,16 @@ class BwTreeBase {
     epoch++;
     
     return;
+  }
+  
+  /*
+   * AddGarbageNode() - Adds a garbage node into the thread-local GC context
+   *
+   * Since the thread local GC context is only accessed by this thread, this
+   * process does not require any atomicity 
+   */
+  void AddGarbageNode(void *node_p) {
+    
   }
 };
 
