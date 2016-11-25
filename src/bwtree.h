@@ -324,12 +324,6 @@ class BwTreeBase {
   // We need to make it atomic since multiple threads might try to modify it
   uint64_t epoch;
   
-  // This is the call back function registered by derived class to 
-  // free its node
-  // The function differs by KeyType and ValueType, so we should not
-  // assume a single static function
-  std::function<void(void *)> callback;
-  
  public: 
 
   /*
@@ -372,18 +366,6 @@ class BwTreeBase {
    * Destructor - Manually call destructor and then frees the memory 
    */
   ~BwTreeBase() {
-    // First of all we clean all remaining garbage nodes
-    for(size_t i = 0;i < thread_num;i++) {
-      // Make it to be the maximum value possible such that all nodes
-      // will be collected
-      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(-1);
-      PerformGC(i);
-      
-      // This will collect all nodes since we have adjusted the currenr thread
-      // GC ID
-      assert(GetGCMetaData(i)->node_count == 0);
-    }
-    
     // Manually call destructor
     for(size_t i = 0;i < thread_num;i++) {
       (gc_metadata_p + i)->~PaddedGCMetadata();
@@ -395,6 +377,14 @@ class BwTreeBase {
     bwt_printf("Finished destroying class BwTreeBase\n")
     
     return;
+  }
+  
+  /*
+   * GetThreadNum() - Returns the number of thread currently this instance of
+   *                  BwTree is serving
+   */
+  inline size_t GetThreadNum() {
+    return thread_num; 
   }
   
   /*
@@ -464,36 +454,6 @@ class BwTreeBase {
   }
   
   /*
-   * AddGarbageNode() - Adds a garbage node into the thread-local GC context
-   *
-   * Since the thread local GC context is only accessed by this thread, this
-   * process does not require any atomicity 
-   */
-  void AddGarbageNode(void *node_p) {
-    GarbageNode *garbage_node_p = new GarbageNode{GetGlobalEpoch(), node_p};
-    assert(garbage_node_p != nullptr);
-    
-    // Link this new node to the end of the linked list
-    // and then update last_p
-    GetCurrentGCMetaData()->last_p->next_p = garbage_node_p;
-    GetCurrentGCMetaData()->last_p = garbage_node_p;
-    
-    // Update the counter 
-    GetCurrentGCMetaData()->node_count++;
-    
-    // It is possible that we could not free enough number of nodes to
-    // make it less than this threshold
-    // So it is important to let the epoch counter be constantly increased
-    // to guarantee progress
-    if(GetCurrentGCMetaData()->node_count > GC_NODE_COUNT_THREADHOLD) {
-      // Use current thread's gc id to perform GC
-      PerformGC(gc_id);
-    }
-    
-    return;
-  }
-  
-  /*
    * GetGCMetaData() - Returns the thread-local metadata for GC for a specified
    *                   thread
    */
@@ -532,53 +492,6 @@ class BwTreeBase {
     }
     
     return min_epoch;
-  }
-  
-  /*
-   * PerformGC() - This function performs GC on the current thread's garbage 
-   *               chain using the call back function
-   *
-   * Note that this function only collects for the current thread. Therefore
-   * this function does not have to be atomic since its 
-   *
-   * Note that this function should be used with thread_id, since it will
-   * also be called inside the destructor
-   */
-  void PerformGC(int thread_id) {
-    // First of all get the minimum epoch of all active threads
-    // This is the upper bound for deleted epoch in garbage node
-    uint64_t min_epoch = SummarizeGCEpoch();
-    
-    // This is the pointer we use to perform GC
-    // Note that we only fetch the metadata using the current thread-local id
-    GarbageNode *header_p = &GetGCMetaData(thread_id)->header; 
-    GarbageNode *first_p = header_p->next_p;
-    
-    // Then traverse the linked list
-    // Only reclaim memory when the deleted epoch < min epoch
-    while(first_p != nullptr && \
-          first_p->delete_epoch < min_epoch) {
-      // First unlink the current node from the linked list
-      // This could set it to nullptr
-      header_p->next_p = first_p->next_p;
-      
-      // Then use the callback to perform memory reclaimation
-      callback(first_p->node_p);
-      
-      delete first_p;
-      assert(GetCurrentGCMetaData()->node_count != 0UL);
-      GetCurrentGCMetaData()->node_count--;
-      
-      first_p = header_p->next_p;
-    }
-    
-    // If we have freed all nodes in the linked list we should 
-    // reset last_p to the header
-    if(first_p == nullptr) {
-      GetCurrentGCMetaData()->last_p = header_p;
-    }
-    
-    return;
   }
 };
 
@@ -2724,6 +2637,18 @@ class BwTree : public BwTreeBase {
   ~BwTree() {
     bwt_printf("Next node ID at exit: %lu\n", next_unused_node_id.load());
     bwt_printf("Destructor: Free tree nodes\n");
+
+    // First of all we clean all remaining garbage nodes
+    for(size_t i = 0;i < GetThreadNum();i++) {
+      // Make it to be the maximum value possible such that all nodes
+      // will be collected
+      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(-1);
+      PerformGC(i);
+      
+      // This will collect all nodes since we have adjusted the currenr thread
+      // GC ID
+      assert(GetGCMetaData(i)->node_count == 0);
+    }
 
     // Free all nodes recursively
     size_t node_count = FreeNodeByNodeID(root_id.load());
@@ -9297,6 +9222,84 @@ try_join_again:
       return;
     }
   }; // ForwardIterator
+  
+  /*
+   * AddGarbageNode() - Adds a garbage node into the thread-local GC context
+   *
+   * Since the thread local GC context is only accessed by this thread, this
+   * process does not require any atomicity 
+   */
+  void AddGarbageNode(BaseNode *node_p) {
+    GarbageNode *garbage_node_p = \
+      new GarbageNode{GetGlobalEpoch(), static_cast<void *>(node_p)};
+    assert(garbage_node_p != nullptr);
+    
+    // Link this new node to the end of the linked list
+    // and then update last_p
+    GetCurrentGCMetaData()->last_p->next_p = garbage_node_p;
+    GetCurrentGCMetaData()->last_p = garbage_node_p;
+    
+    // Update the counter 
+    GetCurrentGCMetaData()->node_count++;
+    
+    // It is possible that we could not free enough number of nodes to
+    // make it less than this threshold
+    // So it is important to let the epoch counter be constantly increased
+    // to guarantee progress
+    if(GetCurrentGCMetaData()->node_count > GC_NODE_COUNT_THREADHOLD) {
+      // Use current thread's gc id to perform GC
+      PerformGC(gc_id);
+    }
+    
+    return;
+  }
+  
+  /*
+   * PerformGC() - This function performs GC on the current thread's garbage 
+   *               chain using the call back function
+   *
+   * Note that this function only collects for the current thread. Therefore
+   * this function does not have to be atomic since its 
+   *
+   * Note that this function should be used with thread_id, since it will
+   * also be called inside the destructor
+   */
+  void PerformGC(int thread_id) {
+    // First of all get the minimum epoch of all active threads
+    // This is the upper bound for deleted epoch in garbage node
+    uint64_t min_epoch = SummarizeGCEpoch();
+    
+    // This is the pointer we use to perform GC
+    // Note that we only fetch the metadata using the current thread-local id
+    GarbageNode *header_p = &GetGCMetaData(thread_id)->header; 
+    GarbageNode *first_p = header_p->next_p;
+    
+    // Then traverse the linked list
+    // Only reclaim memory when the deleted epoch < min epoch
+    while(first_p != nullptr && \
+          first_p->delete_epoch < min_epoch) {
+      // First unlink the current node from the linked list
+      // This could set it to nullptr
+      header_p->next_p = first_p->next_p;
+      
+      // Then free memory
+      epoch_manager.FreeEpochDeltaChain((const BaseNode *)first_p->node_p);
+      
+      delete first_p;
+      assert(GetCurrentGCMetaData()->node_count != 0UL);
+      GetCurrentGCMetaData()->node_count--;
+      
+      first_p = header_p->next_p;
+    }
+    
+    // If we have freed all nodes in the linked list we should 
+    // reset last_p to the header
+    if(first_p == nullptr) {
+      GetCurrentGCMetaData()->last_p = header_p;
+    }
+    
+    return;
+  }
 
 }; // class BwTree
 
