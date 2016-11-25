@@ -238,12 +238,21 @@ class BwTreeBase {
     // a pointer on the first node when deleting its successors
     GarbageNode gc_header; 
     
+    // This points to the last node in the garbage node linked list
+    // We always append new nodes to this pointer, and thus inside one
+    // node's context these garbage nodes are always sorted, from low
+    // epoch to high epoch. This facilitates memory reclaimation since we
+    // just start from the lowest epoch garbage and traverse the linked list
+    // until we see an epoch >= GC epoch
+    GarbageNode *last_p;
+    
     /*
      * Default constructor
      */
     GCMetaData() :
       last_active_epoch{0UL},
-      gc_header{}
+      gc_header{},
+      last_p{&gc_header}
     {}
   };
   
@@ -399,12 +408,25 @@ class BwTreeBase {
   }
   
   /*
+   * GetCurrentEpoch() - Returns the current epoch counter
+   *
+   * Note that this function might return a stale value, which does not affect
+   * correctness as long as unlinking the node form data structure is atomic
+   * since all refreshing operations will read the same or smaller value
+   * when it reads the counter
+   */
+  inline uint64_t GetCurrentEpoch() {
+    return epoch; 
+  }
+  
+  /*
    * AddGarbageNode() - Adds a garbage node into the thread-local GC context
    *
    * Since the thread local GC context is only accessed by this thread, this
    * process does not require any atomicity 
    */
   void AddGarbageNode(void *node_p) {
+    GarbageNode *garbage_node_p = new GarbageNode{GetCurrentEpoch(), node_p};
     
   }
 };
