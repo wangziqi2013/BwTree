@@ -86,6 +86,11 @@ using NodeID = uint64_t;
 #define ALL_PUBLIC
 
 /*
+ * USE_OLD_EPOCH - This flag switches between old epoch and new epoch mechanism
+ */
+#define USE_OLD_EPOCH
+
+/*
  * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
  */
 #define BWTREE_TEMPLATE_ARGUMENTS template <typename KeyType, \
@@ -7903,6 +7908,8 @@ before_switch:
       return;
     }
 
+#ifdef USE_OLD_EPOCH 
+
     /*
      * AddGarbageNode() - Add garbage node into the current epoch
      *
@@ -8006,6 +8013,24 @@ try_join_again:
 
       return;
     }
+    
+    /*
+     * PerformGarbageCollection() - Actual job of GC is done here
+     *
+     * We need to separate the GC loop and actual GC routine to enable
+     * external threads calling the function while also allows BwTree maintains
+     * its own GC thread using the loop
+     */
+    void PerformGarbageCollection() {
+      ClearEpoch();
+      CreateNewEpoch();
+      
+      return;
+    }
+
+#else  // #ifdef USE_OLD_EPOCH
+
+#endif // #ifdef USE_OLD_EPOCH
 
     /*
      * FreeEpochDeltaChain() - Free a delta chain (used by EpochManager)
@@ -8281,20 +8306,6 @@ try_join_again:
         head_epoch_p = next_epoch_node_p;
       } // while(1) through epoch nodes
 
-      return;
-    }
-
-    /*
-     * PerformGarbageCollection() - Actual job of GC is done here
-     *
-     * We need to separate the GC loop and actual GC routine to enable
-     * external threads calling the function while also allows BwTree maintains
-     * its own GC thread using the loop
-     */
-    void PerformGarbageCollection() {
-      ClearEpoch();
-      CreateNewEpoch();
-      
       return;
     }
 
