@@ -88,7 +88,7 @@ using NodeID = uint64_t;
 /*
  * USE_OLD_EPOCH - This flag switches between old epoch and new epoch mechanism
  */
-#define USE_OLD_EPOCH
+//#define USE_OLD_EPOCH
 
 /*
  * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
@@ -2820,7 +2820,7 @@ class BwTree : public BwTreeBase {
     mapping_table[node_id] = nullptr;
 
     // Next time if we need a node ID we just push back from this
-    free_node_id_list.SingleThreadPush(node_id);
+    //free_node_id_list.SingleThreadPush(node_id);
 
     return;
   }
@@ -9384,8 +9384,11 @@ try_join_again:
    *
    * Since the thread local GC context is only accessed by this thread, this
    * process does not require any atomicity 
+   *
+   * This is always called by the thread owning thread local data, so we
+   * do not have to worry about thread identity issues
    */
-  void AddGarbageNode(const BaseNode *node_p) {      
+  void AddGarbageNode(const BaseNode *node_p) {
     GarbageNode *garbage_node_p = \
       new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
     assert(garbage_node_p != nullptr);
@@ -9418,7 +9421,8 @@ try_join_again:
    * this function does not have to be atomic since its 
    *
    * Note that this function should be used with thread_id, since it will
-   * also be called inside the destructor
+   * also be called inside the destructor - so we could not rely on
+   * GetCurrentGCMetaData()
    */
   void PerformGC(int thread_id) {
     // First of all get the minimum epoch of all active threads
@@ -9442,8 +9446,8 @@ try_join_again:
       epoch_manager.FreeEpochDeltaChain((const BaseNode *)first_p->node_p);
       
       delete first_p;
-      assert(GetCurrentGCMetaData()->node_count != 0UL);
-      GetCurrentGCMetaData()->node_count--;
+      assert(GetGCMetaData(thread_id)->node_count != 0UL);
+      GetGCMetaData(thread_id)->node_count--;
       
       first_p = header_p->next_p;
     }
@@ -9451,7 +9455,7 @@ try_join_again:
     // If we have freed all nodes in the linked list we should 
     // reset last_p to the header
     if(first_p == nullptr) {
-      GetCurrentGCMetaData()->last_p = header_p;
+      GetGCMetaData(thread_id)->last_p = header_p;
     }
     
     return;
