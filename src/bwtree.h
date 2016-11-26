@@ -88,7 +88,7 @@ using NodeID = uint64_t;
 /*
  * USE_OLD_EPOCH - This flag switches between old epoch and new epoch mechanism
  */
-#define USE_OLD_EPOCH
+//#define USE_OLD_EPOCH
 
 /*
  * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
@@ -331,7 +331,7 @@ class BwTreeBase {
   // We need to make it atomic since multiple threads might try to modify it
   uint64_t epoch;
   
- private:
+ public:
    
   /*
    * DestroyThreadLocal() - Destroies thread local
@@ -398,6 +398,15 @@ class BwTreeBase {
     
     return; 
   } 
+  
+  /*
+   * SetThreadNum() - Sets number of threads manually
+   */
+  void SetThreadNum(size_t p_thread_num) {
+    thread_num = p_thread_num;
+    
+    return;
+  }
   
  public: 
 
@@ -2750,7 +2759,7 @@ class BwTree : public BwTreeBase {
     ClearThreadLocalGarbage();
     DestroyThreadLocal();
     
-    thread_num = p_thread_num;
+    SetThreadNum(p_thread_num);
     
     // 3. Allocate a new array based on the new given size
     PrepareThreadLocal();
