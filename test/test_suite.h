@@ -151,12 +151,14 @@ void LaunchParallelTestID(TreeType *tree_p,
       tree_p->AssignGCID(thread_id);
     }
     
-    auto ret = fn(thread_id, args...);
+    fn(thread_id, args...);
     
-    // Make sure it does not stand on the way of other threads
-    tree_p->UnregisterThread(thread_id);
+    if(tree_p != nullptr) {
+      // Make sure it does not stand on the way of other threads
+      tree_p->UnregisterThread(thread_id);
+    }
     
-    return ret;
+    return;
   };
 
   // Launch a group of threads
@@ -167,6 +169,11 @@ void LaunchParallelTestID(TreeType *tree_p,
   // Join the threads with the main thread
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
     thread_group[thread_itr].join();
+  }
+  
+  // Restore to single thread mode after all threads have finished
+  if(tree_p != nullptr) {
+    tree_p->UpdateThreadLocal(1);
   }
   
   return;
