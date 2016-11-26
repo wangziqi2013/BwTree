@@ -331,35 +331,8 @@ class BwTreeBase {
   // We need to make it atomic since multiple threads might try to modify it
   uint64_t epoch;
   
- public: 
-
-  /*
-   * Constructor - Initialize GC data structure
-   */
-  BwTreeBase() :
-    gc_metadata_p{nullptr},
-    original_p{nullptr},
-    thread_num{total_thread_num.load()},
-    epoch{0UL} {
-    
-    // Allocate memory for thread local data structure
-    PrepareThreadLocal();
-    
-    return;
-  }
-  
-  /*
-   * Destructor - Manually call destructor and then frees the memory 
-   */
-  ~BwTreeBase() {
-    // Frees all metadata
-    DestroyThreadLocal();
-    
-    bwt_printf("Finished destroying class BwTreeBase\n")
-    
-    return;
-  }
-  
+ private:
+   
   /*
    * DestroyThreadLocal() - Destroies thread local
    *
@@ -420,6 +393,35 @@ class BwTreeBase {
     }
     
     return; 
+  } 
+  
+ public: 
+
+  /*
+   * Constructor - Initialize GC data structure
+   */
+  BwTreeBase() :
+    gc_metadata_p{nullptr},
+    original_p{nullptr},
+    thread_num{total_thread_num.load()},
+    epoch{0UL} {
+    
+    // Allocate memory for thread local data structure
+    PrepareThreadLocal();
+    
+    return;
+  }
+  
+  /*
+   * Destructor - Manually call destructor and then frees the memory 
+   */
+  ~BwTreeBase() {
+    // Frees all metadata
+    DestroyThreadLocal();
+    
+    bwt_printf("Finished destroying class BwTreeBase\n")
+    
+    return;
   }
   
   /*
