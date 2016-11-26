@@ -346,6 +346,8 @@ class BwTreeBase {
    * This function must be called when the garbage pool is empty
    */
   void DestroyThreadLocal() {
+    bwt_printf("Destroy %lu thread local slots\n", thread_num);
+    
     // There must already be metadata allocated
     assert(original_p != nullptr);
     
@@ -368,6 +370,8 @@ class BwTreeBase {
    * This function uses thread_num to initialize number of threads
    */
   void PrepareThreadLocal() {
+    bwt_printf("Preparing %lu thread local slots\n", thread_num);
+    
     // This is the unaligned base address
     // We allocate one more element than requested as the buffer
     // for doing alignment
@@ -430,6 +434,17 @@ class BwTreeBase {
    */
   inline size_t GetThreadNum() {
     return thread_num; 
+  }
+  
+  /*
+   * AssignGCID() - Assigns a gc_id manually
+   *
+   * This is mainly used for debugging
+   */
+  inline void AssignGCID(int p_gc_id) {
+    gc_id = p_gc_id;
+    
+    return;
   }
   
   /*
