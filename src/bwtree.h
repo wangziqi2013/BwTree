@@ -86,6 +86,11 @@ using NodeID = uint64_t;
 #define ALL_PUBLIC
 
 /*
+ * USE_OLD_EPOCH - This flag switches between old epoch and new epoch mechanism
+ */
+//#define USE_OLD_EPOCH
+
+/*
  * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
  */
 #define BWTREE_TEMPLATE_ARGUMENTS template <typename KeyType, \
@@ -99,6 +104,9 @@ using NodeID = uint64_t;
 #ifdef BWTREE_PELOTON
 namespace peloton {
 namespace index {
+#else
+namespace wangziqi2013 {
+namespace bwtree {
 #endif
 
 // This needs to be always here
@@ -151,6 +159,8 @@ extern bool print_flag;
 #define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
 
+#define PREALLOCATE_THREAD_NUM ((size_t)1024)
+
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
  *                               initialize it using placement new and then 
@@ -176,6 +186,392 @@ extern bool print_flag;
                                                         &node_p->GetLowKeyPair(), \
                                                         sizeof(T)) \
                                                     ) T{__VA_ARGS__} ))
+
+/*
+ * class BwTreeBase - Base class of BwTree that stores some common members
+ */
+class BwTreeBase {
+  // This is the presumed size of cache line
+  static constexpr size_t CACHE_LINE_SIZE = 64;
+  
+  // This is the mask we used for address alignment (AND with this)
+  static constexpr size_t CACHE_LINE_MASK = ~(CACHE_LINE_SIZE - 1);
+  
+  // We invoke the GC procedure after this has been reached
+  static constexpr size_t GC_NODE_COUNT_THREADHOLD = 1024;
+  
+  /*
+   * class GarbageNode - Garbage node used to represent delayed allocation
+   *
+   * Note that since we could not know the actual definition of BaseNode here,
+   * all garbage pointer to BaseNode should be represented as void *, and are
+   * casted to appropriate type manually
+   */
+  class GarbageNode {
+   public:
+    // The epoch that this node is unlinked
+    // This do not have to be exact - just make sure it is no earlier than the
+    // actual epoch it is unlinked from the data structure
+    uint64_t delete_epoch;
+    void *node_p;
+    GarbageNode *next_p;
+    
+    /*
+     * Constructor
+     */
+    GarbageNode(uint64_t p_delete_epoch, void *p_node_p) :
+      delete_epoch{p_delete_epoch},
+      node_p{p_node_p},
+      next_p{nullptr}
+    {}
+    
+    GarbageNode() :
+      delete_epoch{0UL},
+      node_p{nullptr},
+      next_p{nullptr}
+    {}
+  };
+  
+  /*
+   * class GCMetaData - Metadata for performing GC on per-thread basis
+   */
+  class GCMetaData {
+   public: 
+    // This is the last active epoch counter; all garbages before this counter
+    // are guaranteed to be not being used by this thread
+    // So if we take a global minimum of this value, that minimum could be
+    // be used as the global epoch value to decide whether a garbage node could
+    // be recycled
+    uint64_t last_active_epoch;
+    
+    // We only need a pointer
+    GarbageNode header; 
+    
+    // This points to the last node in the garbage node linked list
+    // We always append new nodes to this pointer, and thus inside one
+    // node's context these garbage nodes are always sorted, from low
+    // epoch to high epoch. This facilitates memory reclaimation since we
+    // just start from the lowest epoch garbage and traverse the linked list
+    // until we see an epoch >= GC epoch
+    GarbageNode *last_p;
+    
+    // The number of nodes inside this GC context
+    // We use this as a threshold to trigger GC
+    uint64_t node_count;
+    
+    /*
+     * Default constructor
+     */
+    GCMetaData() :
+      last_active_epoch{0UL},
+      header{},
+      last_p{&header},
+      node_count{0UL}
+    {}
+  };
+  
+  // Make sure class Data does not exceed one cache line
+  static_assert(sizeof(GCMetaData) < CACHE_LINE_SIZE,
+                "class Data size exceeds cache line length!");
+  
+  /*
+   * class PaddedData - Padded data to the length of a cache line 
+   */
+  template<typename DataType, size_t Alignment> 
+  class PaddedData {
+   public: 
+    // This is the alignment of padded data - we adjust its alignment
+    // after malloc() a chunk of memory
+    static constexpr size_t ALIGNMENT = Alignment;
+    
+    // This is where real data goes
+    DataType data;
+    
+    /*
+     * Default constructor - This is called if DataType could be initialized
+     *                       without any constructor
+     */
+    PaddedData() :
+      data{}
+    {}
+    
+   private:
+    char padding[ALIGNMENT - sizeof(DataType)];  
+  };
+  
+  using PaddedGCMetadata = PaddedData<GCMetaData, CACHE_LINE_SIZE>;
+  
+  static_assert(sizeof(PaddedGCMetadata) == PaddedGCMetadata::ALIGNMENT, 
+                "class PaddedGCMetadata size does"
+                " not conform to the alignment!");
+ 
+ private: 
+  // This is used as the garbage collection ID, and is maintained in a per
+  // thread level
+  // This is initialized to -1 in order to distinguish between registered 
+  // threads and unregistered threads
+  static thread_local int gc_id;
+  
+  // This is used to count the number of threads participating GC process
+  // We use this number to initialize GC data structure
+  static std::atomic<size_t> total_thread_num;
+  
+  // This is the array being allocated for performing GC
+  // The allocation aligns its address to cache line boundary
+  PaddedGCMetadata *gc_metadata_p;
+  
+  // We use this to compute aligned memory address to be
+  // used as the gc metadata array
+  unsigned char *original_p;
+  
+  // This is the number of thread that this instance could support
+  size_t thread_num;
+  
+  // This is current epoch
+  // We need to make it atomic since multiple threads might try to modify it
+  uint64_t epoch;
+  
+ public:
+   
+  /*
+   * DestroyThreadLocal() - Destroies thread local
+   *
+   * This function calls destructor for each metadata element and then
+   * frees the memory
+   *
+   * NOTE: We should also free all garbage nodes before this is called. However
+   * since we do not know the type of garbage nodes yet, we should call the
+   * function inside BwTree destructor
+   *
+   * This function must be called when the garbage pool is empty
+   */
+  void DestroyThreadLocal() {
+    bwt_printf("Destroy %lu thread local slots\n", thread_num);
+    
+    // There must already be metadata allocated
+    assert(original_p != nullptr);
+    
+    // Manually call destructor
+    for(size_t i = 0;i < thread_num;i++) {
+      assert((gc_metadata_p + i)->data.header.next_p == nullptr);
+      
+      (gc_metadata_p + i)->~PaddedGCMetadata();
+    }
+    
+    // Free memory using original pointer rather than adjusted pointer
+    free(original_p);
+    
+    return;
+  }
+  
+  /*
+   * PrepareThreadLocal() - Initialize thread local variables
+   *
+   * This function uses thread_num to initialize number of threads
+   */
+  void PrepareThreadLocal() {
+    bwt_printf("Preparing %lu thread local slots\n", thread_num);
+    
+    // This is the unaligned base address
+    // We allocate one more element than requested as the buffer
+    // for doing alignment
+    original_p = static_cast<unsigned char *>(
+      malloc(CACHE_LINE_SIZE * (thread_num + 1)));
+    assert(original_p != nullptr);
+    
+    // Align the address to cache line boundary
+    gc_metadata_p = reinterpret_cast<PaddedGCMetadata *>(
+      (reinterpret_cast<size_t>(original_p) + CACHE_LINE_SIZE - 1) & \
+        CACHE_LINE_MASK);
+    
+    // Make sure it is aligned
+    assert(((size_t)gc_metadata_p % CACHE_LINE_SIZE) == 0);
+    
+    // Make sure we do not overflow the chunk of memory
+    assert(((size_t)gc_metadata_p + thread_num * CACHE_LINE_SIZE) <= \
+             ((size_t)original_p + (thread_num + 1) * CACHE_LINE_SIZE));
+    
+    // At last call constructor of the class; we use placement new
+    for(size_t i = 0;i < thread_num;i++) {
+      new (gc_metadata_p + i) PaddedGCMetadata{};
+    }
+    
+    return; 
+  } 
+  
+  /*
+   * SetThreadNum() - Sets number of threads manually
+   */
+  void SetThreadNum(size_t p_thread_num) {
+    thread_num = p_thread_num;
+    
+    return;
+  }
+  
+ public: 
+
+  /*
+   * Constructor - Initialize GC data structure
+   */
+  BwTreeBase() :
+    gc_metadata_p{nullptr},
+    original_p{nullptr},
+    thread_num{total_thread_num.load()},
+    epoch{0UL} {
+    
+    // Allocate memory for thread local data structure
+    PrepareThreadLocal();
+    
+    return;
+  }
+  
+  /*
+   * Destructor - Manually call destructor and then frees the memory 
+   */
+  ~BwTreeBase() {
+    // Frees all metadata
+    DestroyThreadLocal();
+    
+    bwt_printf("Finished destroying class BwTreeBase\n")
+    
+    return;
+  }
+    
+  /*
+   * GetThreadNum() - Returns the number of thread currently this instance of
+   *                  BwTree is serving
+   */
+  inline size_t GetThreadNum() {
+    return thread_num; 
+  }
+  
+  /*
+   * AssignGCID() - Assigns a gc_id manually
+   *
+   * This is mainly used for debugging
+   */
+  inline void AssignGCID(int p_gc_id) {
+    gc_id = p_gc_id;
+    
+    return;
+  }
+  
+  /*
+   * RegisterThread() - Registers a thread for GC for all instances of BwTree
+   *                    in the current process's address space
+   *
+   * This function assigns an ID to a thread starting from 0, which could be 
+   * used as thread ID for the garbage collection process. 
+   *
+   * Also note that only threads registered before an instance is created will
+   * be considered as being eligible for GC for that thread
+   *
+   * This function does not return any value, and instead it uses an atomic 
+   * counter to counter the number of threads currently in this system, and
+   * assigns the thread ID to a thread local variable called gc_id decleared
+   * inside this class
+   *
+   * Each thread being allocated a GC ID has a context for garbage collection
+   * that is aligned to cache lines. The context will be allocated for every
+   * thread being registered, even if it has already exited. Therefore, this
+   * approach is only suitable for thread pools where the number of threads
+   * is fixed at startup time.
+   */
+  static void RegisterThread() {
+    gc_id = total_thread_num.fetch_add(1);
+    
+    return;
+  }
+  
+  /*
+   * IncreaseEpoch() - Go to the next epoch by increasing the counter
+   *
+   * Note that this should not be called by worker threads since 
+   * it will cause contention
+   */
+  inline void IncreaseEpoch() {
+    epoch++;
+    
+    return;
+  }
+  
+  /*
+   * UpdateLastActiveEpoch() - Updates the last active epoch field of thread 
+   *                           local storage
+   *
+   * This is the core of GC algorithm. Its implication is that all garbage nodes
+   * unlinked before this epoch could be safely collected since at the time 
+   * the thread local counter is updated, we know all references to shared
+   * resources have been released
+   */
+  inline void UpdateLastActiveEpoch() {
+    GetCurrentGCMetaData()->last_active_epoch = GetGlobalEpoch();
+    
+    return;
+  }
+  
+  /*
+   * UnregisterThread() - Unregisters a thread by setting its epoch to 
+   *                      0xFFFFFFFFFFFFFFFF such that it will not be considered
+   *                      for GC
+   */
+  inline void UnregisterThread(int thread_id) {
+    GetGCMetaData(thread_id)->last_active_epoch = static_cast<uint64_t>(-1);
+  }
+  
+  /*
+   * GetGlobalEpoch() - Returns the current global epoch counter
+   *
+   * Note that this function might return a stale value, which does not affect
+   * correctness as long as unlinking the node form data structure is atomic
+   * since all refreshing operations will read the same or smaller value
+   * when it reads the counter
+   */
+  inline uint64_t GetGlobalEpoch() {
+    return epoch; 
+  }
+  
+  /*
+   * GetGCMetaData() - Returns the thread-local metadata for GC for a specified
+   *                   thread
+   */
+  inline GCMetaData *GetGCMetaData(int thread_id) {
+    // The thread ID must be within the range
+    assert(thread_id >= 0 && thread_id < static_cast<int>(thread_num));
+    
+    return &(gc_metadata_p + thread_id)->data;
+  }
+  
+  /*
+   * GetCurrentGCMetaData() - Returns the metadata for the current thread
+   */
+  inline GCMetaData *GetCurrentGCMetaData() {
+    return GetGCMetaData(gc_id); 
+  }
+  
+  /*
+   * SummarizeGCEpoch() - Returns the minimum epochs among the current epoch
+   *                      counters of all threads
+   *
+   * Note that if this is called then it must be true that there are at least
+   * one thread participating into the GC process
+   */
+  uint64_t SummarizeGCEpoch() {
+    assert(thread_num >= 1);
+    
+    // Use the first metadata's epoch as min and update it on the fly
+    uint64_t min_epoch = GetGCMetaData(0)->last_active_epoch;
+    
+    // This might not be executed if there is only one thread
+    for(int i = 1;i < static_cast<int>(thread_num);i++) {
+      // This will be compiled into using CMOV which is more efficient
+      // than CMP and JMP
+      min_epoch = std::min(GetGCMetaData(i)->last_active_epoch, min_epoch);
+    }
+    
+    return min_epoch;
+  }
+};
 
 /*
  * class BwTree - Lock-free BwTree index implementation
@@ -227,7 +623,7 @@ template <typename KeyType,
           typename KeyHashFunc = std::hash<KeyType>,
           typename ValueEqualityChecker = std::equal_to<ValueType>,
           typename ValueHashFunc = std::hash<ValueType>>
-class BwTree {
+class BwTree : public BwTreeBase {
  /*
   * Private & Public declaration
   */
@@ -2251,6 +2647,7 @@ class BwTree {
          KeyHashFunc p_key_hash_obj = KeyHashFunc{},
          ValueEqualityChecker p_value_eq_obj = ValueEqualityChecker{},
          ValueHashFunc p_value_hash_obj = ValueHashFunc{}) :
+      BwTreeBase(),
       // Key comparator, equality checker and hasher
       key_cmp_obj{p_key_cmp_obj},
       key_eq_obj{p_key_eq_obj},
@@ -2320,11 +2717,66 @@ class BwTree {
     bwt_printf("Next node ID at exit: %lu\n", next_unused_node_id.load());
     bwt_printf("Destructor: Free tree nodes\n");
 
+    // Clear all garbage nodes awaiting cleaning
+    // First of all it should set all last active epoch counter to -1
+    ClearThreadLocalGarbage();
+
     // Free all nodes recursively
     size_t node_count = FreeNodeByNodeID(root_id.load());
 
     bwt_printf("Freed %lu tree nodes\n", node_count);
 
+    return;
+  }
+  
+  /*
+   * ClearThreadLocalGarbage() - Clears all thread local garbage
+   *
+   * This must be called under single threaded environment
+   */
+  void ClearThreadLocalGarbage() {
+    // First of all we should set all last active counter to -1 to
+    // guarantee progress to clear all epoches
+    for(size_t i = 0;i < GetThreadNum();i++) {
+      UnregisterThread(i);
+    }
+    
+    for(size_t i = 0;i < GetThreadNum();i++) {
+      // Here all epoch counters have been set to 0xFFFFFFFFFFFFFFFF
+      // so GC should always succeed
+      PerformGC(i);
+      
+      // This will collect all nodes since we have adjusted the currenr thread
+      // GC ID
+      assert(GetGCMetaData(i)->node_count == 0);
+    }
+    
+    return;
+  }
+  
+  /*
+   * UpdateThreadLocal() - Frees all memorys currently existing and then 
+   *                       reallocate a chunk of memory to represent the 
+   *                       thread local variables
+   *
+   * This function is majorly used for debugging pruposes. The argument is
+   * the new number of threads we want to support here for doing experiments
+   */
+  void UpdateThreadLocal(size_t p_thread_num) {
+    bwt_printf("Updating thread-local array to length %lu......\n", 
+               p_thread_num);
+    
+    // 1. Frees all pending memory chunks
+    // 2. Frees the thread local array
+    ClearThreadLocalGarbage(); 
+    DestroyThreadLocal();
+    
+    SetThreadNum(p_thread_num);
+    
+    // 3. Allocate a new array based on the new given size
+    // Here all epoches are restored to 0
+    PrepareThreadLocal();
+    
     return;
   }
 
@@ -2368,7 +2820,7 @@ class BwTree {
     mapping_table[node_id] = nullptr;
 
     // Next time if we need a node ID we just push back from this
-    free_node_id_list.SingleThreadPush(node_id);
+    //free_node_id_list.SingleThreadPush(node_id);
 
     return;
   }
@@ -7238,9 +7690,9 @@ before_switch:
    * everytime to force GC thred to at least take a look into the epoch
    * counter.
    */
-  bool NeedGarbageCollection() {
-    return true;
-  }
+  //bool NeedGarbageCollection() {
+  //  return true;
+  //}
   
   /*
    * PerformGarbageCollection() - Interface function for external users to
@@ -7251,13 +7703,13 @@ before_switch:
    * control GC using external threads. This function is left as a convenient
    * interface for external threads to do garbage collection.
    */
-  void PerformGarbageCollection() {
+  //void PerformGarbageCollection() {
     // This function creates a new epoch node, and then checks
     // epoch counter for exiatsing nodes.
-    epoch_manager.PerformGarbageCollection();
+  //  epoch_manager.PerformGarbageCollection();
 
-    return;
-  }
+  //  return;
+  //}
 
  /*
   * Private Method Implementation
@@ -7573,6 +8025,8 @@ before_switch:
       return;
     }
 
+#ifdef USE_OLD_EPOCH 
+
     /*
      * AddGarbageNode() - Add garbage node into the current epoch
      *
@@ -7676,6 +8130,52 @@ try_join_again:
 
       return;
     }
+    
+    /*
+     * PerformGarbageCollection() - Actual job of GC is done here
+     *
+     * We need to separate the GC loop and actual GC routine to enable
+     * external threads calling the function while also allows BwTree maintains
+     * its own GC thread using the loop
+     */
+    void PerformGarbageCollection() {
+      ClearEpoch();
+      CreateNewEpoch();
+      
+      return;
+    }
+
+#else  // #ifdef USE_OLD_EPOCH
+
+    /*
+     * AddGarbageNode() - This encapsulates BwTree::AddGarbageNode()
+     */
+    inline void AddGarbageNode(const BaseNode *node_p) {
+      tree_p->AddGarbageNode(node_p); 
+      
+      return;
+    }
+    
+    inline EpochNode *JoinEpoch() {
+      tree_p->UpdateLastActiveEpoch();
+      
+      return nullptr;
+    }
+    
+    inline void LeaveEpoch(EpochNode *epoch_p) {
+      tree_p->UpdateLastActiveEpoch();
+      
+      (void)epoch_p;
+      return;
+    }
+    
+    inline void PerformGarbageCollection() {
+      tree_p->IncreaseEpoch();
+      
+      return;
+    }
+    
+#endif // #ifdef USE_OLD_EPOCH
 
     /*
      * FreeEpochDeltaChain() - Free a delta chain (used by EpochManager)
@@ -7951,20 +8451,6 @@ try_join_again:
         head_epoch_p = next_epoch_node_p;
       } // while(1) through epoch nodes
 
-      return;
-    }
-
-    /*
-     * PerformGarbageCollection() - Actual job of GC is done here
-     *
-     * We need to separate the GC loop and actual GC routine to enable
-     * external threads calling the function while also allows BwTree maintains
-     * its own GC thread using the loop
-     */
-    void PerformGarbageCollection() {
-      ClearEpoch();
-      CreateNewEpoch();
-      
       return;
     }
 
@@ -8892,12 +9378,92 @@ try_join_again:
       return;
     }
   }; // ForwardIterator
+  
+  /*
+   * AddGarbageNode() - Adds a garbage node into the thread-local GC context
+   *
+   * Since the thread local GC context is only accessed by this thread, this
+   * process does not require any atomicity 
+   *
+   * This is always called by the thread owning thread local data, so we
+   * do not have to worry about thread identity issues
+   */
+  void AddGarbageNode(const BaseNode *node_p) {
+    GarbageNode *garbage_node_p = \
+      new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
+    assert(garbage_node_p != nullptr);
+    
+    // Link this new node to the end of the linked list
+    // and then update last_p
+    GetCurrentGCMetaData()->last_p->next_p = garbage_node_p;
+    GetCurrentGCMetaData()->last_p = garbage_node_p;
+    
+    // Update the counter 
+    GetCurrentGCMetaData()->node_count++;
+    
+    // It is possible that we could not free enough number of nodes to
+    // make it less than this threshold
+    // So it is important to let the epoch counter be constantly increased
+    // to guarantee progress
+    if(GetCurrentGCMetaData()->node_count > GC_NODE_COUNT_THREADHOLD) {
+      // Use current thread's gc id to perform GC
+      PerformGC(gc_id);
+    }
+    
+    return;
+  }
+  
+  /*
+   * PerformGC() - This function performs GC on the current thread's garbage 
+   *               chain using the call back function
+   *
+   * Note that this function only collects for the current thread. Therefore
+   * this function does not have to be atomic since its 
+   *
+   * Note that this function should be used with thread_id, since it will
+   * also be called inside the destructor - so we could not rely on
+   * GetCurrentGCMetaData()
+   */
+  void PerformGC(int thread_id) {
+    // First of all get the minimum epoch of all active threads
+    // This is the upper bound for deleted epoch in garbage node
+    uint64_t min_epoch = SummarizeGCEpoch();
+    
+    // This is the pointer we use to perform GC
+    // Note that we only fetch the metadata using the current thread-local id
+    GarbageNode *header_p = &GetGCMetaData(thread_id)->header; 
+    GarbageNode *first_p = header_p->next_p;
+    
+    // Then traverse the linked list
+    // Only reclaim memory when the deleted epoch < min epoch
+    while(first_p != nullptr && \
+          first_p->delete_epoch < min_epoch) {
+      // First unlink the current node from the linked list
+      // This could set it to nullptr
+      header_p->next_p = first_p->next_p;
+      
+      // Then free memory
+      epoch_manager.FreeEpochDeltaChain((const BaseNode *)first_p->node_p);
+      
+      delete first_p;
+      assert(GetGCMetaData(thread_id)->node_count != 0UL);
+      GetGCMetaData(thread_id)->node_count--;
+      
+      first_p = header_p->next_p;
+    }
+    
+    // If we have freed all nodes in the linked list we should 
+    // reset last_p to the header
+    if(first_p == nullptr) {
+      GetGCMetaData(thread_id)->last_p = header_p;
+    }
+    
+    return;
+  }
 
 }; // class BwTree
 
-#ifdef BWTREE_PELOTON
-}  // End index namespace
-}  // End peloton namespace
-#endif
+}  // End index/bwtree namespace
+}  // End peloton/wangziqi2013 namespace
 
 #endif

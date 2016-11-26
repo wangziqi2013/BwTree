@@ -140,7 +140,7 @@ void RandomInsertSpeedTest(TreeType *t, size_t key_num) {
   // will hit an empty slot
   for(size_t i = 0;i < key_num * 2;i++) {
     int key = uniform_dist(e1);
-
+    
     t->Insert(key, key);
   }
 
@@ -306,6 +306,9 @@ void InfiniteRandomInsertTest(TreeType *t) {
   size_t count = 0;
   size_t success = 0;
 
+  Timer timer{true};
+  size_t last_count = 0;
+
   while(1) {
     int key = uniform_dist(e1);
 
@@ -314,11 +317,18 @@ void InfiniteRandomInsertTest(TreeType *t) {
     count++;
     
     if((count % (1024 * 50)) == 0) {
-      printf("%lu (%f M) Iterations; %lu (%f M) success \r",
+      double duration = timer.Stop();
+      printf("%lu (%f M) iters; %lu (%f M) succ; %f M/sec  \r",
              count,
              (float)count / (1024.0 * 1024.0),
              success,
-             (float)success / (1024.0 * 1024.0));
+             (float)success / (1024.0 * 1024.0),
+             (float)(count - last_count) / (1024.0 * 1024.0) / duration);
+      
+      last_count = count;
+      
+      // Restart the timer
+      timer.Start();
     }
   }
 

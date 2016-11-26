@@ -58,7 +58,7 @@ void BenchmarkARTSeqInsert(ARTType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -116,7 +116,7 @@ void BenchmarkARTSeqRead(ARTType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
   
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -181,7 +181,7 @@ void BenchmarkARTRandRead(ARTType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -249,7 +249,7 @@ void BenchmarkARTZipfRead(ARTType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {

@@ -24,6 +24,8 @@
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
+#else
+using namespace wangziqi2013::bwtree;
 #endif
 
 using namespace stx;
@@ -120,28 +122,105 @@ using Context = typename TreeType::Context;
                 \
                 return 0; \
                }while(0);
- 
+
 /*
  * LaunchParallelTestID() - Starts threads on a common procedure
  *
  * This function is coded to be accepting variable arguments
  *
  * NOTE: Template function could only be defined in the header
+ *
+ * tree_p is used to allocate thread local array for doing GC. In the meanwhile
+ * if it is nullptr then we know we are not using BwTree, so just ignore this
+ * argument
  */
 template <typename Fn, typename... Args>
-void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
+void LaunchParallelTestID(TreeType *tree_p, 
+                          uint64_t num_threads, 
+                          Fn &&fn, 
+                          Args &&...args) {
   std::vector<std::thread> thread_group;
+
+  if(tree_p != nullptr) {
+    // Update the GC array
+    tree_p->UpdateThreadLocal(num_threads);
+  }
+  
+  auto fn2 = [tree_p, &fn](uint64_t thread_id, Args ...args) {
+    if(tree_p != nullptr) {
+      tree_p->AssignGCID(thread_id);
+    }
+    
+    fn(thread_id, args...);
+    
+    if(tree_p != nullptr) {
+      // Make sure it does not stand on the way of other threads
+      tree_p->UnregisterThread(thread_id);
+    }
+    
+    return;
+  };
 
   // Launch a group of threads
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
-    thread_group.push_back(std::thread(fn, thread_itr, args...));
+    thread_group.push_back(std::thread{fn2, thread_itr, std::ref(args...)});
   }
 
   // Join the threads with the main thread
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
     thread_group[thread_itr].join();
   }
+  
+  // Restore to single thread mode after all threads have finished
+  if(tree_p != nullptr) {
+    tree_p->UpdateThreadLocal(1);
+  }
+  
+  return;
 }
+
+/*
+ * class Random - A random number generator
+ *
+ * This generator is a template class letting users to choose the number
+ *
+ * Note that this object uses C++11 library generator which is slow, and super
+ * non-scalable.
+ *
+ * NOTE 2: lower and upper are closed interval!!!!
+ */
+template <typename IntType>
+class Random {
+ private:
+  std::random_device device;
+  std::default_random_engine engine;
+  std::uniform_int_distribution<IntType> dist;
+
+ public:
+  
+  /*
+   * Constructor - Initialize random seed and distribution object
+   */
+  Random(IntType lower, IntType upper) :
+    device{},
+    engine{device()},
+    dist{lower, upper}
+  {}
+  
+  /*
+   * Get() - Get a random number of specified type
+   */
+  inline IntType Get() {
+    return dist(engine);
+  }
+  
+  /*
+   * operator() - Grammar sugar
+   */
+  inline IntType operator()() {
+    return Get(); 
+  }
+};
 
 /*
  * class SimpleInt64Random - Simple paeudo-random number generator 
@@ -754,6 +833,76 @@ class CacheMeter {
 #endif
 
 /*
+ * class Permutation - Generates permutation of k numbers, ranging from 
+ *                     0 to k - 1
+ *
+ * This is usually used to randomize insert() to a data structure such that
+ *   (1) Each Insert() call could hit the data structure
+ *   (2) There is no extra overhead for failed insertion because all keys are
+ *       unique
+ */
+template <typename IntType> 
+class Permutation {
+ private:
+  std::vector<IntType> data;
+  
+ public:
+  
+  /*
+   * Generate() - Generates a permutation and store them inside data
+   */
+  void Generate(size_t count, IntType start=IntType{0}) {
+    // Extend data vector to fill it with elements
+    data.resize(count);  
+
+    // This function fills the vector with IntType ranging from
+    // start to start + count - 1
+    std::iota(data.begin(), data.end(), start);
+    
+    // The two arguments define a closed interval, NOT open interval
+    Random<IntType> rand{0, static_cast<IntType>(count) - 1};
+    
+    // Then swap all elements with a random position
+    for(size_t i = 0;i < count;i++) {
+      IntType random_key = rand();
+      
+      // Swap two numbers
+      std::swap(data[i], data[random_key]);
+    }
+    
+    return;
+  }
+   
+  /*
+   * Constructor
+   */
+  Permutation() {}
+  
+  /*
+   * Constructor - Starts the generation process
+   */
+  Permutation(size_t count, IntType start=IntType{0}) {
+    Generate(count, start);
+    
+    return;
+  }
+  
+  /*
+   * operator[] - Accesses random elements
+   *
+   * Note that return type is reference type, so element could be
+   * modified using this method 
+   */
+  inline IntType &operator[](size_t index) {
+    return data[index];
+  }
+  
+  inline const IntType &operator[](size_t index) const {
+    return data[index];
+  }
+};
+
+/*
  * Initialize and destroy btree
  */
 TreeType *GetEmptyTree(bool no_print = false);
@@ -807,6 +956,7 @@ void TestBwTreeInsertReadDeletePerformance(TreeType *t, int key_num);
 void TestBwTreeInsertReadPerformance(TreeType *t, int key_num);
 
 // Multithreaded benchmark
+void BenchmarkBwTreeRandInsert(int key_num, int thread_num);
 void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);

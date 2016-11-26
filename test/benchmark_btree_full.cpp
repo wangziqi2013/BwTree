@@ -80,7 +80,7 @@ void BenchmarkBTreeSeqInsert(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -166,7 +166,7 @@ void BenchmarkBTreeSeqRead(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
   
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -258,7 +258,7 @@ void BenchmarkBTreeRandRead(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -329,7 +329,7 @@ void BenchmarkBTreeRandLocklessRead(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -436,7 +436,7 @@ void BenchmarkBTreeZipfRead(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -506,7 +506,7 @@ void BenchmarkBTreeZipfLockLessRead(BTreeType *t,
     return;
   };
 
-  LaunchParallelTestID(num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
