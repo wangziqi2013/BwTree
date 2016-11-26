@@ -511,6 +511,15 @@ class BwTreeBase {
   }
   
   /*
+   * UnregisterThread() - Unregisters a thread by setting its epoch to 
+   *                      0xFFFFFFFFFFFFFFFF such that it will not be considered
+   *                      for GC
+   */
+  inline void UnregisterThread(int thread_id) {
+    GetGCMetaData(thread_id)->last_active_epoch = static_cast<uint64_t>(-1);
+  }
+  
+  /*
    * GetGlobalEpoch() - Returns the current global epoch counter
    *
    * Note that this function might return a stale value, which does not affect
@@ -9372,7 +9381,7 @@ try_join_again:
    * Since the thread local GC context is only accessed by this thread, this
    * process does not require any atomicity 
    */
-  void AddGarbageNode(const BaseNode *node_p) {
+  void AddGarbageNode(const BaseNode *node_p) {    
     GarbageNode *garbage_node_p = \
       new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
     assert(garbage_node_p != nullptr);
@@ -9408,6 +9417,7 @@ try_join_again:
    * also be called inside the destructor
    */
   void PerformGC(int thread_id) {
+    printf("Thread %d performs GC\n", gc_id);
     // First of all get the minimum epoch of all active threads
     // This is the upper bound for deleted epoch in garbage node
     uint64_t min_epoch = SummarizeGCEpoch();
