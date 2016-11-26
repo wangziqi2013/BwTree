@@ -22,7 +22,7 @@ int mixed_key_num = 1024 * 1024;
  *
  * This is the place where most implementations break
  */
-void MixedTest1(uint64_t thread_id, TreeType *t) {
+void MixedTest1(uint64_t thread_id, TreeType *t) {  
   if((thread_id % 2) == 0) {
     for(int i = 0;i < mixed_key_num;i++) {
       int key = mixed_thread_num * i + thread_id;

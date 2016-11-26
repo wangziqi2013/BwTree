@@ -122,27 +122,49 @@ using Context = typename TreeType::Context;
                 \
                 return 0; \
                }while(0);
- 
+
 /*
  * LaunchParallelTestID() - Starts threads on a common procedure
  *
  * This function is coded to be accepting variable arguments
  *
  * NOTE: Template function could only be defined in the header
+ *
+ * tree_p is used to allocate thread local array for doing GC. In the meanwhile
+ * if it is nullptr then we know we are not using BwTree, so just ignore this
+ * argument
  */
 template <typename Fn, typename... Args>
-void LaunchParallelTestID(uint64_t num_threads, Fn&& fn, Args &&... args) {
+void LaunchParallelTestID(TreeType *tree_p, 
+                          uint64_t num_threads, 
+                          Fn &&fn, 
+                          Args &&...args) {
   std::vector<std::thread> thread_group;
+
+  if(tree_p != nullptr) {
+    // Update the GC array
+    tree_p->UpdateThreadLocal(num_threads);
+  }
+  
+  auto fn2 = [tree_p, &fn](uint64_t thread_id, Args ...args) {
+    if(tree_p != nullptr) {
+      tree_p->AssignGCID(thread_id);
+    }
+    
+    return fn(thread_id, args...);
+  };
 
   // Launch a group of threads
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
-    thread_group.push_back(std::thread(fn, thread_itr, args...));
+    thread_group.push_back(std::thread{fn2, thread_itr, std::ref(args...)});
   }
 
   // Join the threads with the main thread
   for (uint64_t thread_itr = 0; thread_itr < num_threads; ++thread_itr) {
     thread_group[thread_itr].join();
   }
+  
+  return;
 }
 
 /*

@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     t1 = GetEmptyTree();
 
     printf("Starting mixed testing...\n");
-    LaunchParallelTestID(mixed_thread_num, MixedTest1, t1);
+    LaunchParallelTestID(t1, mixed_thread_num, MixedTest1, t1);
     printf("Finished mixed testing\n");
 
     PrintStat(t1);
@@ -275,7 +275,7 @@ int main(int argc, char **argv) {
     // Do not print here otherwise we could not see result
     t1 = GetEmptyTree(true);
 
-    LaunchParallelTestID(8, RandomInsertTest, t1);
+    LaunchParallelTestID(t1, 8, RandomInsertTest, t1);
     RandomInsertVerify(t1);
     
     printf("Finished random insert testing. Delete the tree.\n");
@@ -290,7 +290,7 @@ int main(int argc, char **argv) {
     // no print
     t1 = GetEmptyTree(true);
 
-    LaunchParallelTestID(basic_test_thread_num, MixedTest1, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, MixedTest1, t1);
     printf("Finished mixed testing\n");
 
     PrintStat(t1);
@@ -302,7 +302,7 @@ int main(int argc, char **argv) {
     //   with different patterns and multi thread
     /////////////////////////////////////////////////////////////////
 
-    LaunchParallelTestID(basic_test_thread_num, InsertTest2, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, InsertTest2, t1);
     printf("Finished inserting all keys\n");
 
     PrintStat(t1);
@@ -310,7 +310,7 @@ int main(int argc, char **argv) {
     InsertGetValueTest(t1);
     printf("Finished verifying all inserted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, DeleteTest1, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, DeleteTest1, t1);
     printf("Finished deleting all keys\n");
 
     PrintStat(t1);
@@ -318,7 +318,7 @@ int main(int argc, char **argv) {
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, InsertTest1, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, InsertTest1, t1);
     printf("Finished inserting all keys\n");
 
     PrintStat(t1);
@@ -326,7 +326,7 @@ int main(int argc, char **argv) {
     InsertGetValueTest(t1);
     printf("Finished verifying all inserted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, DeleteTest2, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, DeleteTest2, t1);
     printf("Finished deleting all keys\n");
 
     PrintStat(t1);
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, InsertTest1, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, InsertTest1, t1);
     printf("Finished inserting all keys\n");
 
     PrintStat(t1);
@@ -342,7 +342,7 @@ int main(int argc, char **argv) {
     InsertGetValueTest(t1);
     printf("Finished verifying all inserted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, DeleteTest1, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, DeleteTest1, t1);
     printf("Finished deleting all keys\n");
 
     PrintStat(t1);
@@ -350,7 +350,7 @@ int main(int argc, char **argv) {
     DeleteGetValueTest(t1);
     printf("Finished verifying all deleted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, InsertTest2, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, InsertTest2, t1);
     printf("Finished inserting all keys\n");
 
     PrintStat(t1);
@@ -358,7 +358,7 @@ int main(int argc, char **argv) {
     InsertGetValueTest(t1);
     printf("Finished verifying all inserted values\n");
 
-    LaunchParallelTestID(basic_test_thread_num, DeleteTest2, t1);
+    LaunchParallelTestID(t1, basic_test_thread_num, DeleteTest2, t1);
     printf("Finished deleting all keys\n");
 
     PrintStat(t1);
@@ -380,7 +380,7 @@ int main(int argc, char **argv) {
   if(run_stress == true) {
     t1 = GetEmptyTree();
 
-    LaunchParallelTestID(8, StressTest, t1);
+    LaunchParallelTestID(t1, 8, StressTest, t1);
 
     DestroyTree(t1);
   }

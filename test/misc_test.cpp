@@ -40,7 +40,7 @@ void TestEpochManager(TreeType *t) {
     return;
   };
 
-  LaunchParallelTestID(2, func, 10000);
+  LaunchParallelTestID(t, 2, func, 10000);
 
   putchar('\n');
 
