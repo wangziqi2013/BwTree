@@ -423,7 +423,7 @@ class BwTreeBase {
     
     return;
   }
-  
+    
   /*
    * GetThreadNum() - Returns the number of thread currently this instance of
    *                  BwTree is serving
@@ -2684,7 +2684,23 @@ class BwTree : public BwTreeBase {
     bwt_printf("Next node ID at exit: %lu\n", next_unused_node_id.load());
     bwt_printf("Destructor: Free tree nodes\n");
 
-    // First of all we clean all remaining garbage nodes
+    // Clear all garbage nodes awaiting cleaning
+    ClearThreadLocalGarbage();
+
+    // Free all nodes recursively
+    size_t node_count = FreeNodeByNodeID(root_id.load());
+
+    bwt_printf("Freed %lu tree nodes\n", node_count);
+
+    return;
+  }
+  
+  /*
+   * ClearThreadLocalGarbage() - Clears all thread local garbage
+   *
+   * This must be called under single threaded environment
+   */
+  void ClearThreadLocalGarbage() {
     for(size_t i = 0;i < GetThreadNum();i++) {
       // Make it to be the maximum value possible such that all nodes
       // will be collected
@@ -2694,13 +2710,36 @@ class BwTree : public BwTreeBase {
       // This will collect all nodes since we have adjusted the currenr thread
       // GC ID
       assert(GetGCMetaData(i)->node_count == 0);
+      
+      // Then reset it to the minimum possible and let following threads
+      // to update it
+      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(0);
     }
-
-    // Free all nodes recursively
-    size_t node_count = FreeNodeByNodeID(root_id.load());
-
-    bwt_printf("Freed %lu tree nodes\n", node_count);
-
+    
+    return;
+  }
+  
+  /*
+   * UpdateThreadLocal() - Frees all memorys currently existing and then 
+   *                       reallocate a chunk of memory to represent the 
+   *                       thread local variables
+   *
+   * This function is majorly used for debugging pruposes. The argument is
+   * the new number of threads we want to support here for doing experiments
+   */
+  void UpdateThreadLocal(size_t p_thread_num) {
+    bwt_printf("Updating thread-local array......\n");
+    
+    // 1. Frees a pending memory chunks
+    // 2. Frees the thread local array
+    ClearThreadLocalGarbage();
+    DestroyThreadLocal();
+    
+    thread_num = p_thread_num;
+    
+    // 3. Allocate a new array based on the new given size
+    PrepareThreadLocal();
+    
     return;
   }
 
