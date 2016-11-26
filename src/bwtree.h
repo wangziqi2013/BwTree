@@ -88,7 +88,7 @@ using NodeID = uint64_t;
 /*
  * USE_OLD_EPOCH - This flag switches between old epoch and new epoch mechanism
  */
-//#define USE_OLD_EPOCH
+#define USE_OLD_EPOCH
 
 /*
  * BWTREE_TEMPLATE_ARGUMENTS - Save some key strokes
@@ -2718,6 +2718,7 @@ class BwTree : public BwTreeBase {
     bwt_printf("Destructor: Free tree nodes\n");
 
     // Clear all garbage nodes awaiting cleaning
+    // First of all it should set all last active epoch counter to -1
     ClearThreadLocalGarbage();
 
     // Free all nodes recursively
@@ -2734,19 +2735,20 @@ class BwTree : public BwTreeBase {
    * This must be called under single threaded environment
    */
   void ClearThreadLocalGarbage() {
+    // First of all we should set all last active counter to -1 to
+    // guarantee progress to clear all epoches
     for(size_t i = 0;i < GetThreadNum();i++) {
-      // Make it to be the maximum value possible such that all nodes
-      // will be collected
-      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(-1);
+      UnregisterThread(i);
+    }
+    
+    for(size_t i = 0;i < GetThreadNum();i++) {
+      // Here all epoch counters have been set to 0xFFFFFFFFFFFFFFFF
+      // so GC should always succeed
       PerformGC(i);
       
       // This will collect all nodes since we have adjusted the currenr thread
       // GC ID
       assert(GetGCMetaData(i)->node_count == 0);
-      
-      // Then reset it to the minimum possible and let following threads
-      // to update it
-      GetGCMetaData(i)->last_active_epoch = static_cast<uint64_t>(0);
     }
     
     return;
@@ -2761,16 +2763,18 @@ class BwTree : public BwTreeBase {
    * the new number of threads we want to support here for doing experiments
    */
   void UpdateThreadLocal(size_t p_thread_num) {
-    bwt_printf("Updating thread-local array......\n");
+    bwt_printf("Updating thread-local array to length %lu......\n", 
+               p_thread_num);
     
-    // 1. Frees a pending memory chunks
+    // 1. Frees all pending memory chunks
     // 2. Frees the thread local array
-    ClearThreadLocalGarbage();
+    ClearThreadLocalGarbage(); 
     DestroyThreadLocal();
     
     SetThreadNum(p_thread_num);
     
     // 3. Allocate a new array based on the new given size
+    // Here all epoches are restored to 0
     PrepareThreadLocal();
     
     return;
@@ -7686,9 +7690,9 @@ before_switch:
    * everytime to force GC thred to at least take a look into the epoch
    * counter.
    */
-  bool NeedGarbageCollection() {
-    return true;
-  }
+  //bool NeedGarbageCollection() {
+  //  return true;
+  //}
   
   /*
    * PerformGarbageCollection() - Interface function for external users to
@@ -7699,13 +7703,13 @@ before_switch:
    * control GC using external threads. This function is left as a convenient
    * interface for external threads to do garbage collection.
    */
-  void PerformGarbageCollection() {
+  //void PerformGarbageCollection() {
     // This function creates a new epoch node, and then checks
     // epoch counter for exiatsing nodes.
-    epoch_manager.PerformGarbageCollection();
+  //  epoch_manager.PerformGarbageCollection();
 
-    return;
-  }
+  //  return;
+  //}
 
  /*
   * Private Method Implementation
@@ -9381,7 +9385,7 @@ try_join_again:
    * Since the thread local GC context is only accessed by this thread, this
    * process does not require any atomicity 
    */
-  void AddGarbageNode(const BaseNode *node_p) {    
+  void AddGarbageNode(const BaseNode *node_p) {      
     GarbageNode *garbage_node_p = \
       new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
     assert(garbage_node_p != nullptr);
@@ -9417,7 +9421,6 @@ try_join_again:
    * also be called inside the destructor
    */
   void PerformGC(int thread_id) {
-    printf("Thread %d performs GC\n", gc_id);
     // First of all get the minimum epoch of all active threads
     // This is the upper bound for deleted epoch in garbage node
     uint64_t min_epoch = SummarizeGCEpoch();
