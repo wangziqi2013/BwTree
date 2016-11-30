@@ -12,10 +12,15 @@ Benchmark
 
 Improvements 
 ================================
+
+ABORT Delta
+-----------
 In the official BwTree paper, removing a node is described as posting a node remove delta on the removed node, finishing it by posting an index term delete delta on top of the parent node delta chain. This procedure has a potential problem when the parent is undergoing a split and the split key is unfortunately chosen to be pointing to the removed node. In this case, after parent node split, its left most child is logically merged into the left sibling of the parent node, which implicitly changes both the low key of the parent and the high key of its left sibling.
 
 Our approach to avoid this problem is to post a special ABORT node on the parent before we post remove node. This ABORT node blocks all further access of the parent node, and in the meanwhile it prevents any thread that has already taken the snapshot before the ABORT node is posted posting another SMO. After remove node delta is posted, we remove this ABORT node, and jump to the left sibling to finish the remove SMO. Also when posting a node split delta, we always check whether the chosen key is mapped to a removed child. If it is the case then we do not split and continue.
 
+Posting InnerDeleteNode
+-----------------------
 Besides that, when finishing a node split delta by posting index term insert node on the parent node delta chain, the paper suggests that the parent node snapshot we have taken while traversing down needs to be checked against the current most up-to-date (i.e. at least the most up-to-date parent node after we have taken the snapshot of the child split delta node), to avoid very delicate problems that would only happen under a super high insert-delete contention (as in mixed-test environment in this repo). But actually such check is unnecessary in the case of split delta (though it is a must-do for merge delta), since even if we have missed few inner data nodes on the out-of-date parent node delta chain, the worst result is observing inconsistent Key-NodeID pair inside the parent node delta chain, which is a hint that the current snapshot is quite old, and that an abort is necessary.
 
 But on the other hand, when dealing with node merge delta, it is mandatory that we check for the status of the parent node after taking the snapshot of the merge delta node. Because for merge delta node's help-along protocol, if we go back to the parent node, and could not find the separator key that is going to be deleted, we assume that it has already been finished by other threads, and thus will proceed with the current operation that might overwrite the merge delta before it is finished. Imagine the case where the snapshot was taken before an InnerInsertNode was posted. In this case, if we use the old parent node snapshot, then a wrong conslusion that the merge delta has already been finished will be reached.
@@ -23,11 +28,23 @@ But on the other hand, when dealing with node merge delta, it is mandatory that 
 Known Problem
 =============
 
+Wait-Freedom-less
+-----------------
+
 The ABORT mechanism stated above renders BwTree non-wait-free, since it essentially locks the parent node of the node being removed, and one thread will spin on that ABORT node if it intends to post on the locked parent. Even worse, if the node posting ABORT node dies before it removes the ABORT, no remaining thread could succeed posting on the locked parent, and the data structure will become non-responsive (i.e. starvation to the extreme).
+
+Mapping Table Size
+------------------
 
 Till now the size of the mapping table is fixed, and could not be extended in the case of an overflow. This problem could be alleviated by allocating a "large enough" mapping table that covers 99% of the cases, but no one could guarantee how large is "large enough", and when the size of the table will grow to the limit. For running benchmarks on data base systems this is fine, but for real world use cases it needs to be fixed, and I am open to any suggestion related to this issue.
 
+Non-Scalable Randomness
+-----------------------
+
 Random number generator was incorrect, in a sense that the default generator provided by C++11 is a bottleneck under multicore workload, with a stable throughput of 1.00 M op/second in our configuration. This has already been corrected recently, but we are still investigating into this issue trying to find out a better solution than the current patch.
+
+Coverity
+--------
 
 Another small issue is that coveralls data is not accurate, in a sense that lines inside header files are not detected at all. This should be attributed to gcov rather than BwTree
 
