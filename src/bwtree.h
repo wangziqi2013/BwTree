@@ -564,9 +564,11 @@ class BwTreeBase {
     
     // This might not be executed if there is only one thread
     for(int i = 1;i < static_cast<int>(thread_num);i++) {
-      // This will be compiled into using CMOV which is more efficient
-      // than CMP and JMP
-      min_epoch = std::min(GetGCMetaData(i)->last_active_epoch, min_epoch);
+      // Note: std::min pass a const & of into the function. We need to first copy the shared GetGCMetaData(i)->last_active_epoch
+      // into a local variable before calling std::min. Otherwise we will have a Heisenbug where std::min first check which one is smaller,
+      // and before it returns, other thread modify the variable and we actually return the larger one.
+      auto ts = GetGCMetaData(i)->last_active_epoch;
+      min_epoch = std::min(ts, min_epoch);
     }
     
     return min_epoch;
