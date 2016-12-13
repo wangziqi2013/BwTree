@@ -87,3 +87,7 @@ For email_test, a text file with email addresses generated in some way is requir
 References
 ==========
 [1] Levandoski, Justin J., David B. Lomet, and Sudipta Sengupta. "The Bw-Tree: A B-tree for new hardware platforms." In Data Engineering (ICDE), 2013 IEEE 29th International Conference on, pp. 302-313. IEEE, 2013. 
+
+License
+=======
+Personally I would like to open source it without any license. But in order to stay complianct with Peloton's licene, the  licence for OpenBwTree is Apache License (https://www.apache.org/licenses/LICENSE-2.0)
