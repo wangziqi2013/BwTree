@@ -9,8 +9,7 @@
 #include "test_suite.h"
 #include "../benchmark/spinlock/spinlock.h"
 
-// Only use boost for full-speed build
-#ifdef NDEBUG 
+#ifndef NO_USE_BOOST
 // For boost reference:
 //   http://www.boost.org/doc/libs/1_58_0/doc/html/thread/synchronization.html#thread.synchronization.mutex_types.shared_mutex
 #define USE_BOOST
