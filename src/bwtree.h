@@ -4247,30 +4247,6 @@ abort_traverse:
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
 
-    // The maximum size of present set and deleted set is just
-    // the length of the delta chain. Since when we reached the leaf node
-    // we just probe and add to value set
-    const int set_max_size = node_p->GetDepth();
-
-    // 1. This works even if depth is 0
-    // 2. We choose to store const ValueType * because we want to bound the
-    // size of stack array. It should be upper bounded by max delta chain
-    // length * pointer size. On the contrary, if the size of
-    // ValueType is huge, and we store ValueType, then we might cause
-    // a stack overflow
-    const ValueType *present_set_data_p[set_max_size];
-    const ValueType *deleted_set_data_p[set_max_size];
-
-    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
-      present_set{present_set_data_p,
-                  value_eq_obj,
-                  value_hash_obj};
-
-    BloomFilter<ValueType, ValueEqualityChecker, ValueHashFunc> \
-      deleted_set{deleted_set_data_p,
-                  value_eq_obj,
-                  value_hash_obj};
-                  
     int start_index = 0;
     int end_index = -1;
 
@@ -4298,25 +4274,8 @@ abort_traverse:
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
-          // If there is something to copy
-          while((copy_start_it != leaf_node_p->End()) && \
-                (KeyCmpEqual(search_key, copy_start_it->first))) {
-            // If the value has not been deleted then just insert
-            // Note that here we use ValueSet, so need to extract value from
-            // the key value pair
-            if(deleted_set.Exists(copy_start_it->second) == false) {
-              if(present_set.Exists(copy_start_it->second) == false) {
-                // Note: As an optimization, we do not have to Insert() the
-                // value element into present set here. Since we know it
-                // is already base leaf page, adding values into present set
-                // definitely will not block the remaining values, since we
-                // know they do not duplicate inside the leaf node
-
-                value_list.push_back(copy_start_it->second);
-              }
-            }
-
-            copy_start_it++;
+          if(KeyCmpEqual(search_key, copy_start_it->first)) {
+             value_list.push_back(copy_start_it->second);
           }
 
           return;
@@ -4326,16 +4285,8 @@ abort_traverse:
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
-            if(deleted_set.Exists(insert_node_p->item.second) == false) {
-              // We must do this, since inserted set does not detect for
-              // duplication, and if the value has already been in present set
-              // then we inserted the same value twice
-              if(present_set.Exists(insert_node_p->item.second) == false) {
-                present_set.Insert(insert_node_p->item.second);
-
-                value_list.push_back(insert_node_p->item.second);
-              }
-            }
+              value_list.push_back(insert_node_p->item.second);
+              return; 
           } else if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
             start_index = insert_node_p->GetIndexPair().first;
           } else {
@@ -4351,9 +4302,7 @@ abort_traverse:
             static_cast<const LeafDeleteNode *>(node_p);
 
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
-            if(present_set.Exists(delete_node_p->item.second) == false) {
-              deleted_set.Insert(delete_node_p->item.second);
-            }
+            return;
           } else if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
             start_index = delete_node_p->GetIndexPair().first;
           } else {
