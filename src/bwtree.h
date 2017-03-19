@@ -4274,7 +4274,8 @@ abort_traverse:
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
-          if(KeyCmpEqual(search_key, copy_start_it->first)) {
+          if((copy_start_it != leaf_node_p->End()) && \
+             (KeyCmpEqual(search_key, copy_start_it->first))) {
              value_list.push_back(copy_start_it->second);
           }
 
@@ -4397,6 +4398,8 @@ abort_traverse:
       return nullptr;
     }
     
+    (void)search_value;
+    
     /////////////////////////////////////////////////////////////////
     // Only after this point could we get snapshot and node_p
     /////////////////////////////////////////////////////////////////
@@ -4428,37 +4431,19 @@ abort_traverse:
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
-          // Search all values with the search key
-          while((scan_start_it != leaf_node_p->End()) && \
-                (KeyCmpEqual(scan_start_it->first, search_key))) {
-                  
-            // If there is a value matching the search value then return true
-            // We do not need to check any delete set here, since if the
-            // value has been deleted earlier then this function would
-            // already have returned
-            if(ValueCmpEqual(scan_start_it->second, search_value)) {
-              // Since only Delete() will use this piece of information
-              // we set exist flag to false to indicate that the value
-              // has been invalidated
-              index_pair_p->first = \
-                scan_start_it - leaf_node_p->Begin();
-              index_pair_p->second = true;
-              
-              // Return a pointer to the item inside LeafNode;
-              // This pointer should remain valid until epoch is exited
-              return &(*scan_start_it);
-            }
+          index_pair_p->first = \
+            scan_start_it - leaf_node_p->Begin();
 
-            scan_start_it++;
+          if((scan_start_it != leaf_node_p->End()) && \
+             (KeyCmpEqual(scan_start_it->first, search_key))) {
+            index_pair_p->second = true;
+            
+            // Return a pointer to the item inside LeafNode;
+            // This pointer should remain valid until epoch is exited
+            return &(*scan_start_it);  
           }
           
-          // Either key does not exist or key exists but value does not
-          // exist will reach here
-          // Since only Insert() will use the index we set exist flag to false
-          index_pair_p->first = \
-                scan_start_it - leaf_node_p->Begin();
           index_pair_p->second = false;
-
           return nullptr;
         } // case LeafType
         case NodeType::LeafInsertType: {
@@ -4466,13 +4451,11 @@ abort_traverse:
             static_cast<const LeafInsertNode *>(node_p);
 
           if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
-            if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
-              // Only Delete() will use this
-              // We just simply inherit from the first node
-              *index_pair_p = insert_node_p->GetIndexPair();
-              
-              return &insert_node_p->item;
-            }
+            // Only Delete() will use this
+            // We just simply inherit from the first node
+            *index_pair_p = insert_node_p->GetIndexPair();
+            
+            return &insert_node_p->item;
           }
 
           node_p = insert_node_p->child_node_p;
@@ -4485,13 +4468,11 @@ abort_traverse:
 
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
-            if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
-              // Only Insert() will use this
-              // We just simply inherit from the first node
-              *index_pair_p = delete_node_p->GetIndexPair();
-              
-              return nullptr;
-            }
+            // Only Insert() will use this
+            // We just simply inherit from the first node
+            *index_pair_p = delete_node_p->GetIndexPair();
+            
+            return nullptr;
           }
           
           node_p = delete_node_p->child_node_p;
