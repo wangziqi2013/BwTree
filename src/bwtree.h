@@ -4598,6 +4598,8 @@ abort_traverse:
     return nullptr;
   }
   
+#ifdef BWTREE_PELOTON  
+  
   /*
    * NavigateLeafNode() - Apply predicate to all values, and detect for existing
    *                      value for insert
@@ -4795,6 +4797,8 @@ abort_traverse:
     assert(false);
     return nullptr;
   }
+  
+#endif
 
   /*
    * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical

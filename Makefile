@@ -1,7 +1,7 @@
 
 CXX = g++-5
 PAPI_FLAG = -lpapi
-BOOST_FLAG =
+BOOST_FLAG = -lboost_system -lboost_thread
 CXX_FLAG = -pthread -std=c++11 -g -Wall -mcx16 -Wno-invalid-offsetof $(PAPI_FLAG) $(BOOST_FLAG)
 GMON_FLAG = 
 OPT_FLAG = -O2
@@ -67,7 +67,7 @@ gprof:
 
 full-speed:
 	make clean
-	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG -lboost_system -lboost_thread"
+	make OPT_FLAG=" -Ofast -frename-registers -funroll-loops -flto -march=native -DNDEBUG -DBWTREE_NODEBUG"
 
 small-size:
 	make clean
