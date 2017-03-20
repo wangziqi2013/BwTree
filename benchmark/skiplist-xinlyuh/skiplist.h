@@ -57,8 +57,6 @@
 #include <thread>
 #include <vector>
 
-#include "common/logger.h"
-#include "index/index.h"
 #endif
 
 static std::atomic<ssize_t> size{0};
@@ -893,7 +891,7 @@ class SkipList {
       // Let's try to insert the value in the value list.
       switch (val_list->CondInsertVal(value, predicate, predicate_satisfied)) {
         case InsertValReturn::SUCCESS:
-          skiplist_index::size.fetch_add(sizeof(ValueNode));
+          size.fetch_add(sizeof(ValueNode));
           return true;
 
         case InsertValReturn::DUP_VAL:
@@ -957,7 +955,7 @@ class SkipList {
       }
     }
 
-    skiplist_index::size.fetch_add(sizeof(Tower) + sizeof(ValueNode));
+    size.fetch_add(sizeof(Tower) + sizeof(ValueNode));
     *predicate_satisfied = true;
     return true;
   }
@@ -1234,7 +1232,7 @@ class SkipList {
     delete key;
     delete val;
     Frontier = Tower::InlineAllocateTower(key_, val_, tower_levels);
-    skiplist_index::size.store(0);
+    size.store(0);
   }
 
   ~SkipList() {
@@ -1582,7 +1580,7 @@ class SkipList {
         GarbageNode *garbage = prev_head->head.load();
         delete prev_head;
         while (garbage != nullptr) {
-          skiplist_index::size.fetch_sub(garbage->node->GetSize());
+          size.fetch_sub(garbage->node->GetSize());
           delete garbage->node;
           GarbageNode *next = garbage->next;
           delete garbage;
