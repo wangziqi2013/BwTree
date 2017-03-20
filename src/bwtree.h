@@ -7520,7 +7520,11 @@ before_switch:
         LeafInlineAllocateOfType(LeafDeleteNode, 
                                  node_p, 
                                  key, 
-                                 value, 
+                                 // NOTE: Here we should use the actual value
+                                 // rather than the random value passed to this
+                                 // function 
+                                 // FOR PRIMARY KEY VARIANT
+                                 item_p->second, 
                                  node_p, 
                                  index_pair);
 
