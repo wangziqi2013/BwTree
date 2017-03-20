@@ -21,6 +21,7 @@
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
 #include "../benchmark/art/art.h"
+#include "../benchmark/skiplist-xinlyuh/skiplist.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
@@ -88,6 +89,13 @@ using TreeType = BwTree<long int,
                         
 using BTreeType = btree_multimap<long, long, KeyComparator>;
 using ARTType = art_tree;
+
+// This is the type of the skip list we wish to use for testing
+using SkipListType = SkipList<long, 
+                              long, 
+                              KeyComparator, 
+                              KeyEqualityChecker, 
+                              std::equal_to<long> >;
                         
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;
@@ -914,6 +922,12 @@ void DestroyTree(TreeType *t, bool no_print = false);
 BTreeType *GetEmptyBTree();
 void DestroyBTree(BTreeType *t);
 
+/*
+ * SkipList
+ */
+SkipListType *GetEmptySkipList();
+void DestroySkipList(SkipListType *t);
+
 void PrintStat(TreeType *t);
 void PinToCore(size_t core_id);
 
@@ -961,6 +975,13 @@ void BenchmarkBwTreeSeqInsert(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeSeqRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeRandRead(TreeType *t, int key_num, int thread_num);
 void BenchmarkBwTreeZipfRead(TreeType *t, int key_num, int thread_num);
+
+// SkipList benchmark
+void BenchmarkSkipListRandInsert(int key_num, int thread_num);
+void BenchmarkSkipListSeqInsert(SkipListType *t, int key_num, int thread_num);
+void BenchmarkSkipListSeqRead(SkipListType *t, int key_num, int thread_num);
+void BenchmarkSkipListRandRead(SkipListType *t, int key_num, int thread_num);
+void BenchmarkSkipListZipfRead(SkipListType *t, int key_num, int thread_num);
 
 // Benchmark for stx::btree
 void BenchmarkBTreeSeqInsert(BTreeType *t, 

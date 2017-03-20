@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
   bool run_benchmark_bwtree = false;
   bool run_benchmark_bwtree_full = false;
   bool run_benchmark_btree_full = false;
+  bool run_benchmark_skiplist_full = false;
   bool run_benchmark_art_full = false;
   bool run_stress = false;
   bool run_epoch_test = false;
@@ -45,6 +46,8 @@ int main(int argc, char **argv) {
       run_benchmark_bwtree_full = true;
     } else if(strcmp(opt_p, "--benchmark-btree-full") == 0) {
       run_benchmark_btree_full = true;
+    } else if(strcmp(opt_p, "--benchmark-skiplist-full") == 0) {
+      run_benchmark_skiplist_full = true;
     } else if(strcmp(opt_p, "--benchmark-art-full") == 0) {
       run_benchmark_art_full = true;
     } else if(strcmp(opt_p, "--stress-test") == 0) {
@@ -69,6 +72,7 @@ int main(int argc, char **argv) {
   bwt_printf("RUN_BENCHMARK_ALL = %d\n", run_benchmark_all);
   bwt_printf("RUN_BENCHMARK_BWTREE_FULL = %d\n", run_benchmark_bwtree_full);
   bwt_printf("RUN_BENCHMARK_BWTREE = %d\n", run_benchmark_bwtree);
+  bwt_printf("RUN_BENCHMARK_SKIPLIST_FULL = %d\n", run_benchmark_skiplist_full);
   bwt_printf("RUN_BENCHMARK_ART_FULL = %d\n", run_benchmark_art_full);
   bwt_printf("RUN_TEST = %d\n", run_test);
   bwt_printf("RUN_STRESS = %d\n", run_stress);
@@ -160,6 +164,25 @@ int main(int argc, char **argv) {
     BenchmarkBTreeZipfRead(t, key_num, (int)thread_num);
     
     DestroyBTree(t);
+  }
+  
+  if(run_benchmark_skiplist_full == true) {
+    SkipListType *t = GetEmptySkipList();
+    int key_num = 30 * 1024 * 1024;
+    
+    printf("Using key size = %d (%f million)\n",
+           key_num,
+           key_num / (1024.0 * 1024.0));
+    
+    uint64_t thread_num = GetThreadNum();
+    
+    BenchmarkSkipListRandInsert(key_num, (int)thread_num);
+    BenchmarkSkipListSeqInsert(t, key_num, (int)thread_num);
+    BenchmarkSkipListSeqRead(t, key_num, (int)thread_num);
+    BenchmarkSkipListRandRead(t, key_num, (int)thread_num);
+    BenchmarkSkipListZipfRead(t, key_num, (int)thread_num);
+    
+    DestroySkipList(t);
   }
 
   if(run_benchmark_bwtree == true ||
