@@ -21,7 +21,7 @@
 #include "../benchmark/stx_btree/btree_multimap.h"
 #include "../benchmark/libcuckoo/cuckoohash_map.hh"
 #include "../benchmark/art/art.h"
-#include "../benchmark/skiplist-xinlyuh/skiplist.h"
+#include "../benchmark/skiplist/skiplist.h"
 
 #ifdef BWTREE_PELOTON
 using namespace peloton::index;
