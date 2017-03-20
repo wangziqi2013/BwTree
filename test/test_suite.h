@@ -83,19 +83,16 @@ class KeyEqualityChecker {
 };
 
 using TreeType = BwTree<long int,
-                        long int,
-                        KeyComparator,
-                        KeyEqualityChecker>;
+                        long int>;
                         
 using BTreeType = btree_multimap<long, long, KeyComparator>;
 using ARTType = art_tree;
 
 // This is the type of the skip list we wish to use for testing
-using SkipListType = SkipList<long, 
-                              long, 
-                              KeyComparator, 
-                              KeyEqualityChecker, 
-                              std::equal_to<long> >;
+using SkipListType = SkipList<long, long, 
+                              std::less<long>, 
+                              std::equal_to<long>, 
+                              std::equal_to<long>>;
                         
 using LeafRemoveNode = typename TreeType::LeafRemoveNode;
 using LeafInsertNode = typename TreeType::LeafInsertNode;

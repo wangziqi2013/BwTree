@@ -204,18 +204,7 @@ SKIPLIST_TEMPLATE_ARGUMENTS
 bool SKIPLIST_TYPE::ConditionalInsert(
     const KeyType &key, const ValueType &value,
     std::function<bool(const void *)> predicate, bool *predicate_satisfied) {
-  // Check predicates
-  std::vector<ValueType> value_list;
-  GetValue(key, value_list);
-  for (auto &value : value_list) {
-    if (predicate(value)) {
-      *predicate_satisfied = true;
-      return false;
-    }
-  }
-
-  *predicate_satisfied = false;
-  return Insert(key, value);
+  return false;
 }
 
 SKIPLIST_TEMPLATE_ARGUMENTS
@@ -555,3 +544,7 @@ bool SKIPLIST_TYPE::EpochManager::NeedGarbageCollection() {
   return reclaim_size >= GC_SIZE_THRESHOLD;
 }
 
+template class SkipList<long, long, 
+                        std::less<long>, 
+                        std::equal_to<long>, 
+                        std::equal_to<long>>;

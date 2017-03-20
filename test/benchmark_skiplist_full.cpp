@@ -25,7 +25,7 @@ void BenchmarkSkipListRandInsert(int key_num, int thread_num) {
   auto func = [key_num, 
                &thread_time, 
                thread_num,
-               &perm](uint64_t thread_id, TreeType *t) {
+               &perm](uint64_t thread_id, SkipListType *t) {
     long int start_key = key_num / thread_num * (long)thread_id;
     long int end_key = start_key + key_num / thread_num;
 
@@ -55,7 +55,7 @@ void BenchmarkSkipListRandInsert(int key_num, int thread_num) {
     return;
   };
 
-  LaunchParallelTestID(t, thread_num, func, t);
+  LaunchParallelTestID(nullptr, thread_num, func, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < thread_num;i++) {
@@ -88,7 +88,7 @@ void BenchmarkSkipListSeqInsert(SkipListType *t,
 
   auto func = [key_num, 
                &thread_time, 
-               num_thread](uint64_t thread_id, TreeType *t) {
+               num_thread](uint64_t thread_id, SkipListType *t) {
     long int start_key = key_num / num_thread * (long)thread_id;
     long int end_key = start_key + key_num / num_thread;
 
@@ -116,7 +116,7 @@ void BenchmarkSkipListSeqInsert(SkipListType *t,
     return;
   };
 
-  LaunchParallelTestID(t, num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -148,7 +148,7 @@ void BenchmarkSkipListSeqRead(SkipListType *t,
   auto func = [key_num, 
                iter, 
                &thread_time, 
-               num_thread](uint64_t thread_id, TreeType *t) {
+               num_thread](uint64_t thread_id, SkipListType *t) {
     std::vector<long> v{};
 
     v.reserve(1);
@@ -179,7 +179,7 @@ void BenchmarkSkipListSeqRead(SkipListType *t,
     return;
   };
 
-  LaunchParallelTestID(t, num_thread, func, t);
+  LaunchParallelTestID(nullptr, num_thread, func, t);
   
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -211,7 +211,7 @@ void BenchmarkSkipListRandRead(SkipListType *t,
   auto func2 = [key_num, 
                 iter, 
                 &thread_time,
-                num_thread](uint64_t thread_id, TreeType *t) {
+                num_thread](uint64_t thread_id, SkipListType *t) {
     std::vector<long> v{};
 
     v.reserve(1);
@@ -248,7 +248,7 @@ void BenchmarkSkipListRandRead(SkipListType *t,
     return;
   };
 
-  LaunchParallelTestID(t, num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {
@@ -294,7 +294,7 @@ void BenchmarkSkipListZipfRead(SkipListType *t,
                 iter, 
                 &thread_time,
                 &zipfian_key_list,
-                num_thread](uint64_t thread_id, TreeType *t) {
+                num_thread](uint64_t thread_id, SkipListType *t) {
     // This is the start and end index we read into the zipfian array
     long int start_index = key_num / num_thread * (long)thread_id;
     long int end_index = start_index + key_num / num_thread;
@@ -331,7 +331,7 @@ void BenchmarkSkipListZipfRead(SkipListType *t,
     return;
   };
 
-  LaunchParallelTestID(t, num_thread, func2, t);
+  LaunchParallelTestID(nullptr, num_thread, func2, t);
 
   double elapsed_seconds = 0.0;
   for(int i = 0;i < num_thread;i++) {

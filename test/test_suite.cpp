@@ -21,9 +21,7 @@ TreeType *GetEmptyTree(bool no_print) {
     print_flag = true;
   }
   
-  TreeType *t1 = new TreeType{true,
-                              KeyComparator{1},
-                              KeyEqualityChecker{1}};
+  TreeType *t1 = new TreeType{true};
 
   // By default let is serve single thread (i.e. current one)
   // and assign gc_id = 0 to the current thread
@@ -49,7 +47,7 @@ BTreeType *GetEmptyBTree() {
  *                      support
  */
 SkipListType *GetEmptySkipList() {
-  return new SkipListType{false, KeyComparator{1}, KeyEqualityChecker{1}}; 
+  return new SkipListType{false}; 
 }
 
 /*
