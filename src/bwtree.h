@@ -114,11 +114,14 @@ static void dummy(const char*, ...) {}
 
 #ifdef BWTREE_DEBUG
 
-#define bwt_printf(fmt, ...)                              \
-  do {                                                    \
-    if(print_flag == false) break;                        \
-    fprintf(stderr, "%-24s(%8lX): " fmt, __FUNCTION__, std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__); \
-    fflush(stdout);                                       \
+#define bwt_printf(fmt, ...) \
+  do { \
+    if(print_flag == false) break; \
+    fprintf(stderr, "%-24s(%8lX): " fmt, \
+            __FUNCTION__, \
+            std::hash<std::thread::id>()(std::this_thread::get_id()), \
+            ##__VA_ARGS__); \
+    fflush(stdout); \
   } while (0);
 
 #else
@@ -136,15 +139,21 @@ static void dummy(const char*, ...) {}
 extern bool print_flag;
 #endif
 
+/////////////////////////////////////////////////////////////////////
+// The following are important constants used by 
+// BwTree - do not modify 
+/////////////////////////////////////////////////////////////////////
+
 // This constant represents INVALID_NODE_ID which is used as an indication
 // that the node is actually the last node on that level
-#define INVALID_NODE_ID ((NodeID)0UL)
+static constexpr NodeID INVALID_NODE_ID = static_cast<NodeID>(0UL);
 
 // The NodeID for the first leaf is fixed, which is 2
-#define FIRST_LEAF_NODE_ID ((NodeID)2UL)
+static constexpr NodeID FIRST_LEAF_NODE_ID = static_cast<NodeID>(2UL);
 
 // This is the value we use in epoch manager to make sure
 // no thread sneaking in while GC decision is being made
+// Note: No long maintained, should avoid using this
 #define MAX_THREAD_COUNT ((int)0x7FFFFFFF)
 
 /////////////////////////////////////////////////////////////////////
