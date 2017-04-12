@@ -4737,6 +4737,37 @@ abort_traverse:
 
           break;
         } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+          
+          // This is common to both unique and non-unique keys
+          const ValueType &new_value = update_node_p->item.second;
+#ifndef UNIQUE_KEY
+          const ValueType &old_value = update_node_p->old_value;
+          // If the value was deleted then return false
+          if(KeyCmpEqual(search_key, update_node_p->item.first)) {
+            if(ValueCmpEqual(new_value, search_value)) {
+              *index_pair_p = update_node_p->GetIndexPair();
+              // Note that we return the new value item
+              return &update_node_p->item;
+            } else if(ValueCmpEqual(old_value, search_value)) {
+              *index_pair_p = update_node_p->GetIndexPair();
+              return nullptr;
+            }
+          }
+#else
+          if(KeyCmpEqual(search_key, update_node_p->item.first)) {
+            *index_pair_p = update_node_p->GetIndexPair();
+            // Note that we return the new value item
+            return &update_node_p->item;
+          }
+#endif
+          
+          node_p = delete_node_p->child_node_p;
+          
+          break; 
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
 
