@@ -1541,8 +1541,6 @@ class BwTree : public BwTreeBase {
                    &p_child_node_p->GetLowKeyPair(),
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
-                   // For delete node it inherits item count from its child
-                   // and - 1 from it since one element was deleted
                    p_child_node_p->GetItemCount()},
       old_value{p_old_value}
     {}
@@ -5327,7 +5325,7 @@ abort_traverse:
           
           // Also need to add deleted pair into the set to block deltas
           // below being considered as inserting into the node
-          auto deleted_pair = \
+          const auto &deleted_pair = \
             std::make_pair(update_node_p->item.first, 
                            update_node_p->old_value);
             
