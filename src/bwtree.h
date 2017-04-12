@@ -743,6 +743,9 @@ class BwTree : public BwTreeBase {
     LeafDeleteType = 10,
     LeafRemoveType = 11,
     LeafMergeType = 12,
+    // Update an existing value;
+    // The value must exist in order to be defined
+    LeafUpdateType = 13,
   };
 
   ///////////////////////////////////////////////////////////////////
@@ -1505,7 +1508,49 @@ class BwTree : public BwTreeBase {
                    // For delete node it inherits item count from its child
                    // and - 1 from it since one element was deleted
                    p_child_node_p->GetItemCount() - 1}
-     {}
+    {}
+  };
+  
+  /*
+   * class LeafUpdateNode - Represents an update operation over an
+   *                        existing key-value pair
+   *
+   * Note that for unique keys we do not need to store the old value
+   * because threads traversing the delta chain will exit immediately
+   * once it sees update record (for value collection function this
+   * is the value to collect; for Insert() this means we could not insert
+   * and for Delete() this means we could delete). For non-unique keys
+   * this is interpreted as an insert node on top of a delete node
+   */
+  class LeafUpdateNode : public LeafDataNode {
+   public:
+#ifndef UNIQUE_KEY
+    // This is the value before update; key is the same
+    // as the key in the LeafDataNode base
+    ValueType old_value;
+#endif
+    /*
+     * Constructor
+     */
+    LeafUpdateNode(const KeyType &p_update_key,
+                   const ValueType &p_old_value,
+                   const ValueType &p_new_value,
+                   const BaseNode *p_child_node_p,
+                   std::pair<int, bool> p_index_pair) :
+      LeafDataNode{std::make_pair(p_update_key, p_new_value),
+                   NodeType::LeafUpdateType,
+                   p_child_node_p,
+                   p_index_pair,
+                   &p_child_node_p->GetLowKeyPair(),
+                   &p_child_node_p->GetHighKeyPair(),
+                   p_child_node_p->GetDepth() + 1,
+                   // For delete node it inherits item count from its child
+                   // and - 1 from it since one element was deleted
+                   p_child_node_p->GetItemCount()}
+#ifndef UNIQUE_KEY
+      , old_value{p_old_value}
+#endif
+    {}
   };
 
   /*
