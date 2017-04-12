@@ -169,6 +169,10 @@ static constexpr size_t MAPPING_TABLE_SIZE = 0x1 << 20;
 static constexpr int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
 static constexpr int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 16;
 
+static_assert(INNER_DELTA_CHAIN_LENGTH_THRESHOLD >= 1 && 
+              LEAF_DELTA_CHAIN_LENGTH_THRESHOLD >= 1,
+              "Delta chain length must be greater than 0");
+
 // The following are split and merge thresholds. They must
 // be reasonable and if not then static assertion would fail
 
