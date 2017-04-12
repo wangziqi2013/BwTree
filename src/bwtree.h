@@ -5073,7 +5073,10 @@ abort_traverse:
     // and those in the data list of leaf page do not need to be
     // put in the set
     // This is used to dedup already seen key-value pairs
-    const KeyValuePair *delta_set_data_p[delta_change_num];
+    // Note that we should prepare 2 slots for each delta
+    // because leaf update delta may add two key-value pairs
+    // instead of just one in the set
+    const KeyValuePair *delta_set_data_p[delta_change_num * 2];
 
     // This set is used as the set for deduplicating already seen
     // key value pairs
@@ -5336,7 +5339,7 @@ abort_traverse:
           node_p = update_node_p->child_node_p;
 
           break;
-        } // case LeafDeleteType
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: LeafRemoveNode not allowed\n");
 

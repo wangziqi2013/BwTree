@@ -298,9 +298,43 @@ int main(int argc, char **argv) {
     MixedGetValueTest(t1);
     
     /////////////////////////////////////////////////////////////////
+    // Test Upsert()
+    /////////////////////////////////////////////////////////////////
+    
+    printf("Testing Upsert()...\n");
+    
+    for(int i = 0;i < key_num;i++) {
+      t1->Upsert(i, i); 
+    }
+    
+    std::vector<long> v{};
+    for(int i = 0;i < key_num;i++) {
+      v.clear();
+      t1->GetValue(i, v);
+      assert(v.size() == 1);
+      assert(v[0] == i);
+    }
+    
+    for(int i = key_num - 1;i >= 0 ;i--) {
+      t1->Upsert(i, i + 1); 
+    }
+    
+    for(int i = 0;i < key_num;i++) {
+      v.clear();
+      t1->GetValue(i, v);
+      assert(v.size() == 1);
+      assert(v[0] == (i + 1));
+    }
+    
+    DestroyTree(t1);
+    
+    printf("Finished testing Upsert()\n");
+    
+    /////////////////////////////////////////////////////////////////
     // Test Basic Insert/Delete/GetValue
     //   with different patterns and multi thread
     /////////////////////////////////////////////////////////////////
+    t1 = GetEmptyTree(true);
 
     LaunchParallelTestID(t1, basic_test_thread_num, InsertTest2, t1);
     printf("Finished inserting all keys\n");
