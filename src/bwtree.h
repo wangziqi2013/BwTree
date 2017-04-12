@@ -2957,7 +2957,7 @@ class BwTree : public BwTreeBase {
 
           break;
         case NodeType::LeafUpdateType:
-          next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
+          next_node_p = ((LeafUpdateNode *)node_p)->child_node_p;
 
           ((LeafUpdateNode *)node_p)->~LeafUpdateNode();
 
@@ -8571,9 +8571,9 @@ try_join_again:
 
             break;
           case NodeType::LeafUpdateType:
-            next_node_p = ((LeafUpdateType *)node_p)->child_node_p;
+            next_node_p = ((LeafUpdateNode *)node_p)->child_node_p;
 
-            ((LeafUpdateType *)node_p)->~LeafUpdateType();
+            ((LeafUpdateNode *)node_p)->~LeafUpdateNode();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
