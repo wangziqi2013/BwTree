@@ -227,7 +227,12 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  * class BwTreeBase - Base class of BwTree that stores some common members
  */
 class BwTreeBase {
-  
+  // This macro is commonly defined by other libraries, so be
+  // careful with the global name space
+#ifndef CACHE_LINE_SIZE 
+  // This is the presumed size of cache line
+  static constexpr size_t CACHE_LINE_SIZE = 64;
+#endif
 
   // This is the mask we used for address alignment (AND with this)
   static constexpr size_t CACHE_LINE_MASK = ~(CACHE_LINE_SIZE - 1);
