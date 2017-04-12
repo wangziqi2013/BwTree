@@ -767,6 +767,14 @@ class BwTree : public BwTreeBase {
   ///////////////////////////////////////////////////////////////////
 
   /*
+   * LargerOne() - Chose the larger one in compile time
+   */
+  template <typename T>
+  static constexpr T LargerOne(const T &a, const T &b) {
+    return a > b ? a : b; 
+  }
+
+  /*
    * class KeyNodeIDPairComparator - Compares key-value pair for < relation
    *
    * Only key values are compares. However, we should use WrappedKeyComparator
@@ -1990,7 +1998,9 @@ class BwTree : public BwTreeBase {
     // One reasonable amount of memory for each chunk is 
     // delta chain len * struct len + sizeof this struct
     static constexpr size_t CHUNK_SIZE = \
-      sizeof(DeltaNodeUnion) * 8 + sizeof(AllocationMeta);
+      sizeof(DeltaNodeUnion) * LargerOne(INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
+                                         LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) + \
+      sizeof(AllocationMeta);
     
    private: 
     // This points to the higher address end of the chunk we are 
@@ -3859,7 +3869,7 @@ abort_traverse:
         case NodeType::InnerType: {
           NodeID target_id = \
             LocateSeparatorByKeyBI(search_key, 
-                                    static_cast<const InnerNode *>(node_p));
+                                   static_cast<const InnerNode *>(node_p));
 
           bwt_printf("Found child in inner node (BI); child ID = %lu\n",
                      target_id);
