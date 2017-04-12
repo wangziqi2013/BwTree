@@ -4538,6 +4538,41 @@ abort_traverse:
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
+#ifndef UNIQUE_KEY
+          // Search all values with the search key
+          while((scan_start_it != leaf_node_p->End()) && \
+                (KeyCmpEqual(scan_start_it->first, search_key))) {
+
+            // If there is a value matching the search value then return true
+            // We do not need to check any delete set here, since if the
+            // value has been deleted earlier then this function would
+            // already have returned
+            if(ValueCmpEqual(scan_start_it->second, search_value)) {
+              // Since only Delete() will use this piece of information
+              // we set exist flag to false to indicate that the value
+              // has been invalidated
+              index_pair_p->first = \
+                scan_start_it - leaf_node_p->Begin();
+              index_pair_p->second = true;
+
+              // Return a pointer to the item inside LeafNode;
+              // This pointer should remain valid until epoch is exited
+              return &(*scan_start_it);
+            }
+
+            scan_start_it++;
+          }
+
+          // Either key does not exist or key exists but value does not
+          // exist will reach here
+          // Since only Insert() will use the index we set exist flag to false
+          index_pair_p->first = \
+                scan_start_it - leaf_node_p->Begin();
+          index_pair_p->second = false;
+
+          return nullptr;
+#else
+
           index_pair_p->first = \
             scan_start_it - leaf_node_p->Begin();
 
@@ -4552,11 +4587,23 @@ abort_traverse:
           
           index_pair_p->second = false;
           return nullptr;
+#endif
         } // case LeafType
         case NodeType::LeafInsertType: {
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
+#ifndef UNIQUE_KEY
+          if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
+            if(ValueCmpEqual(insert_node_p->item.second, search_value)) {
+              // Only Delete() will use this
+              // We just simply inherit from the first node
+              *index_pair_p = insert_node_p->GetIndexPair();
+
+              return &insert_node_p->item;
+            }
+          }
+#else
           if(KeyCmpEqual(search_key, insert_node_p->item.first)) {
             // Only Delete() will use this
             // We just simply inherit from the first node
@@ -4564,6 +4611,7 @@ abort_traverse:
             
             return &insert_node_p->item;
           }
+#endif
 
           node_p = insert_node_p->child_node_p;
 
@@ -4573,6 +4621,18 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
+#ifndef UNIQUE_KEY
+          // If the value was deleted then return false
+          if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
+            if(ValueCmpEqual(delete_node_p->item.second, search_value)) {
+              // Only Insert() will use this
+              // We just simply inherit from the first node
+              *index_pair_p = delete_node_p->GetIndexPair();
+
+              return nullptr;
+            }
+          }
+#else
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
             // Only Insert() will use this
@@ -4581,7 +4641,8 @@ abort_traverse:
             
             return nullptr;
           }
-          
+#endif
+
           node_p = delete_node_p->child_node_p;
 
           break;
@@ -4636,6 +4697,9 @@ abort_traverse:
   }
   
 #ifdef BWTREE_PELOTON  
+  
+  // Importantant notice: This function is always unique value
+  // no matter whether the index is unique or not
   
   /*
    * NavigateLeafNode() - Apply predicate to all values, and detect for existing
