@@ -709,11 +709,23 @@ class BwTree : public BwTreeBase {
   using KeyValuePairBloomFilter = BloomFilter<KeyValuePair,
                                               KeyValuePairEqualityChecker,
                                               KeyValuePairHashFunc>;
+  
+  // This will be the type of bollm filter if unique key is enabled                                            
+  using KeyBloomFilter = BloomFilter<KeyType, KeyEqualityChecker, KeyHashFunc>;
+  
+  // We could simplify things if non-unique key is not supported
+  // because in this case the identifier could just be key itself
+#ifndef UNIQUE_KEY
+  using LeafItemIdentifier = KeyValuePair;
+  using LeafItemBloomFilter = KeyValuePairBloomFilter;
+#else
+  using LeafItemIdentifier = KeyType;
+  using LeafItemBloomFilter = KeyBloomFilter;
+#endif
 
   using ValueSet = std::unordered_set<ValueType,
                                       ValueHashFunc,
                                       ValueEqualityChecker>;
-
 
   using EpochNode = typename EpochManager::EpochNode;
 
@@ -2438,7 +2450,7 @@ class BwTree : public BwTreeBase {
       
       // Jump over chunk content
       AllocationMeta *meta_p = GetAllocationHeader(node_p);
-            
+
       void *p = meta_p->Allocate(size);
       assert(p != nullptr);
       
@@ -5080,13 +5092,21 @@ abort_traverse:
     // Note that we should prepare 2 slots for each delta
     // because leaf update delta may add two key-value pairs
     // instead of just one in the set
-    const KeyValuePair *delta_set_data_p[delta_change_num * 2];
+    const LeafItemIdentifier *delta_set_data_p[delta_change_num * 2];
 
+#ifndef UNIQUE_KEY
     // This set is used as the set for deduplicating already seen
     // key value pairs
-    KeyValuePairBloomFilter delta_set{delta_set_data_p,
-                                      key_value_pair_eq_obj,
-                                      key_value_pair_hash_obj};
+    LeafItemBloomFilter delta_set{delta_set_data_p,
+                                  key_value_pair_eq_obj,
+                                  key_value_pair_hash_obj};
+#else
+    // For unique keys this is simpler because 
+    // we just use key type to dedup delta records
+    LeafItemBloomFilter delta_set{delta_set_data_p,
+                                  key_eq_obj,
+                                  key_hash_obj};
+#endif
                                         
     /////////////////////////////////////////////////////////////////
     // Prepare Small Sorted Set
@@ -5163,7 +5183,7 @@ abort_traverse:
   void
   CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
                                   T &sss,
-                                  KeyValuePairBloomFilter &delta_set,
+                                  LeafItemBloomFilter &delta_set,
                                   LeafNode *new_leaf_node_p) const {
     // The top node is used to derive high key
     // NOTE: Low key for Leaf node and its delta chain is nullptr
@@ -5296,11 +5316,19 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
+#ifndef UNIQUE_KEY
           if(delta_set.Exists(insert_node_p->item) == false) {
             delta_set.Insert(insert_node_p->item);
 
             sss.InsertNoDedup(insert_node_p);
           }
+#else
+          if(delta_set.Exists(insert_node_p->item.first) == false) {
+            delta_set.Insert(insert_node_p->item.first);
+
+            sss.InsertNoDedup(insert_node_p);
+          }
+#endif
 
           node_p = insert_node_p->child_node_p;
 
@@ -5310,11 +5338,19 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
+#ifndef UNIQUE_KEY
           if(delta_set.Exists(delete_node_p->item) == false) {
             delta_set.Insert(delete_node_p->item);
 
             sss.InsertNoDedup(delete_node_p);
           }
+#else
+          if(delta_set.Exists(delete_node_p->item.first) == false) {
+            delta_set.Insert(delete_node_p->item.first);
+
+            sss.InsertNoDedup(delete_node_p);
+          }
+#endif
 
           node_p = delete_node_p->child_node_p;
 
@@ -5324,6 +5360,7 @@ abort_traverse:
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
           
+#ifndef UNIQUE_KEY
           if(delta_set.Exists(update_node_p->item) == false) {
             delta_set.Insert(update_node_p->item);
 
@@ -5333,6 +5370,17 @@ abort_traverse:
           if(delta_set.Exists(update_node_p->old_item) == false) {
             delta_set.Insert(update_node_p->old_item);
           }
+#else
+          if(delta_set.Exists(update_node_p->item.first) == false) {
+            delta_set.Insert(update_node_p->item.first);
+
+            sss.InsertNoDedup(update_node_p);
+          }
+            
+          if(delta_set.Exists(update_node_p->old_item.first) == false) {
+            delta_set.Insert(update_node_p->old_item.first);
+          }
+#endif
 
           node_p = update_node_p->child_node_p;
 
