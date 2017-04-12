@@ -43,23 +43,6 @@ BTreeType *GetEmptyBTree() {
 }
 
 /*
- * GetEmptySkipList() - This function returns a skip list without unique key
- *                      support
- */
-SkipListType *GetEmptySkipList() {
-  return new SkipListType{false}; 
-}
-
-/*
- * DestroySkipList() - Frees the skiplist after testing
- */
-void DestroySkipList(SkipListType *t) {
-  delete t; 
-  
-  return;
-}
-
-/*
  * DestroyTree() - Deletes a tree and release all resources
  *
  * This function will enable and disable print flag before and after
