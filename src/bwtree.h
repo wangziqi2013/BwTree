@@ -133,11 +133,9 @@ static void dummy(const char*, ...) {}
 
 #endif
 
-#ifdef BWTREE_DEBUG
 // This could not be set as a macro since we will change the flag inside
 // the testing framework
 extern bool print_flag;
-#endif
 
 /////////////////////////////////////////////////////////////////////
 // The following are important constants used by 
