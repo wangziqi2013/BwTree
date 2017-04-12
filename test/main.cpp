@@ -241,6 +241,41 @@ int main(int argc, char **argv) {
   }
 
   if(run_test == true) {
+    /////////////////////////////////////////////////////////////////
+    // Test Upsert()
+    /////////////////////////////////////////////////////////////////
+    const int key_num = 1024 * 1024;
+    
+    t1 = GetEmptyTree(true);
+    
+    printf("Testing Upsert()...\n");
+    
+    for(int i = 0;i < key_num;i++) {
+      t1->Upsert(i, i); 
+    }
+    
+    std::vector<long> v{};
+    for(int i = 0;i < key_num;i++) {
+      v.clear();
+      t1->GetValue(i, v);
+      assert(v.size() == 1);
+      assert(v[0] == i);
+    }
+    
+    for(int i = key_num - 1;i >= 0 ;i--) {
+      t1->Upsert(i, i + 1); 
+    }
+    
+    for(int i = 0;i < key_num;i++) {
+      v.clear();
+      t1->GetValue(i, v);
+      assert(v.size() == 1);
+      assert(v[0] == (i + 1));
+    }
+    
+    DestroyTree(t1);
+    
+    printf("Finished testing Upsert()\n");
 
     /////////////////////////////////////////////////////////////////
     // Test iterator
@@ -248,8 +283,6 @@ int main(int argc, char **argv) {
     
     // This could print
     t1 = GetEmptyTree();
-
-    const int key_num = 1024 * 1024;
 
     // First insert from 0 to 1 million
     for(int i = 0;i < key_num;i++) {
@@ -297,38 +330,7 @@ int main(int argc, char **argv) {
 
     MixedGetValueTest(t1);
     
-    /////////////////////////////////////////////////////////////////
-    // Test Upsert()
-    /////////////////////////////////////////////////////////////////
-    
-    printf("Testing Upsert()...\n");
-    
-    for(int i = 0;i < key_num;i++) {
-      t1->Upsert(i, i); 
-    }
-    
-    std::vector<long> v{};
-    for(int i = 0;i < key_num;i++) {
-      v.clear();
-      t1->GetValue(i, v);
-      assert(v.size() == 1);
-      assert(v[0] == i);
-    }
-    
-    for(int i = key_num - 1;i >= 0 ;i--) {
-      t1->Upsert(i, i + 1); 
-    }
-    
-    for(int i = 0;i < key_num;i++) {
-      v.clear();
-      t1->GetValue(i, v);
-      assert(v.size() == 1);
-      assert(v[0] == (i + 1));
-    }
-    
     DestroyTree(t1);
-    
-    printf("Finished testing Upsert()\n");
     
     /////////////////////////////////////////////////////////////////
     // Test Basic Insert/Delete/GetValue
