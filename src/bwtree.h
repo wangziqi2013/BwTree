@@ -227,9 +227,8 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  * class BwTreeBase - Base class of BwTree that stores some common members
  */
 class BwTreeBase {
-  // This is the presumed size of cache line
-  static constexpr size_t CACHE_LINE_SIZE = 64;
   
+
   // This is the mask we used for address alignment (AND with this)
   static constexpr size_t CACHE_LINE_MASK = ~(CACHE_LINE_SIZE - 1);
   
@@ -1524,7 +1523,7 @@ class BwTree : public BwTreeBase {
    public:
     // This is the value before update; key is the same
     // as the key in the LeafDataNode base
-    ValueType old_value;
+    KeyValuePair old_item;
     
     /*
      * Constructor
@@ -1542,7 +1541,7 @@ class BwTree : public BwTreeBase {
                    &p_child_node_p->GetHighKeyPair(),
                    p_child_node_p->GetDepth() + 1,
                    p_child_node_p->GetItemCount()},
-      old_value{p_old_value}
+      old_item{std::make_pair(p_update_key, p_old_value)}
     {}
   };
 
@@ -4480,7 +4479,7 @@ abort_traverse:
             // This value is common for unique key and non-uniqe key
             const ValueType &new_value = update_node_p->item.second;
 #ifndef UNIQUE_KEY
-            const ValueType &old_value = update_node_p->old_value;
+            const ValueType &old_value = update_node_p->old_item.second;
           
             if(deleted_set.Exists(new_value) == false) {
               if(present_set.Exists(new_value) == false) {
@@ -4747,7 +4746,7 @@ abort_traverse:
 #ifndef UNIQUE_KEY
           // Unique key do not use this new value
           const ValueType &new_value = update_node_p->item.second;
-          const ValueType &old_value = update_node_p->old_value;
+          const ValueType &old_value = update_node_p->old_item.second;
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, update_node_p->item.first)) {
             if(ValueCmpEqual(search_value, new_value)) {
@@ -5325,15 +5324,9 @@ abort_traverse:
 
             sss.InsertNoDedup(update_node_p);
           }
-          
-          // Also need to add deleted pair into the set to block deltas
-          // below being considered as inserting into the node
-          const auto &deleted_pair = \
-            std::make_pair(update_node_p->item.first, 
-                           update_node_p->old_value);
             
-          if(delta_set.Exists(deleted_pair) == false) {
-            delta_set.Insert(deleted_pair);
+          if(delta_set.Exists(update_node_p->old_item) == false) {
+            delta_set.Insert(update_node_p->old_item);
           }
 
           node_p = update_node_p->child_node_p;
