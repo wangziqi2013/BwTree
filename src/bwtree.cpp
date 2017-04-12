@@ -21,7 +21,9 @@ namespace wangziqi2013 {
 namespace bwtree {
 #endif
 
+#ifdef BWTREE_DEBUG
 bool print_flag = true;
+#endif
 
 // This will be initialized when thread is initialized and in a per-thread
 // basis, i.e. each thread will get the same initialization image and then

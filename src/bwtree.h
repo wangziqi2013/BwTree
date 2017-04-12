@@ -130,9 +130,11 @@ static void dummy(const char*, ...) {}
 
 #endif
 
+#ifdef BWTREE_DEBUG
 // This could not be set as a macro since we will change the flag inside
 // the testing framework
 extern bool print_flag;
+#endif
 
 // This constant represents INVALID_NODE_ID which is used as an indication
 // that the node is actually the last node on that level
@@ -150,11 +152,11 @@ extern bool print_flag;
 
 // If the length of delta chain exceeds ( >= ) this then we consolidate the node
 #define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
-#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
+#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)16)
 
 // If node size goes above this then we split it
-#define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)128)
-#define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)32)
+#define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)64)
+#define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)16)
 
 #define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
 #define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
