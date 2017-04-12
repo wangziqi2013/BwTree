@@ -2956,6 +2956,12 @@ class BwTree : public BwTreeBase {
           ((LeafDeleteNode *)node_p)->~LeafDeleteNode();
 
           break;
+        case NodeType::LeafUpdateType:
+          next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
+
+          ((LeafUpdateNode *)node_p)->~LeafUpdateNode();
+
+          break;
         case NodeType::LeafSplitType:
           next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
@@ -5323,7 +5329,7 @@ abort_traverse:
           // below being considered as inserting into the node
           auto deleted_pair = \
             std::make_pair(update_node_p->item.first, 
-            update_node_p->old_value);
+                           update_node_p->old_value);
             
           if(delta_set.Exists(deleted_pair) == false) {
             delta_set.Insert(deleted_pair);
@@ -7712,7 +7718,7 @@ before_switch:
       const KeyValuePair *item_p = Traverse(&context, &old_value, &index_pair);
 #else
       // The value will not be used
-      const KeyValuePair *item_p = Traverse(&context, nullptr, &index_pair);
+      const KeyValuePair *item_p = Traverse(&context, &new_value, &index_pair);
 #endif
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
@@ -7730,7 +7736,7 @@ before_switch:
           LeafInlineAllocateOfType(LeafUpdateNode, 
                                    node_p, 
                                    key, 
-                                   item_p->first,
+                                   item_p->second,
                                    new_value, 
                                    node_p,
                                    index_pair);
@@ -8558,6 +8564,16 @@ try_join_again:
             next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
             ((LeafDeleteNode *)node_p)->~LeafDeleteNode();
+
+            #ifdef BWTREE_DEBUG
+            freed_count++;
+            #endif
+
+            break;
+          case NodeType::LeafUpdateType:
+            next_node_p = ((LeafUpdateType *)node_p)->child_node_p;
+
+            ((LeafUpdateType *)node_p)->~LeafUpdateType();
 
             #ifdef BWTREE_DEBUG
             freed_count++;
