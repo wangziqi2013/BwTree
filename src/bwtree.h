@@ -195,7 +195,7 @@ static_assert(LEAF_NODE_SIZE_UPPER_THRESHOLD >
 static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 
 // Whether BwTree supports non-unique key
-//#define UNIQUE_KEY
+#define UNIQUE_KEY
 
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
@@ -1522,18 +1522,15 @@ class BwTree : public BwTreeBase {
    */
   class LeafUpdateNode : public LeafDataNode {
    public:
-#ifndef UNIQUE_KEY
     // This is the value before update; key is the same
     // as the key in the LeafDataNode base
     ValueType old_value;
-#endif
+    
     /*
      * Constructor
      */
     LeafUpdateNode(const KeyType &p_update_key,
-#ifndef UNIQUE_KEY
                    const ValueType &p_old_value,
-#endif
                    const ValueType &p_new_value,
                    const BaseNode *p_child_node_p,
                    std::pair<int, bool> p_index_pair) :
@@ -1546,10 +1543,8 @@ class BwTree : public BwTreeBase {
                    p_child_node_p->GetDepth() + 1,
                    // For delete node it inherits item count from its child
                    // and - 1 from it since one element was deleted
-                   p_child_node_p->GetItemCount()}
-#ifndef UNIQUE_KEY
-      , old_value{p_old_value}
-#endif
+                   p_child_node_p->GetItemCount()},
+      old_value{p_old_value}
     {}
   };
 
@@ -7709,11 +7704,17 @@ before_switch:
       Context context{key};
       std::pair<int, bool> index_pair;
 
+#ifndef UNIQUE_KEY
       // Check whether the key-value pair exists
       // Also if the key previously exists in the delta chain
       // then return the position of the node using next_key_p
       // if there is none then return nullptr
       const KeyValuePair *item_p = Traverse(&context, &old_value, &index_pair);
+#else
+      // The value will not be used
+      const KeyValuePair *item_p = Traverse(&context, nullptr, &index_pair);
+#endif
+
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
 
       // We will CAS on top of this
@@ -7729,9 +7730,7 @@ before_switch:
           LeafInlineAllocateOfType(LeafUpdateNode, 
                                    node_p, 
                                    key, 
-#ifndef UNIQUE_KEY
-                                   old_value,
-#endif
+                                   item_p->first,
                                    new_value, 
                                    node_p,
                                    index_pair);
