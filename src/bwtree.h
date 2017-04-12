@@ -197,7 +197,7 @@ static_assert(LEAF_NODE_SIZE_UPPER_THRESHOLD >
 static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 
 // Whether BwTree supports non-unique key
-#define UNIQUE_KEY
+//#define UNIQUE_KEY
 
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
@@ -1533,7 +1533,9 @@ class BwTree : public BwTreeBase {
      * Constructor
      */
     LeafUpdateNode(const KeyType &p_update_key,
+#ifndef UNIQUE_KEY
                    const ValueType &p_old_value,
+#endif
                    const ValueType &p_new_value,
                    const BaseNode *p_child_node_p,
                    std::pair<int, bool> p_index_pair) :
@@ -4456,7 +4458,7 @@ abort_traverse:
             // (2) is checked to avoid too many items being
             // inserted into the deleted set
             if(present_set.Exists(delete_node_p->item.second) == false) {
-              if(deleted_set.Exists(deleted_node_p->item.second) == false) {
+              if(deleted_set.Exists(delete_node_p->item.second) == false) {
                 deleted_set.Insert(delete_node_p->item.second);
               }
             }
@@ -4474,7 +4476,7 @@ abort_traverse:
           break;
         } // case LeafDeleteType
         case NodeType::LeafUpdateType: {
-          const LeafUpdateNode update_node_p = \
+          const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
 
           if(KeyCmpEqual(search_key, update_node_p->item.first)) {
@@ -4595,7 +4597,10 @@ abort_traverse:
       return nullptr;
     }
     
+#ifdef UNIQUE_KEY
+    // For unique key we do not use the search value
     (void)search_value;
+#endif
     
     /////////////////////////////////////////////////////////////////
     // Only after this point could we get snapshot and node_p
@@ -4741,13 +4746,14 @@ abort_traverse:
           const LeafUpdateNode *update_node_p = \
             static_cast<const LeafUpdateNode *>(node_p);
           
-          // This is common to both unique and non-unique keys
-          const ValueType &new_value = update_node_p->item.second;
+
 #ifndef UNIQUE_KEY
+          // Unique key do not use this new value
+          const ValueType &new_value = update_node_p->item.second;
           const ValueType &old_value = update_node_p->old_value;
           // If the value was deleted then return false
           if(KeyCmpEqual(search_key, update_node_p->item.first)) {
-            if(ValueCmpEqual(new_value, search_value)) {
+            if(ValueCmpEqual(search_value, new_value)) {
               *index_pair_p = update_node_p->GetIndexPair();
               // Note that we return the new value item
               return &update_node_p->item;
@@ -4764,7 +4770,7 @@ abort_traverse:
           }
 #endif
           
-          node_p = delete_node_p->child_node_p;
+          node_p = update_node_p->child_node_p;
           
           break; 
         } // case LeafUpdateType
@@ -5245,11 +5251,15 @@ abort_traverse:
             while(sss.GetFront()->GetIndexPair().first == current_index) {
               // Update current status of the item on leaf base node
               // IndexPair.second == true if the value has been overwritten
-              item_overwritten = item_overwritten || sss.GetFront()->GetIndexPair().second;
+              // This is even true for upsert because upsert's logical insert
+              // and delete operation must have the same index_item value
+              item_overwritten = (item_overwritten || \
+                                  sss.GetFront()->GetIndexPair().second);
               
               // We only insert those in LeafInsertNode
               // and ignore all LeafDeleteNode
-              if(sss.GetFront()->GetType() == NodeType::LeafInsertType) {
+              if(sss.GetFront()->GetType() == NodeType::LeafInsertType || \
+                 sss.GetFront()->GetType() == NodeType::LeafUpdateType) {
                 // We remove the element from sss here
                 new_leaf_node_p->PushBack(sss.PopFront()->item);
               } else {
@@ -5303,6 +5313,30 @@ abort_traverse:
           }
 
           node_p = delete_node_p->child_node_p;
+
+          break;
+        } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+          
+          if(delta_set.Exists(update_node_p->item) == false) {
+            delta_set.Insert(update_node_p->item);
+
+            sss.InsertNoDedup(update_node_p);
+          }
+          
+          // Also need to add deleted pair into the set to block deltas
+          // below being considered as inserting into the node
+          auto deleted_pair = \
+            std::make_pair(update_node_p->item.first, 
+            update_node_p->old_value);
+            
+          if(delta_set.Exists(deleted_pair) == false) {
+            delta_set.Insert(deleted_pair);
+          }
+
+          node_p = update_node_p->child_node_p;
 
           break;
         } // case LeafDeleteType
@@ -7656,6 +7690,87 @@ before_switch:
     epoch_manager.LeaveEpoch(epoch_node_p);
 
     return true;
+  }
+  
+  /*
+   * Upsert() - Update or Insert
+   *
+   * If we append insert delta then return true; Otherwise return false
+   */
+  bool Upsert(const KeyType &key, 
+#ifndef UNIQUE_KEY
+              const ValueType &old_value,
+#endif
+              const ValueType &new_value) {
+    bwt_printf("Upsert called\n");
+
+    EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
+    bool new_key;
+
+    while(1) {
+      Context context{key};
+      std::pair<int, bool> index_pair;
+
+      // Check whether the key-value pair exists
+      // Also if the key previously exists in the delta chain
+      // then return the position of the node using next_key_p
+      // if there is none then return nullptr
+      const KeyValuePair *item_p = Traverse(&context, &old_value, &index_pair);
+      NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(&context);
+
+      // We will CAS on top of this
+      const BaseNode *node_p = snapshot_p->node_p;
+      NodeID node_id = snapshot_p->node_id;
+
+      // If the key-value pair already exists then return false
+      // because we append update instead of upsert
+      if(item_p != nullptr) {
+        new_key = false;
+
+        const LeafUpdateNode *update_node_p = \
+          LeafInlineAllocateOfType(LeafUpdateNode, 
+                                   node_p, 
+                                   key, 
+#ifndef UNIQUE_KEY
+                                   old_value,
+#endif
+                                   new_value, 
+                                   node_p,
+                                   index_pair);
+
+        bool ret = InstallNodeToReplace(node_id,
+                                        update_node_p,
+                                        node_p);
+        if(ret == true) {
+          break;
+        } else {
+          update_node_p->~LeafUpdateNode();
+        }
+      } else {
+        new_key = true; 
+        
+        const LeafInsertNode *insert_node_p = \
+          LeafInlineAllocateOfType(LeafInsertNode, 
+                                   node_p, 
+                                   key, 
+                                   new_value, 
+                                   node_p, 
+                                   index_pair);
+
+        bool ret = InstallNodeToReplace(node_id,
+                                        insert_node_p,
+                                        node_p);
+        if(ret == true) {
+          break;
+        } else {
+          insert_node_p->~LeafInsertNode();
+        }
+      }
+    }
+
+    epoch_manager.LeaveEpoch(epoch_node_p);
+
+    return new_key;
   }
 
 #ifdef BWTREE_PELOTON
