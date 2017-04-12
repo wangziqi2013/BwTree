@@ -147,21 +147,41 @@ extern bool print_flag;
 // no thread sneaking in while GC decision is being made
 #define MAX_THREAD_COUNT ((int)0x7FFFFFFF)
 
+/////////////////////////////////////////////////////////////////////
+// BwTree parameters - You may need to fine tune this to get the
+// maximum performance
+/////////////////////////////////////////////////////////////////////
+
 // The maximum number of nodes we could map in this index
-#define MAPPING_TABLE_SIZE ((size_t)(1 << 20))
+static constexpr size_t MAPPING_TABLE_SIZE = 0x1 << 20;
 
-// If the length of delta chain exceeds ( >= ) this then we consolidate the node
-#define INNER_DELTA_CHAIN_LENGTH_THRESHOLD ((int)8)
-#define LEAF_DELTA_CHAIN_LENGTH_THRESHOLD ((int)16)
+// If the length of delta chain exceeds ( >= ) this then we consolidate 
+// the node
+static constexpr int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
+static constexpr int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 16;
 
-// If node size goes above this then we split it
-#define INNER_NODE_SIZE_UPPER_THRESHOLD ((int)64)
-#define INNER_NODE_SIZE_LOWER_THRESHOLD ((int)16)
+// The following are split and merge thresholds. They must
+// be reasonable and if not then static assertion would fail
 
-#define LEAF_NODE_SIZE_UPPER_THRESHOLD ((int)128)
-#define LEAF_NODE_SIZE_LOWER_THRESHOLD ((int)32)
+static constexpr int INNER_NODE_SIZE_UPPER_THRESHOLD = 64;
+static constexpr int INNER_NODE_SIZE_LOWER_THRESHOLD = 16;
+static constexpr int LEAF_NODE_SIZE_UPPER_THRESHOLD = 128;
+static constexpr int LEAF_NODE_SIZE_LOWER_THRESHOLD = 32;
 
-#define PREALLOCATE_THREAD_NUM ((size_t)1024)
+// Make sure the inner node size is legal
+static_assert(INNER_NODE_SIZE_UPPER_THRESHOLD > 
+              (INNER_NODE_SIZE_LOWER_THRESHOLD * 2),
+              "Inner node split threshold must be no smaller than 2 times"
+              " of the merge threshold");
+
+// Make sure the leaf node size is legal
+static_assert(LEAF_NODE_SIZE_UPPER_THRESHOLD > 
+              (LEAF_NODE_SIZE_LOWER_THRESHOLD * 2),
+              "Leaf node split threshold must be no smaller than 2 times"
+              " of the merge threshold");
+
+// This is the number of threads we support for new-style GC
+static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
