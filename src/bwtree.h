@@ -4450,8 +4450,15 @@ abort_traverse:
 
           if(KeyCmpEqual(search_key, delete_node_p->item.first)) {
 #ifndef UNIQUE_KEY
+            // Add the item into deleted set if it is:
+            //   (1) Not inserted earlier
+            //   (2) Not deleted earlier also
+            // (2) is checked to avoid too many items being
+            // inserted into the deleted set
             if(present_set.Exists(delete_node_p->item.second) == false) {
-              deleted_set.Insert(delete_node_p->item.second);
+              if(deleted_set.Exists(deleted_node_p->item.second) == false) {
+                deleted_set.Insert(delete_node_p->item.second);
+              }
             }
 #else
             return;
@@ -4466,6 +4473,44 @@ abort_traverse:
 
           break;
         } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+
+          if(KeyCmpEqual(search_key, update_node_p->item.first)) {
+            // This value is common for unique key and non-uniqe key
+            const ValueType &new_value = update_node_p->item.second;
+#ifndef UNIQUE_KEY
+            const ValueType &old_value = update_node_p->old_value;
+          
+            if(deleted_set.Exists(new_value) == false) {
+              if(present_set.Exists(new_value) == false) {
+                present_set.Insert(new_value);
+                value_list.push_back(new_value);
+              }
+            }
+            
+            // If the value is not insertd back later then we add
+            // it as deleted
+            if(present_set.Exists(old_value) == false) {
+              if(deleted_set.Exists(old_value) == false) {
+                deleted_set.Insert(old_value);
+              }
+            }
+#else
+            value_list.push_back(new_value);
+            return;
+#endif
+          } else if(KeyCmpGreater(search_key, update_node_p->item.first)) {
+            start_index = update_node_p->GetIndexPair().first;
+          } else {
+            end_index = update_node_p->GetIndexPair().first;
+          }
+
+          node_p = update_node_p->child_node_p;
+
+          break;
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: Observed LeafRemoveNode in delta chain\n");
 
