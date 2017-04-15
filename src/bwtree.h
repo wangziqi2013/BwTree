@@ -2216,24 +2216,15 @@ class BwTree : public BwTreeBase {
     /*
      * Destructor
      *
-     * All element types are destroyed inside the destruction function. D'tor
-     * is called by Destroy(), and therefore should not be called directly
-     * by external functions.
-     *
      * Note that this is not called by Destroy() and instead it should be 
      * called by an external function that destroies a delta chain, since in one
      * instance of thie class there might be multiple nodes of different types
-     * so destroying should be dont individually with each type.
+     * so destroying should be done individually with each type.
+     *
+     * Also child classes should call the destructor of their key and value
+     * types in the corresponding destructor
      */
     ~ElasticNode() {
-      // Use two iterators to iterate through all existing elements
-      for(ElementType *element_p = Begin();
-          element_p != End();
-          element_p++) {
-        // Manually calls destructor when the node is destroyed
-        element_p->~ElementType();
-      }
-      
       return;
     }
     
