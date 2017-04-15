@@ -2382,6 +2382,8 @@ class BwTree : public BwTreeBase {
     }
   };
   
+  
+  
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
    *
@@ -2390,8 +2392,7 @@ class BwTree : public BwTreeBase {
    * one. Therefore this class needs to maintain one more pointer to denote
    * the beginning of the NodeID array
    */
-  class InnerNode : public ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
-                                       NodeID *> {
+  class InnerNode : public  {
    public:
 
     /*
@@ -2404,6 +2405,32 @@ class BwTree : public BwTreeBase {
     InnerNode(InnerNode &&) = delete;
     InnerNode &operator=(const InnerNode &) = delete;
     InnerNode &operator=(InnerNode &&) = delete;
+    
+    /*
+     * Get() - Returns an inner node instance
+     */
+    inline static InnerNode *Get(int p_depth,
+                                 int p_item_count,
+                                 const KeyNodeIDPair &p_low_key,
+                                 const KeyNodeIDPair &p_high_key) {
+      // This is the byte size of the KeyType and NodeID array
+      size_t inner_node_size = (sizeof(KeyType) + sizeof(NodeID)) * p_item_count;
+      InnerNode *inner_node_p = \
+        static_cast<InnerNode *>(ElasticNode::Get(inner_node_size,
+                                                  NodeType::InnerType, 
+                                                  p_depth,
+                                                  p_item_count,
+                                                  p_low_key,
+                                                  p_high_key);
+      // Note that this is different from leaf nodes
+      // and we set the end to the real end
+      inner_node_p->end = inner_node_p->start + inner_node_size;
+      // This is the boundary between KeyType array and NodeID array
+      inner_node_p->extra_data = \
+        inner_node_p->start + sizeof(KeyType) * p_item_count;
+      
+      return inner_node_p;                           
+    }
     
     /*
      * KeyBegin() - The start pointer of KeyType array
