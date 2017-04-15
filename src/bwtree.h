@@ -2519,7 +2519,7 @@ class BwTree : public BwTreeBase {
      */
     inline void WriteItem(int index, const KeyType &key, const NodeID node_id) {
       // Index must not be larger than the actual size of the node
-      assert(index < GetSize());
+      assert(index < GetSize() && index >= 0);
       
       // Copy construct the key object on the KeyType array using placement new
       new KeyBegin()[index] KeyType{key};
@@ -2577,6 +2577,20 @@ class BwTree : public BwTreeBase {
       // then computing the size of this array requires division
       return NodeIDBegin() - NodeIDEnd();
     }
+    
+    /*
+     * At() - Returns a KeyNodeIDPair object at a given index
+     *
+     * This function should only be called occasionally because
+     * it does not comply with the raw format we store KeyType and 
+     * NodeID type
+     *
+     * This works for both const and non-const array
+     */
+    inline KeyNodeIDPair At(int index) {
+      assert(index < GetSize() && index >= 0);
+      return std::make_pair(KeyBegin()[index], NodeIDBegin()[index]);
+    }
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -2588,7 +2602,7 @@ class BwTree : public BwTreeBase {
     InnerNode *GetSplitSibling() const {
       // Call function in class ElasticNode to determine the size of the 
       // inner node
-      int key_num = this->GetSize();
+      int key_num = GetSize();
 
       // Inner node size must be > 2 to avoid empty split node
       assert(key_num >= 2);
@@ -2596,34 +2610,33 @@ class BwTree : public BwTreeBase {
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      assert(key_num == this->GetItemCount());
+      assert(key_num == GetItemCount());
 
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto key_copy_start_it = this->KeyBegin() + split_item_index;
-      auto node_id_copy_start_it = this->NodeIDBegin() + split_item_index;
+      KeyType *key_copy_start_it = KeyBegin() + split_item_index;
+      NodeID *node_id_copy_start_it = NodeIDBegin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
-      int sibling_size = static_cast<int>(std::distance(copy_start_it, 
-                                                        this->End()));
+      int sibling_item_count = NodeIDEnd() - node_id_copy_start_it;
 
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        InnerNode::Get(0,
-                       sibling_size,
-                       this->At(split_item_index),
-                       this->GetHighKeyPair()));
+        InnerNode::Get(0,                             // Depth
+                       sibling_item_count,            // Item count
+                       this->At(split_item_index),    // Low key
+                       this->GetHighKeyPair()));      // High key
 
       // Call overloaded PushBack() to insert an array of elements
       inner_node_p->WriteItem(0,                      // Starting index in dest
-                              sibling_size,           // # of itemss
+                              sibling_item_count,     // # of itemss
                               key_copy_start_it,      // Key start pointer
                               node_id_copy_start_it); // NodeID start pointer
       
       // Since we copy exactly that many elements
-      assert(inner_node_p->GetSize() == sibling_size);
+      assert(inner_node_p->GetSize() == sibling_item_count);
       assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
       return inner_node_p;
