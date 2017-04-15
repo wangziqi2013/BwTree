@@ -1975,19 +1975,26 @@ class BwTree : public BwTreeBase {
    * union DeltaNodeUnion - The union of all delta nodes - we use this to 
    *                        precllocate memory on the base node for delta nodes
    */
-  union DeltaNodeUnion {
+  union InnerDeltaNodeUnion {
     InnerInsertNode inner_insert_node;
     InnerDeleteNode inner_delete_node;
     InnerSplitNode inner_split_node;
     InnerMergeNode inner_merge_node;
     InnerRemoveNode inner_remove_node;
     InnerAbortNode inner_abort_node;
-    
+  };
+  
+  /*
+   * LeafDeltaNodeUnion - This is used to determine the preallocation size
+   *                      for leaf level delta chains
+   */
+  union LeafDeltaNodeUnion {
     LeafInsertNode leaf_insert_node;
     LeafDeleteNode leaf_delete_node;
     LeafSplitNode leaf_split_node;
     LeafMergeNode leaf_merge_node;
     LeafRemoveNode leaf_remove_node; 
+    LeafUpdateNode leaf_update_node; 
   };
   
   /*
@@ -2003,6 +2010,7 @@ class BwTree : public BwTreeBase {
     std::atomic<char *> tail;
     // This points to the lower limit of the memory region we could use
     char *const limit;
+    
     // This forms a linked list which needs to be traversed in order to 
     // free chunks of memory
     std::atomic<AM *> next;
