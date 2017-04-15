@@ -1996,6 +1996,8 @@ class BwTree : public BwTreeBase {
   template <size_t chunk_size>
   class AllocationMeta {
    private: 
+    using AM = AllocationMeta<chunk_size>;
+    
     // This points to the higher address end of the chunk we are 
     // allocating from
     std::atomic<char *> tail;
@@ -2003,7 +2005,7 @@ class BwTree : public BwTreeBase {
     char *const limit;
     // This forms a linked list which needs to be traversed in order to 
     // free chunks of memory
-    std::atomic<AllocationMeta *> next;
+    std::atomic<AM *> next;
   
    public:
     /*
@@ -2055,27 +2057,25 @@ class BwTree : public BwTreeBase {
      * Whether or not this has succeded, always return the pointer to the next
      * chunk such that the caller could retry on next chunk
      */
-    AllocationMeta *GrowChunk() {
+    AM *GrowChunk() {
       // If we know there is a next chunk just return it to avoid
       // having too many failed CAS instruction
-      AllocationMeta *meta_p = next.load();
+      AM *meta_p = next.load();
       if(meta_p != nullptr) {
         return meta_p;
       }
       
       char *new_chunk = new char[chunk_size];
-      AllocationMeta *expected = nullptr;
+      AM *expected = nullptr;
       
       // Prepare the new chunk's metadata field
-      AllocationMeta *new_meta_base = \
-        reinterpret_cast<AllocationMeta *>(new_chunk);
+      AM *new_meta_base = reinterpret_cast<AM *>(new_chunk);
         
       // We initialize the allocation meta at lower end of the address
       // and let tail points to the first byte after this chunk, and the limit
       // is the first byte after AllocationMeta
-      new (new_meta_base) \
-        AllocationMeta{new_chunk + chunk_size,                  // tail
-                       new_chunk + sizeof(AllocationMeta)};     // limit
+      new (new_meta_base) AM{new_chunk + chunk_size,      // tail
+                             new_chunk + sizeof(AM)};     // limit
       
       // Always CAS with nullptr such that we will never install/replace
       // a chunk that has already been installed here
@@ -2086,7 +2086,7 @@ class BwTree : public BwTreeBase {
       
       // Note that here we call destructor manually and then delete the char[]
       // to complete the entire sequence which should be done by the compiler
-      new_meta_base->~AllocationMeta();
+      new_meta_base->~AM();
       delete[] new_chunk;
       
       // If CAS fails this will be loaded with the real value such that we have
@@ -2105,7 +2105,7 @@ class BwTree : public BwTreeBase {
      * takes "this" pointer and iterate using the "next" field
      */
     void *Allocate(size_t size) {
-      AllocationMeta *meta_p = this;
+      AM *meta_p = this;
       while(1) {
         // Allocate from the current chunk first
         // If this is nullptr then this chunk has been depleted
@@ -2138,17 +2138,17 @@ class BwTree : public BwTreeBase {
      * thread environment such as GC
      */
     void Destroy() {
-      AllocationMeta *meta_p = this;
+      AM *meta_p = this;
       
       while(meta_p != nullptr) {
         // Save the next pointer to traverse to it later
-        AllocationMeta *next_p = meta_p->next.load();
+        AM *next_p = meta_p->next.load();
         
         // 1. Manually call destructor
         // 2. Delete it as a char[]
         // Note that we know the base of meta_p is always the address
         // returned by operator new[]
-        meta_p->~AllocationMeta();
+        meta_p->~AM();
         delete[] reinterpret_cast<char *>(meta_p);
         
         meta_p = next_p;
@@ -2174,6 +2174,9 @@ class BwTree : public BwTreeBase {
    * of child classes will clash with the elastic array which is not managed
    * by the language. In order to declare extra data in the child class please
    * use template argument ExtraDataType 
+   *
+   * If no ExtraDataType is needed then just declear it as char[0] which does 
+   * not take any space
    */
   template <size_t chunk_size, typename ExtraDataType>
   class ElasticNode : public BaseNode {
@@ -2201,6 +2204,12 @@ class BwTree : public BwTreeBase {
      *
      * Note that this constructor uses the low key and high key stored as
      * members to initialize the NodeMetadata object in class BaseNode
+     *
+     * Note that "end" pointer is set to "start" on initialization. This is 
+     * correct for LeafNode. For inner nodes, however, since we do not use
+     * the "end" pointer as a way of storing current write location we need
+     * to set it to the actual boundary of KeyType and NodeID array immediately
+     * and rely on users of this class to remember the writing location
      */ 
     ElasticNode(NodeType p_type,
                 int p_depth,
@@ -2248,6 +2257,8 @@ class BwTree : public BwTreeBase {
     }
     
    public: 
+    // Use this as the type of allocatoin meta of a certain chunk size
+    using AM = AllocationMeta<chunk_size>;
    
     /*
      * Get() - Static helper function that constructs a elastic node of
@@ -2258,28 +2269,27 @@ class BwTree : public BwTreeBase {
      * lengthed node. However, after malloc() returns we use placement operator
      * new to initialize it, such that the node could be freed using operator
      * delete later on
+     *
+     * Also note that byte_size here is the number of bytes we want to allocate
+     * for the ElasticNode itself, which does not count in preallocation
      */
-    inline static ElasticNode *Get(int size,         // Number of elements
+    inline static ElasticNode *Get(int byte_size,    // Bytes to be allocated
                                    NodeType p_type,
                                    int p_depth,
-                                   int p_item_count, // Usually equal to size
+                                   int p_item_count,
                                    const KeyNodeIDPair &p_low_key,
                                    const KeyNodeIDPair &p_high_key) {
-      // Currently this is always true - if we want a larger array then 
-      // just remove this line
-      assert(size == p_item_count);
-                                     
       // Allocte memory for 
       //   1. AllocationMeta (chunk) 
       //   2. node meta 
       //   3. ElementType array
-      // basic template + ElementType element size * (node size) + CHUNK_SIZE
+      // basic template + byte size + chunk_size
       // Note: do not make it constant since it is going to be modified
       // after being returned
       char *alloc_base = \
         new char[sizeof(ElasticNode) + \
-                   size * sizeof(ElementType) + \
-                   AllocationMeta::CHUNK_SIZE];
+                   byte_size + \
+                   AllocationMeta::chunk_size];
       assert(alloc_base != nullptr);
       
       // Initialize the AllocationMeta - tail points to the first byte inside
@@ -2353,23 +2363,6 @@ class BwTree : public BwTreeBase {
       assert(p != nullptr);
       
       return p;
-    }
-    
-    /*
-     * At() - Access element with bounds checking under debug mode
-     */
-    inline ElementType &At(const int index) {
-      // The index must be inside the valid range
-      assert(index < GetSize());
-      
-      return *(Begin() + index);
-    }
-    
-    inline const ElementType &At(const int index) const {
-      // The index must be inside the valid range
-      assert(index < GetSize());
-      
-      return *(Begin() + index);
     }
   };
   
@@ -2496,6 +2489,9 @@ class BwTree : public BwTreeBase {
                           int count, 
                           const KeyType *key_p, 
                           const NodeID *node_id_p) {
+      // Could not copy more than what the node could hold
+      assert(index + count < GetSize());
+      
       // If the KeyType could not be copied trivially then just construct
       // them
       // NodeID is always memcpy'ed
@@ -2557,7 +2553,8 @@ class BwTree : public BwTreeBase {
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      auto copy_start_it = this->Begin() + split_item_index;
+      auto key_copy_start_it = this->KeyBegin() + split_item_index;
+      auto node_id_copy_start_it = this->NodeIDBegin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
       int sibling_size = static_cast<int>(std::distance(copy_start_it, 
@@ -2575,7 +2572,10 @@ class BwTree : public BwTreeBase {
               this->GetHighKeyPair()));
 
       // Call overloaded PushBack() to insert an array of elements
-      inner_node_p->PushBack(copy_start_it, this->End());
+      inner_node_p->WriteItem(0,                      // Starting index in dest
+                              sibling_size,           // # of itemss
+                              key_copy_start_it,      // Key start pointer
+                              node_id_copy_start_it); // NodeID start pointer
       
       // Since we copy exactly that many elements
       assert(inner_node_p->GetSize() == sibling_size);
@@ -2658,6 +2658,23 @@ class BwTree : public BwTreeBase {
      */
     inline int GetSize() const {
       return static_cast<int>(End() - Begin());
+    }
+    
+    /*
+     * At() - Access element with bounds checking under debug mode
+     */
+    inline KeyValuePair &At(const int index) {
+      // The index must be inside the valid range
+      assert(index < GetSize());
+      
+      return Begin()[index];
+    }
+    
+    inline const ElementType &At(const int index) const {
+      // The index must be inside the valid range
+      assert(index < GetSize());
+      
+      return Begin()[index];
     }
     
     /*
