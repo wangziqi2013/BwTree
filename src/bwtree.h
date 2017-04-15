@@ -2247,97 +2247,6 @@ class BwTree : public BwTreeBase {
       return;
     }
     
-    /*
-     * Begin() - Returns a begin iterator to its internal array
-     */
-    inline ElementType *Begin() {
-      return start;
-    }
-    
-    inline const ElementType *Begin() const {
-      return start; 
-    }
-    
-    /*
-     * End() - Returns an end iterator that is similar to the one for vector
-     */
-    inline ElementType *End() {
-      return end; 
-    }
-    
-    inline const ElementType *End() const {
-      return end; 
-    }
-    
-    /*
-     * REnd() - Returns the element before the first element
-     *
-     * Note that since we returned an invalid pointer into the array, the
-     * return value should not be modified and is therefore of const type
-     */
-    inline const ElementType *REnd() {
-      return start - 1; 
-    }
-    
-    inline const ElementType *REnd() const {
-      return start - 1; 
-    }
-    
-    /*
-     * GetSize() - Returns the size of the embedded list
-     *
-     * Note that the return type is integer since we use integer to represent
-     * the size of a node
-     */
-    inline int GetSize() const {
-      return static_cast<int>(End() - Begin());
-    }
-    
-    /*
-     * PushBack() - Push back an element
-     *
-     * This function takes an element type and copy-construct it on the array
-     * which is invisible to the compiler. Therefore we must call placement
-     * operator new to do the job
-     */
-    inline void PushBack(const ElementType &element) {
-      // Placement new + copy constructor using end pointer
-      new (end) ElementType{element};
-      
-      // Move it pointing to the enxt available slot, if not reached the end
-      end++;
-      
-      return;
-    }
-    
-    /*
-     * PushBack() - Push back a series of elements
-     *
-     * The overloaded PushBack() could also push an array of elements
-     */
-    inline void PushBack(const ElementType *copy_start_p,
-                         const ElementType *copy_end_p) {
-      // Make sure the loop will come to an end
-      assert(copy_start_p <= copy_end_p);
-
-      // If both key type and value type are trivially copyable then
-      // we just use std::memcpy to copy ii without losing any semantics
-      if(std::is_trivially_copyable<KeyType>::value == false || 
-         std::is_trivially_copyable<ValueType>::value == false) {
-        while(copy_start_p != copy_end_p) {
-          PushBack(*copy_start_p);
-          copy_start_p++; 
-        }
-      } else {
-        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
-        std::memcpy(End(), copy_start_p, diff);
-        
-        end = (ElementType *)((uint64_t)end + diff);
-      }
-      
-      return;
-    }
-    
    public: 
    
     /*
@@ -2542,10 +2451,11 @@ class BwTree : public BwTreeBase {
   /*
    * class LeafNode - Leaf node that holds data
    *
-   * There are 5 types of delta nodes that could be appended
-   * to a leaf node. 3 of them are SMOs, and 2 of them are data operation
+   * There are 6 types of delta nodes that could be appended
+   * to a leaf node. 3 of them are SMOs, and 3 of them are data operation
    */
-  class LeafNode : public ElasticNode<KeyValuePair> {
+  class LeafNode : public ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD, 
+                                      char[0]> {
    public:
     LeafNode() = delete;
     LeafNode(const LeafNode &) = delete;
@@ -2554,10 +2464,108 @@ class BwTree : public BwTreeBase {
     LeafNode &operator=(LeafNode &&) = delete;
     
     /*
-     * Destructor - Calls underlying ElasticNode d'tor
+     * Destructor
+     *
+     * This function destroies all key value pairs stored in the array
+     * by calling the destructor for each of them
      */
     ~LeafNode() {
-      this->~ElasticNode<KeyValuePair>();
+      for(KeyValuePair *p = Begin();p != End();p++) {
+        p->~KeyValuePair()
+      }
+      
+      return;
+    }
+    
+    /*
+     * Begin() - Returns a begin iterator to its internal array
+     */
+    inline KeyValuePair *Begin() {
+      return reinterpret_cast<KeyValuePair *>(start);
+    }
+    
+    inline const ElementType *Begin() const {
+      return reinterpret_cast<KeyValuePair *>(start); 
+    }
+    
+    /*
+     * End() - Returns an end iterator that is similar to the one for vector
+     */
+    inline ElementType *End() {
+      return reinterpret_cast<KeyValuePair *>(end); 
+    }
+    
+    inline const ElementType *End() const {
+      return reinterpret_cast<KeyValuePair *>(end); 
+    }
+    
+    /*
+     * REnd() - Returns the element before the first element
+     *
+     * Note that since we returned an invalid pointer into the array, the
+     * return value should not be modified and is therefore of const type
+     */
+    inline const ElementType *REnd() {
+      return reinterpret_cast<KeyValuePair *>(start) - 1; 
+    }
+    
+    inline const ElementType *REnd() const {
+      return reinterpret_cast<KeyValuePair *>(start) - 1; 
+    }
+    
+    /*
+     * GetSize() - Returns the size of the embedded list
+     *
+     * Note that the return type is integer since we use integer to represent
+     * the size of a node
+     */
+    inline int GetSize() const {
+      return static_cast<int>(End() - Begin());
+    }
+    
+    /*
+     * PushBack() - Push back an element
+     *
+     * This function takes an element type and copy-construct it on the array
+     * which is invisible to the compiler. Therefore we must call placement
+     * operator new to do the job
+     */
+    inline void PushBack(const KeyValuePair &element) {
+      // Placement new + copy constructor using end pointer
+      new (end) KeyValuePair{element};
+      
+      // Move it pointing to the enxt available slot, if not reached the end
+      end++;
+      
+      return;
+    }
+    
+    /*
+     * PushBack() - Push back a series of elements
+     *
+     * The overloaded PushBack() could also push an array of elements
+     */
+    inline void PushBack(const KeyValuePair *copy_start_p,
+                         const KeyValuePair *copy_end_p) {
+      // Make sure the loop will come to an end
+      assert(copy_start_p <= copy_end_p);
+
+      // If both key type and value type are trivially copyable then
+      // we just use std::memcpy to copy ii without losing any semantics
+      if(std::is_trivially_copyable<KeyType>::value == false || 
+         std::is_trivially_copyable<ValueType>::value == false) {
+        while(copy_start_p != copy_end_p) {
+          PushBack(*copy_start_p);
+          copy_start_p++; 
+        }
+      } else {
+        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
+        std::memcpy(End(), copy_start_p, diff);
+        
+        end = (KeyValuePair *)((uint64_t)end + diff);
+      }
+      
+      return;
     }
 
     /*
