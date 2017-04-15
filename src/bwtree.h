@@ -2620,7 +2620,25 @@ class BwTree : public BwTreeBase {
       return it - KeyBegin();             
     }
     
-    
+    /*
+     * UpperBound() - Same as LowerBound() except that it searches for keys
+     *                greater than search key
+     */
+    inline int UpperBound(int start_index,
+                          int end_index,
+                          const KeyType &search_key) {
+      assert(start_index >= 0 && start_index < GetSize());
+      assert(end_index >= 0 && end_index <= GetSize());
+      
+      const KeyType *it = std::upper_bound(KeyBegin() + start_index,
+                                           KeyBegin() + end_index,
+                                           search_key,
+                                           key_cmp_obj);
+                                           
+      // This is the index of the key we have found
+      // and it could be equal to end_index
+      return it - KeyBegin();
+    }
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
