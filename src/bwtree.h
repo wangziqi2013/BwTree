@@ -2374,9 +2374,15 @@ class BwTree : public BwTreeBase {
   };
   
   /*
-   * class InnerNode - Inner node that holds separators
+   * class InnerNode - Inner node that holds keys and NodeID arrays
+   *
+   * Note that this class differs from leaf node in a sense that it stores
+   * separator keys and NodeID arrays separately in two arraies instead of
+   * one. Therefore this class needs to maintain one more pointer to denote
+   * the beginning of the NodeID array
    */
-  class InnerNode : public ElasticNode<KeyNodeIDPair> {
+  class InnerNode : public ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
+                                       NodeID *> {
    public:
 
     /*
@@ -2391,10 +2397,88 @@ class BwTree : public BwTreeBase {
     InnerNode &operator=(InnerNode &&) = delete;
     
     /*
-     * Destructor - Calls destructor of ElasticNode
+     * KeyBegin() - The start pointer of KeyType array
+     */
+    inline KeyType *KeyBegin() {
+      return reinterpret_cast<KeyType *>(start); 
+    }
+    
+    /*
+     * KeyBegin() - The start pointer of const KeyType array
+     */
+    inline const KeyType *KeyBegin() const {
+      return reinterpret_cast<const KeyType *>(start); 
+    }
+    
+    /*
+     * KeyEnd() - The end pointer of KeyType array
+     *
+     * Note that extra data is both the end of KeyType array
+     * as well as the begin of NodeID array
+     */
+    inline KeyType *KeyEnd() {
+      return reinterpret_cast<KeyType *>(extra_data);
+    }
+    
+    /*
+     * KeyEnd() - The end pointer of const KeyType array
+     */
+    inline const KeyType *KeyEnd() const {
+      return reinterpret_cast<const KeyType *>(extra_data);
+    }
+    
+    /*
+     * NodeIDBegin() - The start pointer of NodeID array
+     */
+    inline NodeID *NodeIDBegin() {
+      return extra_data;
+    }
+    
+    /*
+     * NodeIDBegin() - The start pointer of const NodeID array
+     */
+    inline const NodeID *NodeIDBegin() const {
+      return extra_data; 
+    }
+    
+    /*
+     * NodeIDEnd() - End pointer of NodeID array
+     */
+    inline NodeID *NodeIDEnd() {
+      return reinterpret_cast<NodeID *>(end);
+    }
+    
+    /*
+     * NodeIDEnd() - End pointer of const NodeID array
+     */
+    inline const NodeID *NodeIDEnd() const {
+      return reinterpret_cast<const NodeID *>(end);
+    }
+    
+    /*
+     * Destructor - Destroies every KeyType object in the separator key array
      */
     ~InnerNode() {
-      this->~ElasticNode<KeyNodeIDPair>();
+      // Extra data is both key array end and node ID array start
+      KeyType *key_end = reinterpret_cast<KeyType *>(extra_data);
+      KeyType *key_start = reinterpret_cast<KeyType *>(start);
+      
+      // For all elements in the KeyType array destroy them
+      while(key_start != key_end) {
+        key_start->~KeyType();
+      }
+      
+      return;
+    }
+    
+    /*
+     * GetSize() - Returns the number of elements in this inner node
+     *
+     * Note that the size of the NodeID array must equal the size of the 
+     * KeyType array.
+     */
+    int GetSize() const {
+      
     }
 
     /*
