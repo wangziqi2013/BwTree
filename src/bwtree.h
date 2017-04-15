@@ -2418,7 +2418,9 @@ class BwTree : public BwTreeBase {
                                  const KeyNodeIDPair &p_low_key,
                                  const KeyNodeIDPair &p_high_key) {
       // This is the byte size of the KeyType and NodeID array
-      size_t inner_node_size = (sizeof(KeyType) + sizeof(NodeID)) * p_item_count;
+      size_t inner_node_size = \
+        (sizeof(KeyType) + sizeof(NodeID)) * p_item_count;
+        
       InnerNode *inner_node_p = \
         static_cast<InnerNode *>(InnerBaseType::Get(inner_node_size,
                                                     NodeType::InnerType, 
@@ -2432,7 +2434,8 @@ class BwTree : public BwTreeBase {
       inner_node_p->end = inner_node_p->start + inner_node_size;
       // This is the boundary between KeyType array and NodeID array
       inner_node_p->extra_data = \
-        inner_node_p->start + sizeof(KeyType) * p_item_count;
+        reinterpret_cast<NodeID *>(inner_node_p->start + 
+                                   sizeof(KeyType) * p_item_count);
       
       return inner_node_p;                           
     }
@@ -2591,6 +2594,33 @@ class BwTree : public BwTreeBase {
       assert(index < GetSize() && index >= 0);
       return std::make_pair(KeyBegin()[index], NodeIDBegin()[index]);
     }
+    
+    /*
+     * LowerBound() - Mimics std::lower_bound()'s semantics on inner nodes
+     *
+     * This function searches for the first key >= search key between range
+     * [start_index, end_index) and returns the index of the found key. 
+     * If all keys in the inner node is < search key then the end
+     * index is returned to indicate the corner case
+     */
+    inline int LowerBound(int start_index, 
+                          int end_index, 
+                          const KeyType &search_key) {
+      assert(start_index >= 0 && start_index < GetSize());
+      // Note that end_index could pass beyond the last valid element
+      assert(end_index >= 0 && end_index <= GetSize());
+      
+      const KeyType *it = std::lower_bound(KeyBegin() + start_index,
+                                           KeyBegin() + end_index,
+                                           search_key,
+                                           key_cmp_obj);
+                                           
+      // This is the index of the key we have found
+      // and it could be equal to end_index
+      return it - KeyBegin();             
+    }
+    
+    
 
     /*
      * GetSplitSibling() - Split InnerNode into two halves.
@@ -2700,11 +2730,11 @@ class BwTree : public BwTreeBase {
      * return value should not be modified and is therefore of const type
      */
     inline const ElementType *REnd() {
-      return reinterpret_cast<KeyValuePair *>(start) - 1; 
+      return reinterpret_cast<const KeyValuePair *>(start) - 1; 
     }
     
     inline const ElementType *REnd() const {
-      return reinterpret_cast<KeyValuePair *>(start) - 1; 
+      return reinterpret_cast<const KeyValuePair *>(start) - 1; 
     }
     
     /*
@@ -7408,7 +7438,7 @@ before_switch:
    * Note 2: index_pair_p always reflects the relative position of the search
    * key inside this InnerNode, no matter nullptr or non-null pointer is 
    * returned, the integer inside the pair is always the index for all keys
-   * >= the search key. Currently the secong component is not set and not
+   * >= the search key. Currently the second component is not set and not
    * used
    */
   const KeyNodeIDPair *NavigateInnerNode(NodeSnapshot *snapshot_p,
@@ -7505,7 +7535,7 @@ before_switch:
         // We must guarantee that the key must be inside the range
         // of this function
         // For split SMO this is true by extra checking
-        // For merge SMO this is implicitly true sunce the merge key
+        // For merge SMO this is implicitly true since the merge key
         // should not be in another node, o.w. the high key has changed
         node_p = \
           static_cast<const InnerSplitNode *>(node_p)->child_node_p;
