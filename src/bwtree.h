@@ -1999,6 +1999,9 @@ class BwTree : public BwTreeBase {
   
   /*
    * class AllocationMeta - Metadata for maintaining preallocated space
+   *
+   * Note thta chunk_size is the allocation size, excluding the 
+   * AllocationMeta object, i.e. it is the actual usable size
    */
   template <size_t chunk_size>
   class AllocationMeta {
@@ -2073,7 +2076,9 @@ class BwTree : public BwTreeBase {
         return meta_p;
       }
       
-      char *new_chunk = new char[chunk_size];
+      // Note that the actual raw memory size is sizeof this object
+      // plus the parameterized chunk size
+      char *new_chunk = new char[chunk_size + sizeof(AM)];
       AM *expected = nullptr;
       
       // Prepare the new chunk's metadata field
@@ -2082,8 +2087,8 @@ class BwTree : public BwTreeBase {
       // We initialize the allocation meta at lower end of the address
       // and let tail points to the first byte after this chunk, and the limit
       // is the first byte after AllocationMeta
-      new (new_meta_base) AM{new_chunk + chunk_size,      // tail
-                             new_chunk + sizeof(AM)};     // limit
+      new (new_meta_base) AM{new_chunk + sizeof(AM) + chunk_size, // tail
+                             new_chunk + sizeof(AM)};             // limit
       
       // Always CAS with nullptr such that we will never install/replace
       // a chunk that has already been installed here
@@ -2288,30 +2293,33 @@ class BwTree : public BwTreeBase {
                                    const KeyNodeIDPair &p_low_key,
                                    const KeyNodeIDPair &p_high_key) {
       // Allocte memory for 
-      //   1. AllocationMeta (chunk) 
-      //   2. node meta 
-      //   3. ElementType array
-      // basic template + byte size + chunk_size
-      // Note: do not make it constant since it is going to be modified
-      // after being returned
+      //   1. AllocationMeta (lowest address)
+      //   2. Chunk size
+      //     2.1. Elastic node metadata (Before 2.2)
+      //     2.2. The array of elements (Highest address) 
+      //     2.3. Unused (Between 1 and 2.1)
+      // |<-- Allocation Meta -->|<----- chunk_size ----->|<-- ElasticNode Member -->|<-- ElasticNode Data -->|
+      //                         ^                        ^
+      //                       Limit                     Tail
       char *alloc_base = \
-        new char[sizeof(ElasticNode) + \
-                   byte_size + \
-                   AllocationMeta::chunk_size];
+        new char[sizeof(ElasticNode) + \    // This is 2.1
+                   byte_size + \            // This is 2.2
+                   chunk_size +             // This is 2.3
+                   sizeof(AM)];             // This is 1
       assert(alloc_base != nullptr);
       
       // Initialize the AllocationMeta - tail points to the first byte inside
       // class ElasticNode; limit points to the first byte after class 
       // AllocationMeta
-      new (reinterpret_cast<AllocationMeta *>(alloc_base)) \
-        AllocationMeta{alloc_base + AllocationMeta::CHUNK_SIZE,
+      new (reinterpret_cast<AM *>(alloc_base)) \
+        AllocationMeta{alloc_base + chunk_size,
                        alloc_base + sizeof(AllocationMeta)};
       
-      // The first CHUNK_SIZE byte is used by class AllocationMeta 
+      // The first chunk_size byte is used by class AllocationMeta 
       // and chunk data
       ElasticNode *node_p = \
         reinterpret_cast<ElasticNode *>( \
-          alloc_base + AllocationMeta::CHUNK_SIZE);
+          alloc_base + sizeof(AM) + chunk_size);
       
       // Call placement new to initialize all that could be initialized
       new (node_p) ElasticNode{p_type, 
@@ -2343,7 +2351,7 @@ class BwTree : public BwTreeBase {
     static AllocationMeta *GetAllocationHeader(const ElasticNode *node_p) {
       return reinterpret_cast<AllocationMeta *>( \
                reinterpret_cast<uint64_t>(node_p) - \
-                 AllocationMeta::CHUNK_SIZE);
+                 chunk_size - sizeof(AM));
     }
     
     /*
