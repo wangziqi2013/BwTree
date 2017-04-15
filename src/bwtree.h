@@ -2214,23 +2214,6 @@ class BwTree : public BwTreeBase {
     {}
     
     /*
-     * Copy() - Copy constructs another instance
-     */
-    static ElasticNode *Copy(const ElasticNode &other) {
-      ElasticNode *node_p = \
-        ElasticNode::Get(other.GetItemCount(),
-                         other.GetType(),
-                         other.GetDepth(),
-                         other.GetItemCount(),
-                         other.GetLowKeyPair(),
-                         other.GetHighKeyPair());
-                         
-      node_p->PushBack(other.Begin(), other.End()); 
-      
-      return node_p;  
-    }
-    
-    /*
      * Destructor
      *
      * All element types are destroyed inside the destruction function. D'tor
