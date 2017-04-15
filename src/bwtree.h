@@ -2459,14 +2459,31 @@ class BwTree : public BwTreeBase {
      * Destructor - Destroies every KeyType object in the separator key array
      */
     ~InnerNode() {
-      // Extra data is both key array end and node ID array start
-      KeyType *key_end = reinterpret_cast<KeyType *>(extra_data);
-      KeyType *key_start = reinterpret_cast<KeyType *>(start);
-      
-      // For all elements in the KeyType array destroy them
-      while(key_start != key_end) {
-        key_start->~KeyType();
+      // For each KeyType element call destructor
+      for(KeyType *p = KeyBegin();p != KeyEnd();p++) {
+        p->~KeyType(); 
       }
+      
+      return;
+    }
+    
+    /*
+     * WriteItem() - Writes an item in a given offset using KeyType and NodeID
+     *               pointers
+     *
+     * Note that this function has a different semantics than PushBack() of 
+     * leaf nodes because we do not maintain the current write poistion inside
+     * inner nodes. Instead the caller should maintain the index and pass it
+     * to this function
+     */
+    void WriteItem(int index, const KeyType &key, const NodeID node_id) {
+      // Index must not be larger than the actual size of the node
+      assert(index < GetSize());
+      
+      // Copy construct the key object on the KeyType array using placement new
+      new KeyBegin()[index] KeyType{key};
+      // This could be copied directly becuase we know it is integer type
+      NodeIDBegin()[index] = node_id; 
       
       return;
     }
@@ -2478,7 +2495,15 @@ class BwTree : public BwTreeBase {
      * KeyType array.
      */
     int GetSize() const {
+      // These two arrays should have the same size
+      assert((NodeIDBegin() - NodeIDEnd()) == \
+             (KeyBegin() - KeyEnd())); 
       
+      // Note that we use NodeId array because the compiler
+      // could easily compute the size of the array by shifting
+      // bits; On the contrary if key size is not multiple of 2
+      // then computing the size of this array requires division
+      return NodeIDBegin() - NodeIDEnd();
     }
 
     /*
