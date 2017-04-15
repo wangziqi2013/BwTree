@@ -2476,7 +2476,7 @@ class BwTree : public BwTreeBase {
      * inner nodes. Instead the caller should maintain the index and pass it
      * to this function
      */
-    void WriteItem(int index, const KeyType &key, const NodeID node_id) {
+    inline void WriteItem(int index, const KeyType &key, const NodeID node_id) {
       // Index must not be larger than the actual size of the node
       assert(index < GetSize());
       
@@ -2484,6 +2484,34 @@ class BwTree : public BwTreeBase {
       new KeyBegin()[index] KeyType{key};
       // This could be copied directly becuase we know it is integer type
       NodeIDBegin()[index] = node_id; 
+      
+      return;
+    }
+    
+    /*
+     * WriteItem() - Writes item from another KeyType and NodeID array
+     *               (most likely another InnerNode instance)
+     */
+    inline void WriteItem(int index, 
+                          int count, 
+                          const KeyType *key_p, 
+                          const NodeID *node_id_p) {
+      // If the KeyType could not be copied trivially then just construct
+      // them
+      // NodeID is always memcpy'ed
+      if(std::is_trivially_copyable<KeyType>::value == false) {
+        for(int i = 0;i < count;i++) {
+          // Write the i-th KeyType into (index + i)-th item
+          new KeyBegin()[index + i]{key_p[i]}; 
+        }
+      } else {
+        // Direct memcpy copy
+        memcpy(KeyBegin() + index, key_p, sizeof(KeyType) * count); 
+      }
+      
+      // Always copy NodeId array using memcpy becuase it is 
+      // copyable
+      mempcy(NodeIDBegin() + index, node_id_p, sizeof(NodeID) * count);
       
       return;
     }
