@@ -2826,6 +2826,27 @@ class BwTree : public BwTreeBase {
       
       return;
     }
+    
+    /*
+     * Get() - Returns a leaf node instance
+     */
+    inline static LeafNode *Get(int p_depth,
+                                int p_item_count,
+                                const KeyNodeIDPair &p_low_key,
+                                const KeyNodeIDPair &p_high_key) {
+      // This is the byte size of the KeyType and NodeID array
+      size_t leaf_node_size = sizeof(KeyValuePair) * p_item_count;
+        
+      LeafNode *leaf_node_p = \
+        static_cast<LeafNode *>(LeafBaseType::Get(leaf_node_size,
+                                                  NodeType::LeafType, 
+                                                  p_depth,
+                                                  p_item_count,
+                                                  p_low_key,
+                                                  p_high_key);
+      
+      return leaf_node_p;                           
+    }
 
     /*
      * FindSplitPoint() - Find the split point that could divide the node
@@ -2956,13 +2977,10 @@ class BwTree : public BwTreeBase {
 
       // This will call SetMetaData inside its constructor
       LeafNode *leaf_node_p = \
-        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-          Get(sibling_size, 
-              NodeType::LeafType,
-              0,
-              sibling_size,
-              std::make_pair(split_key, ~INVALID_NODE_ID),
-              this->GetHighKeyPair()));
+        LeafNode::Get(0,
+                      sibling_size,
+                      std::make_pair(split_key, ~INVALID_NODE_ID),
+                      this->GetHighKeyPair()));
 
       // Copy data item into the new node using PushBack()
       leaf_node_p->PushBack(copy_start_it, copy_end_it);
