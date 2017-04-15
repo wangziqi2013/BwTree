@@ -1993,15 +1993,8 @@ class BwTree : public BwTreeBase {
   /*
    * class AllocationMeta - Metadata for maintaining preallocated space
    */
+  template <size_t chunk_size>
   class AllocationMeta {
-   public:
-    // One reasonable amount of memory for each chunk is 
-    // delta chain len * struct len + sizeof this struct
-    static constexpr size_t CHUNK_SIZE = \
-      sizeof(DeltaNodeUnion) * LargerOne(INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
-                                         LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) + \
-      sizeof(AllocationMeta);
-    
    private: 
     // This points to the higher address end of the chunk we are 
     // allocating from
@@ -2070,7 +2063,7 @@ class BwTree : public BwTreeBase {
         return meta_p;
       }
       
-      char *new_chunk = new char[CHUNK_SIZE];
+      char *new_chunk = new char[chunk_size];
       AllocationMeta *expected = nullptr;
       
       // Prepare the new chunk's metadata field
@@ -2081,7 +2074,7 @@ class BwTree : public BwTreeBase {
       // and let tail points to the first byte after this chunk, and the limit
       // is the first byte after AllocationMeta
       new (new_meta_base) \
-        AllocationMeta{new_chunk + CHUNK_SIZE,                  // tail
+        AllocationMeta{new_chunk + chunk_size,                  // tail
                        new_chunk + sizeof(AllocationMeta)};     // limit
       
       // Always CAS with nullptr such that we will never install/replace
@@ -2137,9 +2130,9 @@ class BwTree : public BwTreeBase {
     /*
      * Destroy() - Frees all chunks in the linked list
      *
-     * Note that this function must be called for every metadata object
-     * in the linked list, and we could should use operator delete since it
-     * is allocated through operator new
+     * Note that this function traverses the linked list and frees every 
+     * metadata object. In order to free we must should use operator delete 
+     * since the chunk was allocated through operator new
      *
      * This function is not thread-safe and should only be called in a single
      * thread environment such as GC
@@ -2172,8 +2165,17 @@ class BwTree : public BwTreeBase {
    * Since for InnerNode and LeafNode, the number of elements is not a compile
    * time known constant. However, for efficient tree traversal we must inline
    * all elements to reduce cache misses with workload that's less predictable
+   *
+   * This class is type-less which means that it only maintains slot allocation
+   * and storage of the preallocated chunk. All types construction should be 
+   * done in the derived class
+   *
+   * Also all derived class should not contain any data member since members
+   * of child classes will clash with the elastic array which is not managed
+   * by the language. In order to declare extra data in the child class please
+   * use template argument ExtraDataType 
    */
-  template <typename ElementType>
+  template <size_t chunk_size, typename ExtraDataType>
   class ElasticNode : public BaseNode {
    private:
     // These two are the low key and high key of the node respectively
@@ -2181,14 +2183,17 @@ class BwTree : public BwTreeBase {
     // the array which is invisible to the compiler) so they must be added here
     KeyNodeIDPair low_key;
     KeyNodeIDPair high_key;
+    
+    // All extra data in the child class should be put here
+    ExtraDataType extra_data; 
      
     // This is the end of the elastic array
     // We explicitly store it here to avoid calculating the end of the array
     // everytime
-    ElementType *end;
+    uint8_t *end;
     
     // This is the starting point
-    ElementType start[0];
+    uint8_t start[0];
     
    public:
     /*
