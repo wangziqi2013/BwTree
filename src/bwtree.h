@@ -2382,8 +2382,12 @@ class BwTree : public BwTreeBase {
     }
   };
   
-  
-  
+  // This is the base type of inner nodes
+  using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
+                                    NodeID *>;
+  // This is the base type of leaf nodes
+  using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD,
+                                   char[0]>;
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
    *
@@ -2392,7 +2396,7 @@ class BwTree : public BwTreeBase {
    * one. Therefore this class needs to maintain one more pointer to denote
    * the beginning of the NodeID array
    */
-  class InnerNode : public  {
+  class InnerNode : public InnerBaseType {
    public:
 
     /*
@@ -2416,12 +2420,13 @@ class BwTree : public BwTreeBase {
       // This is the byte size of the KeyType and NodeID array
       size_t inner_node_size = (sizeof(KeyType) + sizeof(NodeID)) * p_item_count;
       InnerNode *inner_node_p = \
-        static_cast<InnerNode *>(ElasticNode::Get(inner_node_size,
-                                                  NodeType::InnerType, 
-                                                  p_depth,
-                                                  p_item_count,
-                                                  p_low_key,
-                                                  p_high_key);
+        static_cast<InnerNode *>(InnerBaseType::Get(inner_node_size,
+                                                    NodeType::InnerType, 
+                                                    p_depth,
+                                                    p_item_count,
+                                                    p_low_key,
+                                                    p_high_key);
+                                                    
       // Note that this is different from leaf nodes
       // and we set the end to the real end
       inner_node_p->end = inner_node_p->start + inner_node_size;
@@ -2606,13 +2611,10 @@ class BwTree : public BwTreeBase {
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
       InnerNode *inner_node_p = \
-        reinterpret_cast<InnerNode *>(ElasticNode<KeyNodeIDPair>::\
-          Get(sibling_size,
-              NodeType::InnerType,
-              0,
-              sibling_size,
-              this->At(split_item_index),
-              this->GetHighKeyPair()));
+        InnerNode::Get(0,
+                       sibling_size,
+                       this->At(split_item_index),
+                       this->GetHighKeyPair()));
 
       // Call overloaded PushBack() to insert an array of elements
       inner_node_p->WriteItem(0,                      // Starting index in dest
@@ -2634,8 +2636,7 @@ class BwTree : public BwTreeBase {
    * There are 6 types of delta nodes that could be appended
    * to a leaf node. 3 of them are SMOs, and 3 of them are data operation
    */
-  class LeafNode : public ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD, 
-                                      char[0]> {
+  class LeafNode : public LeafBaseType {
    public:
     LeafNode() = delete;
     LeafNode(const LeafNode &) = delete;
