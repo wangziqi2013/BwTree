@@ -2536,6 +2536,13 @@ class BwTree : public BwTreeBase {
     }
     
     /*
+     * WriteItem() - A wrapper over KeyNodeIDPair type
+     */
+    inline void WriteItem(int index, const KeyNodeIDPair &knp) {
+      WriteItem(index, knp.first, knp.second);
+    } 
+    
+    /*
      * WriteItem() - Writes item from another KeyType and NodeID array
      *               (most likely another InnerNode instance)
      */
@@ -4272,15 +4279,10 @@ abort_traverse:
       sss{data_node_list, f1, f2};
 
     // The effect of this function is a consolidation into inner node
-    InnerNode *inner_node_p = \
-      reinterpret_cast<InnerNode *>( \
-        ElasticNode<KeyNodeIDPair>::\
-          Get(node_p->GetItemCount(),
-              NodeType::InnerType,
-              p_depth,
-              node_p->GetItemCount(),
-              node_p->GetLowKeyPair(),
-              node_p->GetHighKeyPair()));
+    InnerNode *inner_node_p = InnerNode::Get(p_depth,
+                                             node_p->GetItemCount(),
+                                             node_p->GetLowKeyPair(),
+                                             node_p->GetHighKeyPair()));
 
     // The first element is always the low key
     // since we know it will never be deleted
