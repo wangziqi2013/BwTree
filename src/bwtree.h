@@ -4380,7 +4380,7 @@ abort_traverse:
           if(inner_node_p->NodeIDBegin()[0] == low_key_node_id) {
             copy_start_index = 1;
           } else {
-            copy_start_it = 0;
+            copy_start_index = 0;
           }
 
           // Find the end of copying
@@ -4409,7 +4409,7 @@ abort_traverse:
 
           while(1) {
             bool sss_end_flag = (sss.GetBegin() == sss_end_it);
-            bool array_end_flag = (copy_start_it == copy_end_it);
+            bool array_end_flag = (copy_start_index == copy_end_index);
 
             if(sss_end_flag == true && array_end_flag == true) {
               // Both are drained
@@ -4488,6 +4488,7 @@ abort_traverse:
               // InsertDelta overrides InnerNode element
               if(data_node_type == NodeType::InnerInsertType) {
                 new_inner_node_p->WriteItem(index, sss.PopFront()->item);
+                
                 index++;
               } else {
                 // There is a value in InnerNode that does not exist
@@ -4568,7 +4569,8 @@ abort_traverse:
             CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
                                            low_key_node_id,
                                            sss,
-                                           new_inner_node_p);
+                                           new_inner_node_p,
+                                           index);
 
           // There is no unvisited node
           return index;
