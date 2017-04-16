@@ -7564,6 +7564,8 @@ before_switch:
                                                   search_key);
 
         // Just give the location information by assigning to location
+        // Even if not found this is useful because it tells the locaton
+        // of insertion when we consolidate the delta chain
         *location = item_index;
 
         if(item_index == inner_node_p->GetSize()) {
@@ -7682,16 +7684,16 @@ before_switch:
           ///////////////////////////////////////////////////////////
 
           // This is the logical end of the array
-          const KeyNodeIDPair *end_it = inner_node_p->End();
+          int end_index = inner_node_p->GetSize();
 
           // Since we know the search key must be one of the key inside
           // the inner node, lower bound is sufficient
-          auto it1 = std::upper_bound(inner_node_p->Begin() + 1,
-                                      end_it,
-                                      std::make_pair(search_key, INVALID_NODE_ID),
-                                      key_node_id_pair_cmp_obj) - 1;
+          auto index1 = inner_node_p->UpperBound(1,
+                                                 end_index,
+                                                 search_key) - 1;
+          assert(index1 >= 0);
 
-          // Note that it is possible for it1 to be begin()
+          // Note that it is possible that index1 == 0
           // since it is not the real current node if the node id
           // is actually found on the delta chain
           
@@ -7704,23 +7706,23 @@ before_switch:
           ///////////////////////////////////////////////////////////
           
           // We need to pop out 2 items
-          const KeyNodeIDPair *left_item_p = nullptr;
+          NodeID left_node_id;
           
           int counter = 0;
           
           // Loop twice. Hope compiler expands this loop
           while(counter < 2) {
             if(sss.GetBegin() == sss.GetEnd()) {
-              left_item_p = &(*it1);
+              left_node_id = inner_node_p->NodeIDBegin()[index1];
               
-              it1--;
+              index1--;
               counter++;
               
               continue;
-            } else if(it1 == inner_node_p->Begin()) {
+            } else if(index1 == 0) {
               // We know the sss is not empty, so could always pop from it
               if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
-                left_item_p = &(sss.GetFront()->item);
+                left_node_id = sss.GetFront()->item.second;
 
                 counter++;
               }
@@ -7731,18 +7733,18 @@ before_switch:
               continue;
             }
             
-            // After this point it1-- is always valid since it is not begin()
+            // After this point index1-- is always valid since it is not begin()
             
             // If the two items are same
             if(KeyCmpEqual(sss.GetFront()->item.first, it1->first)) {
               // If a delete node and a sep item has the same key
               if(sss.GetFront()->GetType() == NodeType::InnerDeleteType) {
-                it1--;
+                index1--;
               } else {
                 // Otherwise an insert node overrides existing key
-                left_item_p = &(sss.GetFront()->item);
+                left_node_id = sss.GetFront()->item.second;
                 
-                it1--;
+                index1--;
                 
                 counter++;
               }
@@ -7752,16 +7754,15 @@ before_switch:
             } else if(KeyCmpLess(sss.GetFront()->item.first, it1->first)) {
               // If the inner node has larger sep item
               // Otherwise an insert node overrides existing key
-              left_item_p = &(*it1);
+              left_node_id = inner_node_p->NodeIDBegin()[index1];
 
-              it1--;
-
+              index1--;
               counter++;
             } else {
               if(sss.GetFront()->GetType() == NodeType::InnerInsertType) {
                 // If the delta node has larger item then set left item p
                 // to delta item
-                left_item_p = &(sss.GetFront()->item);
+                left_node_id = sss.GetFront()->item.second;
 
                 counter++;
               } 
@@ -7772,7 +7773,7 @@ before_switch:
           } // while counter < 2
           
           // This is the NodeID of the left sibling
-          return left_item_p->second;
+          return left_node_id;
         } 
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
@@ -7818,7 +7819,7 @@ before_switch:
           // a merge delta on the path, the only solution is to
           // consolidate the inner node, and try to install it
           //
-          // Even if installation fails, we need to prevserve the content
+          // Even if installation fails, we need to preserve the content
           // of the consolidated node, so need to add it to the GC instead
           // of directly releasing its memory
 
