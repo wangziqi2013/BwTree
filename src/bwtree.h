@@ -205,7 +205,7 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  * This is used for InnerNode delta chains
  */
 #define InnerInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
-                                                     new(ElasticNode<KeyNodeIDPair>::InlineAllocate( \
+                                                     new(InnerNode::InlineAllocate( \
                                                          &node_p->GetLowKeyPair(), \
                                                          sizeof(T)) \
                                                      ) T{ __VA_ARGS__ } ))
@@ -218,7 +218,7 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  * This is used for LeafNode delta chains
  */
 #define LeafInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
-                                                    new(ElasticNode<KeyValuePair>::InlineAllocate( \
+                                                    new(LeafNode::InlineAllocate( \
                                                         &node_p->GetLowKeyPair(), \
                                                         sizeof(T)) \
                                                     ) T{__VA_ARGS__} ))
@@ -1753,7 +1753,7 @@ class BwTree : public BwTreeBase {
     InnerInsertNode(const KeyNodeIDPair &p_insert_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p,
-                    const KeyNodeIDPair *p_location) :
+                    int p_location) :
       InnerDataNode{p_insert_item,
                     NodeType::InnerInsertType,
                     p_child_node_p,
@@ -1807,7 +1807,7 @@ class BwTree : public BwTreeBase {
                     const KeyNodeIDPair &p_prev_item,
                     const KeyNodeIDPair &p_next_item,
                     const BaseNode *p_child_node_p,
-                    const KeyNodeIDPair *p_location) :
+                    int p_location) :
       InnerDataNode{p_delete_item,
                     NodeType::InnerDeleteType,
                     p_child_node_p,
@@ -2193,7 +2193,7 @@ class BwTree : public BwTreeBase {
    */
   template <size_t chunk_size, typename ExtraDataType>
   class ElasticNode : public BaseNode {
-   private:
+   public:
     // These two are the low key and high key of the node respectively
     // since we could not add it in the inherited class (will clash with
     // the array which is invisible to the compiler) so they must be added here
@@ -2383,10 +2383,12 @@ class BwTree : public BwTreeBase {
   };
   
   // This is the base type of inner nodes
-  using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD,
+  using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD * 
+                                    sizeof(InnerDeltaNodeUnion),
                                     NodeID *>;
   // This is the base type of leaf nodes
-  using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD,
+  using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
+                                   sizeof(LeafDeltaNodeUnion),
                                    char[0]>;
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
@@ -2427,7 +2429,7 @@ class BwTree : public BwTreeBase {
                                                     p_depth,
                                                     p_item_count,
                                                     p_low_key,
-                                                    p_high_key);
+                                                    p_high_key));
                                                     
       // Note that this is different from leaf nodes
       // and we set the end to the real end
@@ -2447,14 +2449,14 @@ class BwTree : public BwTreeBase {
      * KeyBegin() - The start pointer of KeyType array
      */
     inline KeyType *KeyBegin() {
-      return reinterpret_cast<KeyType *>(start); 
+      return reinterpret_cast<KeyType *>(this->start); 
     }
     
     /*
      * KeyBegin() - The start pointer of const KeyType array
      */
     inline const KeyType *KeyBegin() const {
-      return reinterpret_cast<const KeyType *>(start); 
+      return reinterpret_cast<const KeyType *>(this->start); 
     }
     
     /*
@@ -2464,42 +2466,42 @@ class BwTree : public BwTreeBase {
      * as well as the begin of NodeID array
      */
     inline KeyType *KeyEnd() {
-      return reinterpret_cast<KeyType *>(extra_data);
+      return reinterpret_cast<KeyType *>(this->extra_data);
     }
     
     /*
      * KeyEnd() - The end pointer of const KeyType array
      */
     inline const KeyType *KeyEnd() const {
-      return reinterpret_cast<const KeyType *>(extra_data);
+      return reinterpret_cast<const KeyType *>(this->extra_data);
     }
     
     /*
      * NodeIDBegin() - The start pointer of NodeID array
      */
     inline NodeID *NodeIDBegin() {
-      return extra_data;
+      return this->extra_data;
     }
     
     /*
      * NodeIDBegin() - The start pointer of const NodeID array
      */
     inline const NodeID *NodeIDBegin() const {
-      return extra_data; 
+      return this->extra_data; 
     }
     
     /*
      * NodeIDEnd() - End pointer of NodeID array
      */
     inline NodeID *NodeIDEnd() {
-      return reinterpret_cast<NodeID *>(end);
+      return reinterpret_cast<NodeID *>(this->end);
     }
     
     /*
      * NodeIDEnd() - End pointer of const NodeID array
      */
     inline const NodeID *NodeIDEnd() const {
-      return reinterpret_cast<const NodeID *>(end);
+      return reinterpret_cast<const NodeID *>(this->end);
     }
     
     /*
@@ -2528,7 +2530,7 @@ class BwTree : public BwTreeBase {
       assert(index < GetSize() && index >= 0);
       
       // Copy construct the key object on the KeyType array using placement new
-      new &(KeyBegin()[index]) KeyType{key};
+      new (KeyBegin() + index) KeyType{key};
       // This could be copied directly becuase we know it is integer type
       NodeIDBegin()[index] = node_id; 
       
@@ -2559,7 +2561,7 @@ class BwTree : public BwTreeBase {
       if(std::is_trivially_copyable<KeyType>::value == false) {
         for(int i = 0;i < count;i++) {
           // Write the i-th KeyType into (index + i)-th item
-          new &(KeyBegin()[index + i]) KeyType{key_p[i]}; 
+          new (KeyBegin() + index + i) KeyType{key_p[i]}; 
         }
       } else {
         // Direct memcpy copy
@@ -2568,7 +2570,7 @@ class BwTree : public BwTreeBase {
       
       // Always copy NodeID array using memcpy becuase it is 
       // copyable
-      mempcy(NodeIDBegin() + index, node_id_p, sizeof(NodeID) * count);
+      memcpy(NodeIDBegin() + index, node_id_p, sizeof(NodeID) * count);
       
       return;
     }
@@ -2615,8 +2617,9 @@ class BwTree : public BwTreeBase {
      */
     inline int LowerBound(int start_index, 
                           int end_index, 
-                          const KeyType &search_key) {
-      assert(start_index >= 0 && start_index < GetSize());
+                          const KeyType &search_key,
+                          const KeyComparator &key_cmp_obj) const {
+      assert(start_index >= 0 && start_index <= GetSize());
       // Note that end_index could pass beyond the last valid element
       assert(end_index >= 0 && end_index <= GetSize());
       
@@ -2627,7 +2630,7 @@ class BwTree : public BwTreeBase {
                                            
       // This is the index of the key we have found
       // and it could be equal to end_index
-      return it - KeyBegin();             
+      return it - KeyBegin();
     }
     
     /*
@@ -2636,8 +2639,9 @@ class BwTree : public BwTreeBase {
      */
     inline int UpperBound(int start_index,
                           int end_index,
-                          const KeyType &search_key) {
-      assert(start_index >= 0 && start_index < GetSize());
+                          const KeyType &search_key,
+                          const KeyComparator &key_cmp_obj) const {
+      assert(start_index >= 0 && start_index <= GetSize());
       assert(end_index >= 0 && end_index <= GetSize());
       
       const KeyType *it = std::upper_bound(KeyBegin() + start_index,
@@ -2668,13 +2672,13 @@ class BwTree : public BwTreeBase {
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      assert(key_num == GetItemCount());
+      assert(key_num == this->GetItemCount());
 
       int split_item_index = key_num / 2;
 
       // This is the split point of the inner node
-      KeyType *key_copy_start_it = KeyBegin() + split_item_index;
-      NodeID *node_id_copy_start_it = NodeIDBegin() + split_item_index;
+      const KeyType *key_copy_start_it = KeyBegin() + split_item_index;
+      const NodeID *node_id_copy_start_it = NodeIDBegin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
       int sibling_item_count = GetSize() - split_item_index;
@@ -2686,7 +2690,7 @@ class BwTree : public BwTreeBase {
         InnerNode::Get(0,                             // Depth
                        sibling_item_count,            // Item count
                        this->At(split_item_index),    // Low key
-                       this->GetHighKeyPair()));      // High key
+                       this->GetHighKeyPair());       // High key
 
       // Call overloaded PushBack() to insert an array of elements
       inner_node_p->WriteItem(0,                      // Starting index in dest
@@ -2717,6 +2721,22 @@ class BwTree : public BwTreeBase {
     LeafNode &operator=(LeafNode &&) = delete;
     
     /*
+     * LeafNode() - Initialize a leaf node
+     *
+     * This functoin is mostly called by the iterator
+     */
+    LeafNode(int p_depth,
+             int p_item_count,
+             const KeyNodeIDPair &p_low_key,
+             const KeyNodeIDPair &p_high_key) :
+      LeafBaseType{NodeType::LeafType, 
+                   p_depth, 
+                   p_item_count, 
+                   p_low_key, 
+                   p_high_key}
+    {}
+    
+    /*
      * Destructor
      *
      * This function destroies all key value pairs stored in the array
@@ -2724,7 +2744,7 @@ class BwTree : public BwTreeBase {
      */
     ~LeafNode() {
       for(KeyValuePair *p = Begin();p != End();p++) {
-        p->~KeyValuePair()
+        p->~KeyValuePair();
       }
       
       return;
@@ -2734,22 +2754,22 @@ class BwTree : public BwTreeBase {
      * Begin() - Returns a begin iterator to its internal array
      */
     inline KeyValuePair *Begin() {
-      return reinterpret_cast<KeyValuePair *>(start);
+      return reinterpret_cast<KeyValuePair *>(this->start);
     }
     
     inline const KeyValuePair *Begin() const {
-      return reinterpret_cast<KeyValuePair *>(start); 
+      return reinterpret_cast<const KeyValuePair *>(this->start); 
     }
     
     /*
      * End() - Returns an end iterator that is similar to the one for vector
      */
     inline KeyValuePair *End() {
-      return reinterpret_cast<KeyValuePair *>(end); 
+      return reinterpret_cast<KeyValuePair *>(this->end); 
     }
     
     inline const KeyValuePair *End() const {
-      return reinterpret_cast<KeyValuePair *>(end); 
+      return reinterpret_cast<const KeyValuePair *>(this->end); 
     }
     
     /*
@@ -2759,11 +2779,11 @@ class BwTree : public BwTreeBase {
      * return value should not be modified and is therefore of const type
      */
     inline const KeyValuePair *REnd() {
-      return reinterpret_cast<const KeyValuePair *>(start) - 1; 
+      return reinterpret_cast<const KeyValuePair *>(this->start) - 1; 
     }
     
     inline const KeyValuePair *REnd() const {
-      return reinterpret_cast<const KeyValuePair *>(start) - 1; 
+      return reinterpret_cast<const KeyValuePair *>(this->start) - 1; 
     }
     
     /*
@@ -2802,10 +2822,10 @@ class BwTree : public BwTreeBase {
      */
     inline void PushBack(const KeyValuePair &element) {
       // Placement new + copy constructor using end pointer
-      new (reinterpret_cast<KeyValuePair *>(end)) KeyValuePair{element};
+      new (reinterpret_cast<KeyValuePair *>(this->end)) KeyValuePair{element};
       
       // Move it pointing to the enxt available slot, if not reached the end
-      end++;
+      this->end += sizeof(KeyValuePair);
       
       return;
     }
@@ -2829,10 +2849,11 @@ class BwTree : public BwTreeBase {
           copy_start_p++; 
         }
       } else {
+        // Use byte size
         const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
         std::memcpy(End(), copy_start_p, diff);
         
-        end = (KeyValuePair *)((uint64_t)end + diff);
+        this->end += diff;
       }
       
       return;
@@ -2854,7 +2875,7 @@ class BwTree : public BwTreeBase {
                                                   p_depth,
                                                   p_item_count,
                                                   p_low_key,
-                                                  p_high_key);
+                                                  p_high_key));
       
       return leaf_node_p;                           
     }
@@ -3346,7 +3367,7 @@ class BwTree : public BwTreeBase {
           // Free NodeID one by one stored in its separator list
           // Even if they are already freed (e.g. a split delta has not
           // been consolidated would share a NodeID with its parent)
-          for(NodeID *it = inner_node_p->NodeIDBegin();
+          for(const NodeID *it = inner_node_p->NodeIDBegin();
               it != inner_node_p->NodeIDEnd();
               it++) {
             freed_count += FreeNodeByNodeID(*it);
@@ -3428,7 +3449,8 @@ class BwTree : public BwTreeBase {
 
     #endif
 
-    root_node_p->PushBack(first_sep);
+    // Root node only has one child which leads to the only leaf
+    root_node_p->WriteItem(0, first_sep);
 
     bwt_printf("root id = %lu; first leaf id = %lu\n",
                root_id.load(),
@@ -3837,7 +3859,8 @@ abort_traverse:
     // Hopefully std::upper_bound would use binary search here
     int item_index = inner_node_p->UpperBound(start_index,
                                               end_index,
-                                              search_key) - 1;
+                                              search_key,
+                                              key_cmp_obj) - 1;
     assert(item_index >= 0);
 
     // Since upper_bound returns the first element > given key
@@ -3863,7 +3886,8 @@ abort_traverse:
     // Same searching
     int item_index = inner_node_p->UpperBound(1,
                                               inner_node_p->GetSize(),
-                                              search_key) - 1;
+                                              search_key,
+                                              key_cmp_obj) - 1;
     assert(item_index >= 0);
 
     if(KeyCmpEqual(inner_node_p->KeyBegin()[item_index], search_key) == true) {
@@ -3944,7 +3968,8 @@ abort_traverse:
     // We adjust these two based on delta node information
     int start_index = 1;
     int end_index = \
-      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->GetSize();
+      static_cast<InnerNode *>( \
+        InnerNode::GetNodeHeader(&node_p->GetLowKeyPair()))->GetSize();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -4066,7 +4091,8 @@ abort_traverse:
           // are travelling on
           start_index = 1;
           end_index = \
-            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->GetSize();
+            static_cast<InnerNode *>( \
+              InnerNode::GetNodeHeader(&node_p->GetLowKeyPair()))->GetSize();
 
           // Note that we should jump to the beginning of the loop without 
           // going to child node any further
@@ -4335,8 +4361,8 @@ abort_traverse:
 
           // These two will be set according to the high key and
           // low key
-          const KeyNodeIDPair *copy_end_index;
-          const KeyNodeIDPair *copy_start_index;
+          int copy_end_index;
+          int copy_start_index;
 
           // If this is the last inner node on the current level
           // then there is definitely no split sibling on its right
@@ -4352,7 +4378,8 @@ abort_traverse:
             copy_end_index = \
               inner_node_p->LowerBound(1,
                                        inner_node_p->GetSize(),
-                                       high_key_pair.first);
+                                       high_key_pair.first,
+                                       key_cmp_obj);
           }
 
           // Since we want to access its first element
@@ -4401,14 +4428,21 @@ abort_traverse:
               // Both are drained
               break;
             } else if(sss_end_flag == true) {
+              // Number of elements we need to copy from the old 
+              // inner node to the new inner node
+              int copy_count = copy_end_index - copy_start_index;
+              
               // If the sss has drained we continue to drain the array
               // This version of PushBack() takes two iterators and
               // insert from start to end - 1
-              new_inner_node_p->WriteItem(indx, 
-                                          copy_start_index, 
-                                          copy_end_index);
+              new_inner_node_p->WriteItem(
+                index, 
+                copy_count,
+                inner_node_p->KeyBegin() + copy_start_index, 
+                inner_node_p->NodeIDBegin() + copy_start_index);
+                
               // Adding number of elements we just copied
-              index += (copy_end_index - copy_start_index);
+              index += copy_count;
 
               break;
             } else if(array_end_flag == true) {
@@ -4441,16 +4475,19 @@ abort_traverse:
             // Next is the normal case: Both are not drained
             // we do a comparison of their leading elements
 
-            if(key_cmp_obj(copy_start_it->first, 
+            const KeyType &inner_head_key = \
+              inner_node_p->KeyBegin()[copy_start_index];
+
+            if(key_cmp_obj(inner_head_key, 
                            sss.GetFront()->item.first) == true) {
               // If array element is less than data node list element   
               new_inner_node_p->WriteItem(index, 
-                                          inner_node_p.At(copy_start_index));
+                                          inner_node_p->At(copy_start_index));
               
               copy_start_index++;
               index++;
             } else if(key_cmp_obj(sss.GetFront()->item.first, 
-                                  copy_start_it->first) == true) {
+                                  inner_head_key) == true) {
               NodeType data_node_type = (sss.GetFront())->GetType();
 
               // Delta Insert with array not having that element
@@ -4483,7 +4520,7 @@ abort_traverse:
               }
               
               // In both cases the original value is not used
-              copy_start_it++;
+              copy_start_index++;
             } // Compare leading elements
           } // while(1)
 
@@ -6309,7 +6346,7 @@ abort_traverse:
   inline bool PostInnerInsertNode(Context *context_p,
                                   const KeyNodeIDPair &insert_item,
                                   const KeyNodeIDPair &next_item,
-                                  const KeyNodeIDPair *location) {
+                                  int location) {
     // We post on the parent node, after which we check for size and decide whether
     // to consolidate and/or split the node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
@@ -6374,7 +6411,7 @@ abort_traverse:
                                   const KeyNodeIDPair &delete_item,
                                   const KeyNodeIDPair &prev_item,
                                   const KeyNodeIDPair &next_item,
-                                  const KeyNodeIDPair *location) {
+                                  int location) {
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
 
     // Arguments are:
@@ -6708,7 +6745,7 @@ before_switch:
           const KeyNodeIDPair first_item = std::make_pair(KeyType(),
                                                           snapshot_p->node_id);
           const KeyNodeIDPair second_item = std::make_pair(KeyType(), 
-                                                           INVALID_NODE_ID)
+                                                           INVALID_NODE_ID);
 
           // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
@@ -6724,7 +6761,7 @@ before_switch:
           const KeyNodeIDPair first_item = std::make_pair(KeyType{},
                                                           snapshot_p->node_id);
           const KeyNodeIDPair second_item = std::make_pair(KeyType{}, 
-                                                           INVALID_NODE_ID)
+                                                           INVALID_NODE_ID);
 
           // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
@@ -7502,7 +7539,7 @@ before_switch:
           // Same key, same index
           *location = static_cast<const InnerInsertNode *>(node_p)->location;
           
-          return &insert_item->second;
+          return &insert_item.second;
         }
 
         node_p = \
@@ -7544,7 +7581,8 @@ before_switch:
 
         int item_index = inner_node_p->LowerBound(start_index,
                                                   inner_node_p->GetSize(),
-                                                  search_key);
+                                                  search_key,
+                                                  key_cmp_obj);
 
         // Just give the location information by assigning to location
         // Even if not found this is useful because it tells the locaton
@@ -7673,7 +7711,8 @@ before_switch:
           // the inner node, lower bound is sufficient
           auto index1 = inner_node_p->UpperBound(1,
                                                  end_index,
-                                                 search_key) - 1;
+                                                 search_key,
+                                                 key_cmp_obj) - 1;
           assert(index1 >= 0);
 
           // Note that it is possible that index1 == 0
@@ -7695,6 +7734,10 @@ before_switch:
           
           // Loop twice. Hope compiler expands this loop
           while(counter < 2) {
+            // This is the inner node key on index1
+            const KeyType &inner_head_key = \
+              inner_node_p->KeyBegin()[index1];
+            
             if(sss.GetBegin() == sss.GetEnd()) {
               left_node_id = inner_node_p->NodeIDBegin()[index1];
               
@@ -7719,7 +7762,7 @@ before_switch:
             // After this point index1-- is always valid since it is not begin()
             
             // If the two items are same
-            if(KeyCmpEqual(sss.GetFront()->item.first, it1->first)) {
+            if(KeyCmpEqual(sss.GetFront()->item.first, inner_head_key)) {
               // If a delete node and a sep item has the same key
               if(sss.GetFront()->GetType() == NodeType::InnerDeleteType) {
                 index1--;
@@ -7734,7 +7777,7 @@ before_switch:
               
               // This is common
               sss.PopFront();
-            } else if(KeyCmpLess(sss.GetFront()->item.first, it1->first)) {
+            } else if(KeyCmpLess(sss.GetFront()->item.first, inner_head_key)) {
               // If the inner node has larger sep item
               // Otherwise an insert node overrides existing key
               left_node_id = inner_node_p->NodeIDBegin()[index1];
@@ -9268,7 +9311,7 @@ try_join_again:
      */
     ~IteratorContext() {
       // Call destructor to destruct all KeyValuePairs stored in its array
-      GetLeafNode()->~ElasticNode<KeyValuePair>();
+      GetLeafNode()->~LeafNode();
       
       return;
     }
@@ -9379,11 +9422,10 @@ try_join_again:
       // Then initialize class LeafNode 
       // i.e. class ElasticNode<KeyValuePair> part 
       new (ic_p->GetLeafNode()) \
-        ElasticNode<KeyValuePair>{node_p->GetType(),
-                                  node_p->GetDepth(),
-                                  node_p->GetItemCount(),
-                                  node_p->GetLowKeyPair(),
-                                  node_p->GetHighKeyPair()};
+        LeafNode{node_p->GetDepth(),
+                 node_p->GetItemCount(),
+                 node_p->GetLowKeyPair(),
+                 node_p->GetHighKeyPair()};
       
       // So after this function returns the ref count should be exactly 1
       ic_p->IncRef();
