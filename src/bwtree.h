@@ -2273,6 +2273,7 @@ class BwTree : public BwTreeBase {
    public: 
     // Use this as the type of allocatoin meta of a certain chunk size
     using AM = AllocationMeta<chunk_size>;
+    using EN = ElasticNode<chunk_size, ExtraDataType>;
    
     /*
      * Get() - Static helper function that constructs a elastic node of
@@ -2287,12 +2288,12 @@ class BwTree : public BwTreeBase {
      * Also note that byte_size here is the number of bytes we want to allocate
      * for the ElasticNode itself, which does not count in preallocation
      */
-    inline static ElasticNode *Get(int byte_size,    // Bytes to be allocated
-                                   NodeType p_type,
-                                   int p_depth,
-                                   int p_item_count,
-                                   const KeyNodeIDPair &p_low_key,
-                                   const KeyNodeIDPair &p_high_key) {
+    inline static EN *Get(int byte_size,    // Bytes to be allocated
+                          NodeType p_type,
+                          int p_depth,
+                          int p_item_count,
+                          const KeyNodeIDPair &p_low_key,
+                          const KeyNodeIDPair &p_high_key) {
       // Allocte memory for 
       //   1. AllocationMeta (lowest address)
       //   2. Chunk size
@@ -2303,7 +2304,7 @@ class BwTree : public BwTreeBase {
       //                         ^                        ^
       //                       Limit                     Tail
       char *alloc_base = \
-        new char[sizeof(ElasticNode<chunk_size, ExtraDataType>) + 
+        new char[sizeof(EN) + 
                  byte_size + 
                  chunk_size +
                  sizeof(AM)];
@@ -2323,11 +2324,11 @@ class BwTree : public BwTreeBase {
           alloc_base + sizeof(AM) + chunk_size);
       
       // Call placement new to initialize all that could be initialized
-      new (node_p) ElasticNode<chunk_size, ExtraDataType>{p_type, 
-                                                          p_depth, 
-                                                          p_item_count, 
-                                                          p_low_key, 
-                                                          p_high_key};
+      new (node_p) EN{p_type, 
+                      p_depth, 
+                      p_item_count, 
+                      p_low_key, 
+                      p_high_key};
                                
       return node_p;
     }
@@ -2338,20 +2339,18 @@ class BwTree : public BwTreeBase {
      * This is useful since only the low key pointer is available from any
      * type of node
      */
-    static ElasticNode<chunk_size, ExtraDataType> 
-      *GetNodeHeader(const KeyNodeIDPair *low_key_p) {
-      static constexpr size_t low_key_offset = offsetof(ElasticNode, low_key);
+    static EN *GetNodeHeader(const KeyNodeIDPair *low_key_p) {
+      static constexpr size_t low_key_offset = offsetof(EN, low_key);
       
-      return reinterpret_cast<ElasticNode<chunk_size, ExtraDataType> *>( \
-               reinterpret_cast<uint64_t>(low_key_p) - low_key_offset);
+      return reinterpret_cast<EN *>(reinterpret_cast<uint64_t>(low_key_p) - 
+                                    low_key_offset);
     }
     
     /*
      * GetAllocationHeader() - Returns the address of class AllocationHeader
      *                         embedded inside the ElasticNode object
      */
-    static AM *GetAllocationHeader(
-      const ElasticNode<chunk_size, ExtraDataType> *node_p) {
+    static AM *GetAllocationHeader(const EN *node_p) {
       return reinterpret_cast<AM *>( \
                reinterpret_cast<uint64_t>(node_p) - \
                  chunk_size - sizeof(AM));
@@ -2372,13 +2371,12 @@ class BwTree : public BwTreeBase {
      * available for all node type (stored in NodeMetadata)
      */
     static void *InlineAllocate(const KeyNodeIDPair *low_key_p, size_t size) {
-      const ElasticNode<chunk_size, ExtraDataType> *node_p = \
-        GetNodeHeader(low_key_p);
+      const EN *node_p = EN::GetNodeHeader(low_key_p);
         
       assert(&node_p->low_key == low_key_p);
       
       // Jump over chunk content
-      AM *meta_p = GetAllocationHeader(node_p);
+      AM *meta_p = EN::GetAllocationHeader(node_p);
 
       void *p = meta_p->Allocate(size);
       assert(p != nullptr);
@@ -2388,12 +2386,12 @@ class BwTree : public BwTreeBase {
   };
   
   // This is the base type of inner nodes
-  using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD * 
-                                    sizeof(InnerDeltaNodeUnion),
+  using InnerBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
+                                      sizeof(LeafDeltaNodeUnion),
                                     NodeID *>;
   // This is the base type of leaf nodes
   using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
-                                   sizeof(LeafDeltaNodeUnion),
+                                     sizeof(LeafDeltaNodeUnion),
                                    char[0]>;
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
