@@ -2079,7 +2079,7 @@ class BwTree : public BwTreeBase {
       // Note that the actual raw memory size is sizeof this object
       // plus the parameterized chunk size
       char *new_chunk = new char[chunk_size + sizeof(AM)];
-      AM *expected = nullptr;
+      
       
       // Prepare the new chunk's metadata field
       AM *new_meta_base = reinterpret_cast<AM *>(new_chunk);
@@ -2089,6 +2089,9 @@ class BwTree : public BwTreeBase {
       // is the first byte after AllocationMeta
       new (new_meta_base) AM{new_chunk + sizeof(AM) + chunk_size, // tail
                              new_chunk + sizeof(AM)};             // limit
+      
+      // If CAS fails this is the actual value stored there
+      AM *expected = nullptr;
       
       // Always CAS with nullptr such that we will never install/replace
       // a chunk that has already been installed here
@@ -2119,6 +2122,7 @@ class BwTree : public BwTreeBase {
      */
     void *Allocate(size_t size) {
       AM *meta_p = this;
+
       while(1) {
         // Allocate from the current chunk first
         // If this is nullptr then this chunk has been depleted
@@ -2212,6 +2216,10 @@ class BwTree : public BwTreeBase {
     uint8_t start[0];
     
    public:
+    // Use this as the type of allocatoin meta of a certain chunk size
+    using AM = AllocationMeta<chunk_size>;
+    using EN = ElasticNode<chunk_size, ExtraDataType>;  
+      
     /*
      * Constructor
      *
@@ -2265,16 +2273,12 @@ class BwTree : public BwTreeBase {
     void Destroy() const {
       // This finds the allocation header for this base node, and then
       // traverses the linked list
-      ElasticNode::GetAllocationHeader(this)->Destroy();
+      EN::GetAllocationHeader(this)->Destroy();
       
       return;
     }
     
    public: 
-    // Use this as the type of allocatoin meta of a certain chunk size
-    using AM = AllocationMeta<chunk_size>;
-    using EN = ElasticNode<chunk_size, ExtraDataType>;
-   
     /*
      * Get() - Static helper function that constructs a elastic node of
      *         a certain size
@@ -2386,8 +2390,8 @@ class BwTree : public BwTreeBase {
   };
   
   // This is the base type of inner nodes
-  using InnerBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
-                                      sizeof(LeafDeltaNodeUnion),
+  using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD *
+                                      sizeof(InnerDeltaNodeUnion),
                                     NodeID *>;
   // This is the base type of leaf nodes
   using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
@@ -2853,7 +2857,11 @@ class BwTree : public BwTreeBase {
         }
       } else {
         // Use byte size
-        const size_t diff = (uint64_t)copy_end_p - (uint64_t)copy_start_p;
+        const size_t diff = (uintptr_t)copy_end_p - (uintptr_t)copy_start_p;
+        // Must be exactly multiple KeyValuePair size
+        assert(diff % sizeof(KeyValuePair) == 0);
+        
+        // Direct copy because we know copy is trivial
         std::memcpy(End(), copy_start_p, diff);
         
         this->end += diff;
@@ -2880,7 +2888,7 @@ class BwTree : public BwTreeBase {
                                                   p_low_key,
                                                   p_high_key));
       
-      return leaf_node_p;                           
+      return leaf_node_p; 
     }
 
     /*
@@ -7950,12 +7958,12 @@ before_switch:
     // so if we allocate it on node_p, we will get an invalid reference
     // for the second recursive call
     const LeafMergeNode *merge_node_p = \
-      InnerInlineAllocateOfType(LeafMergeNode, 
-                                merge_branch_p,
-                                *merge_key_p,
-                                merge_branch_p,
-                                deleted_node_id,
-                                node_p);
+      LeafInlineAllocateOfType(LeafMergeNode,
+                               merge_branch_p,
+                               *merge_key_p,
+                               merge_branch_p,
+                               deleted_node_id,
+                               node_p);
 
     // Compare and Swap!
     bool ret = InstallNodeToReplace(node_id, merge_node_p, node_p);
