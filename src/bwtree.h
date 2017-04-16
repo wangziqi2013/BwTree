@@ -6720,20 +6720,18 @@ before_switch:
           #ifdef BWTREE_PELOTON
 
           // This is the first item of the newly created InnerNode
-          // and also the low key for the newly created InnerNode
+          // and also the low key for the InnerNode
           const KeyNodeIDPair first_item = std::make_pair(KeyType(),
                                                           snapshot_p->node_id);
+          const KeyNodeIDPair second_item = std::make_pair(KeyType(), 
+                                                           INVALID_NODE_ID)
 
           // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
-            reinterpret_cast<InnerNode *>( \
-              ElasticNode<KeyNodeIDPair>::\
-                Get(2, 
-                    NodeType::InnerType, 
-                    0,
-                    2,
-                    first_item,
-                    std::make_pair(KeyType(), INVALID_NODE_ID)));
+            InnerNode::Get(0,             // Depth
+                           2,             // Items
+                           first_item,    // Lkey
+                           second_item);  // Hkey
 
           #else
 
@@ -6741,24 +6739,22 @@ before_switch:
           // and also the low key for the InnerNode
           const KeyNodeIDPair first_item = std::make_pair(KeyType{},
                                                           snapshot_p->node_id);
+          const KeyNodeIDPair second_item = std::make_pair(KeyType{}, 
+                                                           INVALID_NODE_ID)
 
           // Allocate an InnerNode with KeyNodeIDPair embedded
           InnerNode *inner_node_p = \
-            reinterpret_cast<InnerNode *>( \
-              ElasticNode<KeyNodeIDPair>::\
-                Get(2, 
-                NodeType::InnerType, 
-                0,
-                2,
-                first_item,
-                std::make_pair(KeyType{}, INVALID_NODE_ID)));
+            InnerNode::Get(0,             // Depth
+                           2,             // Items
+                           first_item,    // Lkey
+                           second_item);  // Hkey
                                
           #endif
 
           // Add new element - one points to the current node (new second level
           // left most inner node), another points to its split sibling
-          inner_node_p->PushBack(first_item);
-          inner_node_p->PushBack(*insert_item_p);
+          inner_node_p->WriteItem(0, first_item);
+          inner_node_p->WriteItem(1, *insert_item_p);
 
           // First we need to install the new node with NodeID
           // This makes it visible
