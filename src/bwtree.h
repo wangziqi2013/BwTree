@@ -3339,15 +3339,14 @@ class BwTree : public BwTreeBase {
           // Free NodeID one by one stored in its separator list
           // Even if they are already freed (e.g. a split delta has not
           // been consolidated would share a NodeID with its parent)
-          for(auto it = inner_node_p->Begin();
-              it != inner_node_p->End();
+          for(NodeID *it = inner_node_p->NodeIDBegin();
+              it != inner_node_p->NodeIDEnd();
               it++) {
-            freed_count += FreeNodeByNodeID(it->second);
+            freed_count += FreeNodeByNodeID(*it);
           }
 
           inner_node_p->~InnerNode();
           inner_node_p->Destroy();
-          
           
           freed_count++;
 
@@ -3837,29 +3836,21 @@ abort_traverse:
    */
   inline NodeID LocateSeparatorByKey(const KeyType &search_key,
                                      const InnerNode *inner_node_p,
-                                     const KeyNodeIDPair *start_p,
-                                     const KeyNodeIDPair *end_p) {
+                                     int start_index,
+                                     int end_index) {
     // Inner node could not be empty
     assert(inner_node_p->GetSize() != 0UL);
 
     // Hopefully std::upper_bound would use binary search here
-    auto it = std::upper_bound(start_p,
-                               end_p,
-                               std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj) - 1;
-#ifdef BWTREE_DEBUG
-    //auto it2 = std::upper_bound(inner_node_p->Begin() + 1,
-    //                           inner_node_p->End(),
-    //                           std::make_pair(search_key, INVALID_NODE_ID),
-    //                           key_node_id_pair_cmp_obj) - 1;
-                               
-    //assert(it == it2);
-#endif
+    int item_index = inner_node_p->UpperBound(start_index,
+                                              end_index,
+                                              search_key) - 1;
+    assert(item_index >= 0);
 
     // Since upper_bound returns the first element > given key
     // so we need to decrease it to find the last element <= given key
     // which is out separator key
-    return it->second;
+    return inner_node_p->NodeIDBegin()[item_index];
   }
   
   /*
@@ -3875,22 +3866,24 @@ abort_traverse:
   inline NodeID LocateSeparatorByKeyBI(const KeyType &search_key,
                                        const InnerNode *inner_node_p) {
     assert(inner_node_p->GetSize() != 0UL);
-    auto it = std::upper_bound(inner_node_p->Begin() + 1,
-                               inner_node_p->End(),
-                               std::make_pair(search_key, INVALID_NODE_ID),
-                               key_node_id_pair_cmp_obj) - 1;
+    
+    // Same searching
+    int item_index = inner_node_p->UpperBound(1,
+                                              inner_node_p->GetSize(),
+                                              search_key) - 1;
+    assert(item_index >= 0);
 
-    if(KeyCmpEqual(it->first, search_key) == true) {
+    if(KeyCmpEqual(inner_node_p->KeyBegin()[item_index], search_key) == true) {
       // If search key is the low key then we know we should have already
       // gone left on the parent node
-      assert(it != inner_node_p->Begin());
+      assert(item_index != 0);
       
       // Go to the left separator to find the left node with range < search key
       // After decreament it might or might not be the low key
-      it--; 
+      item_index--;
     }
     
-    return it->second;
+    return inner_node_p->NodeIDBegin()[item_index];
   }
 
   /*
@@ -3953,13 +3946,12 @@ abort_traverse:
 
     bwt_printf("Navigating inner node delta chain...\n");
     
-    // Always start with the first element
-    const KeyNodeIDPair *start_p = \
-      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
-    // Use low key pair to find base node and then use base node pointer to find
-    // total number of elements in the array. We search in this array later
-    const KeyNodeIDPair *end_p = \
-      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
+    // These two are search begin and search end indices when doing 
+    // binary search on inner node KeyType array
+    // We adjust these two based on delta node information
+    int start_index = 1;
+    int end_index = \
+      InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->GetSize();
 
     while(1) {
       NodeType type = node_p->GetType();
@@ -3974,8 +3966,8 @@ abort_traverse:
           NodeID target_id = \
             LocateSeparatorByKey(search_key, 
                                  inner_node_p, 
-                                 start_p, 
-                                 end_p);
+                                 start_index, 
+                                 end_index);
 
           bwt_printf("Found child in inner node; child ID = %lu\n",
                      target_id);
@@ -4002,9 +3994,9 @@ abort_traverse:
               return insert_item.second;
             }
             
-            start_p = std::max(start_p, insert_node_p->location);
+            start_index = std::max(start_index, insert_node_p->location);
           } else {
-            end_p = std::min(end_p, insert_node_p->location);
+            end_index = std::min(end_index, insert_node_p->location);
           }
           
           break;
@@ -4044,9 +4036,9 @@ abort_traverse:
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
           if(KeyCmpGreaterEqual(search_key, delete_node_p->item.first) == true) {
-            start_p = std::max(delete_node_p->location, start_p);
+            start_index = std::max(delete_node_p->location, start_index);
           } else {
-            end_p = std::min(delete_node_p->location, end_p);
+            end_index = std::min(delete_node_p->location, end_index);
           } 
 
           break;
@@ -4075,14 +4067,13 @@ abort_traverse:
             node_p = merge_node_p->child_node_p;
           }
           
-          // Since all indices are not invalidated, we do not know on which
+          // Since all indices are now invalidated, we do not know on which
           // branch it is referring to
           // After this point node_p has been updated as the newest branch we 
           // are travelling on
-          start_p = \
-            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->Begin() + 1;
-          end_p = \
-            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->End();
+          start_index = 1;
+          end_index = \
+            InnerNode::GetNodeHeader(&node_p->GetLowKeyPair())->GetSize();
 
           // Note that we should jump to the beginning of the loop without 
           // going to child node any further
