@@ -4289,20 +4289,28 @@ abort_traverse:
     // We do this because for an InnerNode, its first separator key is just
     // a placeholder and never used (reading its content causes undefined 
     // behavior), because there is one more NodeID than separators
-    inner_node_p->PushBack(node_p->GetLowKeyPair());
+    inner_node_p->WriteItem(0, node_p->GetLowKeyPair());
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
-    CollectAllSepsOnInnerRecursive(node_p,
-                                   node_p->GetLowKeyNodeID(),
-                                   sss,
-                                   inner_node_p);
+    int final_item_count = \ 
+      CollectAllSepsOnInnerRecursive(node_p,
+                                     node_p->GetLowKeyNodeID(),  // Use this to 
+                                                                 // determine 
+                                                                 // the leftmost 
+                                                                 // branch
+                                     sss,
+                                     inner_node_p,
+                                     1);                       // Next index
 
     // Since consolidation would not change item count they must be equal
     // Also allocated space should be used exactly as described in the
     // construction function
     assert(inner_node_p->GetSize() == node_p->GetItemCount());
     assert(inner_node_p->GetSize() == inner_node_p->GetItemCount());
+    assert(final_item_count != -1);
+    // The size after consolidation must equal the original node size
+    assert(final_item_count == inner_node_p->GetSize());
 
     return inner_node_p;
   }
@@ -4312,14 +4320,18 @@ abort_traverse:
    *
    * Please refer to the function on leaf node for details. These two have
    * almost the same logical flow
+   *
+   * Note that this functo returns the next write item index to its caller
+   * to determine the correct location
    */
   template<typename T> // To make the f**king compiler
                        // to deduce SortedSmallSet template type
-  void
+  int
   CollectAllSepsOnInnerRecursive(const BaseNode *node_p,
                                  NodeID low_key_node_id,
                                  T &sss,
-                                 InnerNode *new_inner_node_p) const {
+                                 InnerNode *new_inner_node_p,
+                                 int index) const {
     // High key should be the high key of the branch (if there is a merge
     // then the high key of the branch may not always equal the high key
     // of the merged node)
@@ -4337,22 +4349,24 @@ abort_traverse:
 
           // These two will be set according to the high key and
           // low key
-          const KeyNodeIDPair *copy_end_it;
-          const KeyNodeIDPair *copy_start_it;
+          const KeyNodeIDPair *copy_end_index;
+          const KeyNodeIDPair *copy_start_index;
 
+          // If this is the last inner node on the current level
+          // then there is definitely no split sibling on its right
+          // and we could just copy all contents 
           if(high_key_pair.second == INVALID_NODE_ID) {
-            copy_end_it = inner_node_p->End();
+            copy_end_index = inner_node_p->GetSize();
           } else {
             // This search for the first key >= high key of the current node
             // being consolidated
             // This is exactly where we should stop copying
             // The return value might be end() iterator, but it is also
             // consistent
-            copy_end_it = \
-              std::lower_bound(inner_node_p->Begin() + 1,
-                               inner_node_p->End(),
-                               high_key_pair,     // This contains the high key
-                               key_node_id_pair_cmp_obj);
+            copy_end_index = \
+              inner_node_p->LowerBound(1,
+                                       inner_node_p->GetSize(),
+                                       high_key_pair.first);
           }
 
           // Since we want to access its first element
@@ -4363,10 +4377,10 @@ abort_traverse:
           // and we ignore the leftmost sep (since it could be -Inf)
           // For other nodes, the leftmost item inside sep list has a valid
           // key and could thus be pushed directly
-          if(inner_node_p->At(0).second == low_key_node_id) {
-            copy_start_it = inner_node_p->Begin() + 1;
+          if(inner_node_p->NodeIDBegin()[0] == low_key_node_id) {
+            copy_start_index = 1;
           } else {
-            copy_start_it = inner_node_p->Begin();
+            copy_start_it = 0;
           }
 
           // Find the end of copying
@@ -4393,13 +4407,9 @@ abort_traverse:
           // This points to the first element >= high key
           sss_end_it++;
 
-          //printf("%ld\n", sss.GetSize());
-
           while(1) {
             bool sss_end_flag = (sss.GetBegin() == sss_end_it);
             bool array_end_flag = (copy_start_it == copy_end_it);
-
-            //printf("sss_end_flag = %d; array_end_flag = %d\n", sss_end_flag, array_end_flag);
 
             if(sss_end_flag == true && array_end_flag == true) {
               // Both are drained
@@ -4408,7 +4418,11 @@ abort_traverse:
               // If the sss has drained we continue to drain the array
               // This version of PushBack() takes two iterators and
               // insert from start to end - 1
-              new_inner_node_p->PushBack(copy_start_it, copy_end_it);
+              new_inner_node_p->WriteItem(indx, 
+                                          copy_start_index, 
+                                          copy_end_index);
+              // Adding number of elements we just copied
+              index += (copy_end_index - copy_start_index);
 
               break;
             } else if(array_end_flag == true) {
@@ -4424,7 +4438,10 @@ abort_traverse:
                 // and we just do not care
                 if(data_node_type == NodeType::InnerInsertType) {
                   // Pop the value here
-                  new_inner_node_p->PushBack(sss.PopFront()->item);
+                  new_inner_node_p->WriteItem(index, sss.PopFront()->item);
+                  
+                  // Just added one more item
+                  index++;
                 } else {
                   // And here (InnerDeleteNode after we have drained InnerNode
                   // is useless so just ignore it)
@@ -4440,10 +4457,12 @@ abort_traverse:
 
             if(key_cmp_obj(copy_start_it->first, 
                            sss.GetFront()->item.first) == true) {
-              // If array element is less than data node list element
-              new_inner_node_p->PushBack(*copy_start_it);
-
-              copy_start_it++;
+              // If array element is less than data node list element   
+              new_inner_node_p->WriteItem(index, 
+                                          inner_node_p.At(copy_start_index));
+              
+              copy_start_index++;
+              index++;
             } else if(key_cmp_obj(sss.GetFront()->item.first, 
                                   copy_start_it->first) == true) {
               NodeType data_node_type = (sss.GetFront())->GetType();
@@ -4451,7 +4470,9 @@ abort_traverse:
               // Delta Insert with array not having that element
               if(data_node_type == NodeType::InnerInsertType) {
                 // Pop the value here
-                new_inner_node_p->PushBack(sss.PopFront()->item);
+                new_inner_node_p->WriteItem(index, sss.PopFront()->item);
+                
+                index++;
               } else {
                 // This is possible
                 // InnerNode: [2, 3, 4, 5]
@@ -4466,24 +4487,26 @@ abort_traverse:
 
               // InsertDelta overrides InnerNode element
               if(data_node_type == NodeType::InnerInsertType) {
-                new_inner_node_p->PushBack(sss.PopFront()->item);
+                new_inner_node_p->WriteItem(index, sss.PopFront()->item);
+                index++;
               } else {
                 // There is a value in InnerNode that does not exist
                 // in consolidated node. Just ignore
                 sss.PopFront();
               }
-
+              
+              // In both cases the original value is not used
               copy_start_it++;
             } // Compare leading elements
           } // while(1)
 
-          return;
+          return index;
         } // case InnerType
         case NodeType::InnerRemoveType: {
           bwt_printf("ERROR: InnerRemoveNode not allowed\n");
 
           assert(false);
-          return;
+          return -1;
         } // case InnerRemoveType
         case NodeType::InnerInsertType: {
           const InnerInsertNode *insert_node_p = \
@@ -4531,33 +4554,38 @@ abort_traverse:
           // one passed by the wrapper. Though node_p changes for each
           // recursive call, metadata should not change and should remain
           // constant
+          // Also note that we need to update the index since the
+          // recursive call will hit inner nodes and peform insertion into
+          // the new inner node. 
+          index = \
+            CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
+                                           low_key_node_id,
+                                           sss,
+                                           new_inner_node_p,
+                                           index);
 
-          CollectAllSepsOnInnerRecursive(merge_node_p->child_node_p,
-                                         low_key_node_id,
-                                         sss,
-                                         new_inner_node_p);
-
-          CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
-                                         low_key_node_id,
-                                         sss,
-                                         new_inner_node_p);
+          index = \
+            CollectAllSepsOnInnerRecursive(merge_node_p->right_merge_p,
+                                           low_key_node_id,
+                                           sss,
+                                           new_inner_node_p);
 
           // There is no unvisited node
-          return;
+          return index;
         } // case InnerMergeType
         default: {
           bwt_printf("ERROR: Unknown inner node type = %d\n",
                  static_cast<int>(type));
 
           assert(false);
-          return;
+          return -1; 
         }
       } // switch type
     } // while(1)
 
     // Should not get to here
     assert(false);
-    return;
+    return -1;
   }
 
   /*
