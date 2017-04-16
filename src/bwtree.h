@@ -2312,8 +2312,8 @@ class BwTree : public BwTreeBase {
       // class ElasticNode; limit points to the first byte after class 
       // AllocationMeta
       new (reinterpret_cast<AM *>(alloc_base)) \
-        AllocationMeta{alloc_base + chunk_size,
-                       alloc_base + sizeof(AllocationMeta)};
+        AM{alloc_base + chunk_size,
+           alloc_base + sizeof(AM)};
       
       // The first chunk_size byte is used by class AllocationMeta 
       // and chunk data
@@ -2348,8 +2348,8 @@ class BwTree : public BwTreeBase {
      * GetAllocationHeader() - Returns the address of class AllocationHeader
      *                         embedded inside the ElasticNode object
      */
-    static AllocationMeta *GetAllocationHeader(const ElasticNode *node_p) {
-      return reinterpret_cast<AllocationMeta *>( \
+    static AM *GetAllocationHeader(const ElasticNode *node_p) {
+      return reinterpret_cast<AM *>( \
                reinterpret_cast<uint64_t>(node_p) - \
                  chunk_size - sizeof(AM));
     }
@@ -2373,7 +2373,7 @@ class BwTree : public BwTreeBase {
       assert(&node_p->low_key == low_key_p);
       
       // Jump over chunk content
-      AllocationMeta *meta_p = GetAllocationHeader(node_p);
+      AM *meta_p = GetAllocationHeader(node_p);
 
       void *p = meta_p->Allocate(size);
       assert(p != nullptr);
@@ -2737,18 +2737,18 @@ class BwTree : public BwTreeBase {
       return reinterpret_cast<KeyValuePair *>(start);
     }
     
-    inline const ElementType *Begin() const {
+    inline const KeyValuePair *Begin() const {
       return reinterpret_cast<KeyValuePair *>(start); 
     }
     
     /*
      * End() - Returns an end iterator that is similar to the one for vector
      */
-    inline ElementType *End() {
+    inline KeyValuePair *End() {
       return reinterpret_cast<KeyValuePair *>(end); 
     }
     
-    inline const ElementType *End() const {
+    inline const KeyValuePair *End() const {
       return reinterpret_cast<KeyValuePair *>(end); 
     }
     
@@ -2758,11 +2758,11 @@ class BwTree : public BwTreeBase {
      * Note that since we returned an invalid pointer into the array, the
      * return value should not be modified and is therefore of const type
      */
-    inline const ElementType *REnd() {
+    inline const KeyValuePair *REnd() {
       return reinterpret_cast<const KeyValuePair *>(start) - 1; 
     }
     
-    inline const ElementType *REnd() const {
+    inline const KeyValuePair *REnd() const {
       return reinterpret_cast<const KeyValuePair *>(start) - 1; 
     }
     
@@ -2786,7 +2786,7 @@ class BwTree : public BwTreeBase {
       return Begin()[index];
     }
     
-    inline const ElementType &At(const int index) const {
+    inline const KeyValuePair &At(const int index) const {
       // The index must be inside the valid range
       assert(index < GetSize());
       
