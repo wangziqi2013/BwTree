@@ -2432,7 +2432,10 @@ class BwTree : public BwTreeBase {
       // Note that this is different from leaf nodes
       // and we set the end to the real end
       inner_node_p->end = inner_node_p->start + inner_node_size;
+      
       // This is the boundary between KeyType array and NodeID array
+      // i.e. both the end of key type array and the starting of 
+      // node ID array
       inner_node_p->extra_data = \
         reinterpret_cast<NodeID *>(inner_node_p->start + 
                                    sizeof(KeyType) * p_item_count);
@@ -2525,7 +2528,7 @@ class BwTree : public BwTreeBase {
       assert(index < GetSize() && index >= 0);
       
       // Copy construct the key object on the KeyType array using placement new
-      new KeyBegin()[index] KeyType{key};
+      new &(KeyBegin()[index]) KeyType{key};
       // This could be copied directly becuase we know it is integer type
       NodeIDBegin()[index] = node_id; 
       
@@ -2549,14 +2552,14 @@ class BwTree : public BwTreeBase {
       if(std::is_trivially_copyable<KeyType>::value == false) {
         for(int i = 0;i < count;i++) {
           // Write the i-th KeyType into (index + i)-th item
-          new KeyBegin()[index + i]{key_p[i]}; 
+          new &(KeyBegin()[index + i]) KeyType{key_p[i]}; 
         }
       } else {
         // Direct memcpy copy
         memcpy(KeyBegin() + index, key_p, sizeof(KeyType) * count); 
       }
       
-      // Always copy NodeId array using memcpy becuase it is 
+      // Always copy NodeID array using memcpy becuase it is 
       // copyable
       mempcy(NodeIDBegin() + index, node_id_p, sizeof(NodeID) * count);
       
@@ -2571,14 +2574,14 @@ class BwTree : public BwTreeBase {
      */
     int GetSize() const {
       // These two arrays should have the same size
-      assert((NodeIDBegin() - NodeIDEnd()) == \
-             (KeyBegin() - KeyEnd())); 
+      assert((NodeIDEnd() - NodeIDBegin()) == \
+             (KeyEnd() - KeyBegin())); 
       
-      // Note that we use NodeId array because the compiler
+      // Note that we use NodeID array because the compiler
       // could easily compute the size of the array by shifting
       // bits; On the contrary if key size is not multiple of 2
       // then computing the size of this array requires division
-      return NodeIDBegin() - NodeIDEnd();
+      return NodeIDEnd() - NodeIDBegin();
     }
     
     /*
@@ -2590,7 +2593,7 @@ class BwTree : public BwTreeBase {
      *
      * This works for both const and non-const array
      */
-    inline KeyNodeIDPair At(int index) {
+    inline KeyNodeIDPair At(int index) const {
       assert(index < GetSize() && index >= 0);
       return std::make_pair(KeyBegin()[index], NodeIDBegin()[index]);
     }
@@ -2667,7 +2670,8 @@ class BwTree : public BwTreeBase {
       NodeID *node_id_copy_start_it = NodeIDBegin() + split_item_index;
             
       // We need this to allocate enough space for the embedded array
-      int sibling_item_count = NodeIDEnd() - node_id_copy_start_it;
+      int sibling_item_count = GetSize() - split_item_index;
+      assert(sibling_item_count == (NodeIDEnd() - node_id_copy_start_it));
 
       // This sets metadata inside BaseNode by calling SetMetaData()
       // inside inner node constructor
@@ -2791,7 +2795,7 @@ class BwTree : public BwTreeBase {
      */
     inline void PushBack(const KeyValuePair &element) {
       // Placement new + copy constructor using end pointer
-      new (end) KeyValuePair{element};
+      new (reinterpret_cast<KeyValuePair *>(end)) KeyValuePair{element};
       
       // Move it pointing to the enxt available slot, if not reached the end
       end++;
