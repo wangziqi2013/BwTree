@@ -1711,12 +1711,12 @@ class BwTree : public BwTreeBase {
     // search could start at this pointer's location; Similarly, if the 
     // search key is smaller than this key then binary search could end before
     // this pointer
-    const KeyNodeIDPair *location;
+    int location;
 
     InnerDataNode(const KeyNodeIDPair &p_item,
                   NodeType p_type,
                   const BaseNode *p_child_node_p,
-                  const KeyNodeIDPair *p_location,
+                  int p_location,
                   const KeyNodeIDPair *p_low_key_p,
                   const KeyNodeIDPair *p_high_key_p,
                   int p_depth,
@@ -2302,10 +2302,10 @@ class BwTree : public BwTreeBase {
       //                         ^                        ^
       //                       Limit                     Tail
       char *alloc_base = \
-        new char[sizeof(ElasticNode) + \    // This is 2.1
-                   byte_size + \            // This is 2.2
-                   chunk_size +             // This is 2.3
-                   sizeof(AM)];             // This is 1
+        new char[sizeof(ElasticNode) + \
+                   byte_size + \
+                   chunk_size +
+                   sizeof(AM)];
       assert(alloc_base != nullptr);
       
       // Initialize the AllocationMeta - tail points to the first byte inside
@@ -2991,7 +2991,7 @@ class BwTree : public BwTreeBase {
         LeafNode::Get(0,
                       sibling_size,
                       std::make_pair(split_key, ~INVALID_NODE_ID),
-                      this->GetHighKeyPair()));
+                      this->GetHighKeyPair());
 
       // Copy data item into the new node using PushBack()
       leaf_node_p->PushBack(copy_start_it, copy_end_it);
@@ -3405,14 +3405,10 @@ class BwTree : public BwTreeBase {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      reinterpret_cast<InnerNode *>( \
-        ElasticNode<KeyNodeIDPair>::\
-          Get(1, 
-              NodeType::InnerType, 
-              0, 
-              1, 
-              first_sep,
-              std::make_pair(KeyType(), INVALID_NODE_ID)));
+      InnerNode::Get(0, 
+                     1, 
+                     first_sep,
+                     std::make_pair(KeyType(), INVALID_NODE_ID));
 
     #else
 
@@ -3425,14 +3421,10 @@ class BwTree : public BwTreeBase {
     // so we set item count to be 1
     // The high key is +Inf which is identified by INVALID_NODE_ID
     InnerNode *root_node_p = \
-      reinterpret_cast<InnerNode *>( \
-        ElasticNode<KeyNodeIDPair>::\
-          Get(1, 
-              NodeType::InnerType, 
-              0, 
-              1, 
-              first_sep,    // Copy this as the first key
-              std::make_pair(KeyType{}, INVALID_NODE_ID)));
+      InnerNode::Get(0, 
+                     1, 
+                     first_sep,
+                     std::make_pair(KeyType{}, INVALID_NODE_ID));
 
     #endif
 
@@ -3449,24 +3441,18 @@ class BwTree : public BwTreeBase {
     #ifdef BWTREE_PELOTON
 
     LeafNode *left_most_leaf = \
-      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-        Get(0,
-            NodeType::LeafType,
-            0,
-            0,
-            std::make_pair(KeyType(), INVALID_NODE_ID),
-            std::make_pair(KeyType(), INVALID_NODE_ID)));
+      LeafNode::Get(0,
+                    0,
+                    std::make_pair(KeyType(), INVALID_NODE_ID),
+                    std::make_pair(KeyType(), INVALID_NODE_ID));
 
     #else
 
     LeafNode *left_most_leaf = \
-      reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-        Get(0,
-            NodeType::LeafType,
-            0,
-            0,
-            std::make_pair(KeyType{}, INVALID_NODE_ID),
-            std::make_pair(KeyType{}, INVALID_NODE_ID)));
+      LeafNode::Get(0,
+                    0,
+                    std::make_pair(KeyType{}, INVALID_NODE_ID),
+                    std::make_pair(KeyType{}, INVALID_NODE_ID));
 
     #endif
 
@@ -4282,7 +4268,7 @@ abort_traverse:
     InnerNode *inner_node_p = InnerNode::Get(p_depth,
                                              node_p->GetItemCount(),
                                              node_p->GetLowKeyPair(),
-                                             node_p->GetHighKeyPair()));
+                                             node_p->GetHighKeyPair());
 
     // The first element is always the low key
     // since we know it will never be deleted
@@ -4293,7 +4279,7 @@ abort_traverse:
 
     // This will fill in two sets with values present in the inner node
     // and values deleted
-    int final_item_count = \ 
+    int final_item_count = \
       CollectAllSepsOnInnerRecursive(node_p,
                                      node_p->GetLowKeyNodeID(),  // Use this to 
                                                                  // determine 
@@ -5369,13 +5355,10 @@ abort_traverse:
 
     if(likely(leaf_node_p == nullptr)) {
       leaf_node_p = \
-        reinterpret_cast<LeafNode *>(ElasticNode<KeyValuePair>::\
-          Get(node_p->GetItemCount(),
-              NodeType::LeafType,
-              0,
-              node_p->GetItemCount(),
-              node_p->GetLowKeyPair(),
-              node_p->GetHighKeyPair()));
+        LeafNode::Get(0,
+                      node_p->GetItemCount(),
+                      node_p->GetLowKeyPair(),
+                      node_p->GetHighKeyPair());
     }
     
     assert(leaf_node_p != nullptr);
