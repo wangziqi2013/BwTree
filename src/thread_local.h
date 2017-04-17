@@ -11,7 +11,19 @@ namespace bwtree {
 // This is the type we use for epoch counter
 using EpochType = uint64_t;
 
+/*
+ * class GarbageNode - Representation of garbages
+ */
+class GarbageNode {
+ public:
+  // This is the epoch it is deleted
+  // we need to wait for all threads to have epoch counter
+  // larger than this and then reclaim
+  EpochType delete_epoch;
 
+  // Opaque pointer
+  void *ptr;
+};
 
 /*
  * class BwTreeThreadLocal - The thread local class that holds per-thread
