@@ -77,7 +77,7 @@ class GarbageGroup {
   GarbageGroup() :
     node_count{0},
     next_p{nullptr},
-    garnage_node_list{}
+    garbage_node_list{}
   {}
   
   // Do not allow any othre form of assignmemt and construction
@@ -85,6 +85,58 @@ class GarbageGroup {
   GarbageGroup(GarbageGroup &&) = delete;
   GarbageGroup &operator=(const GarbageGroup &) = delete;
   GarbageGroup &operator=(GarbageGroup &&) = delete;
+  
+  /*
+   * IsFull() - Whether the group is full
+   */
+  inline bool IsFull() const {
+    assert(node_count >= 0 && node_count <= GROUP_SIZE);
+    
+    return node_count == GROUP_SIZE;
+  }
+  
+  /*
+   * IsEmpty() - Whether the object is empty
+   *
+   * Note that we should never see empty group because when creating one
+   * we always add at least one garnage node into it
+   */
+  inline bool IsEmpty() const {
+    return node_count == 0;
+  }
+  
+  /*
+   * AddGarbageNode() - Adds a new garbage node into the current group
+   *
+   * This group must be not full otherwise assertion fails
+   */
+  inline void AddGarbageNode(EpochType delete_epoch, void *ptr) {
+    // The group must not be full when adding new nodes
+    assert(IsFull() == false);
+
+    garbage_node_list[node_count].delete_epoch = delete_epoch;
+    garbage_node_list[node_count].ptr = ptr;
+    
+    node_count++;
+    
+    return;
+  }
+  
+  /*
+   * GetLatestDeleteEpoch() - Returns the delete epoch of the last node
+   *
+   * We use this epoch to decide whether to GC this group or not
+   */
+  inline EpochType GetLatestDeleteEpoch() const {
+    // Empty group does not have defined epoch and we do not
+    // allow empty garbage group
+    asserr(IsEmpty() == false);
+    assert(node_count > 0 && node_count <= GROUP_SIZE);
+    
+    // Use the last garbage node
+    // Note that the last garbage node's index is (node_count - 1)
+    return garbage_node_list[node_count - 1].delete_epoch;
+  }
 };
 
 
