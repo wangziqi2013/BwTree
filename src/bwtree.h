@@ -165,8 +165,8 @@ static constexpr size_t MAPPING_TABLE_SIZE = 0x1 << 20;
 
 // If the length of delta chain exceeds ( >= ) this then we consolidate 
 // the node
-static constexpr int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 8;
-static constexpr int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 16;
+static constexpr int INNER_DELTA_CHAIN_LENGTH_THRESHOLD = 2;
+static constexpr int LEAF_DELTA_CHAIN_LENGTH_THRESHOLD = 24;
 
 static_assert(INNER_DELTA_CHAIN_LENGTH_THRESHOLD >= 1 && 
               LEAF_DELTA_CHAIN_LENGTH_THRESHOLD >= 1,
@@ -549,6 +549,15 @@ class BwTreeBase {
     GetCurrentGCMetaData()->last_active_epoch = GetGlobalEpoch();
     
     return;
+  }
+  
+  /*
+   * LeaveEpoch() - Let the thread exit current epoch such that it does
+   *                not block other threads
+   */
+  inline void LeaveEpoch() {
+    // This will make ie never be counted as active for GC
+    GetCurrentGCMetaData()->last_active_epoch = static_cast<uint64_t>(-1);
   }
   
   /*
@@ -4335,6 +4344,9 @@ abort_traverse:
     assert(final_item_count != -1);
     // The size after consolidation must equal the original node size
     assert(final_item_count == inner_node_p->GetSize());
+
+    // Avoid warning in release mode
+    (void)final_item_count;
 
     return inner_node_p;
   }
@@ -8889,8 +8901,10 @@ try_join_again:
     }
     
     inline void LeaveEpoch(EpochNode *epoch_p) {
-      tree_p->UpdateLastActiveEpoch();
+      //tree_p->UpdateLastActiveEpoch();
+      tree_p->LeaveEpoch();
       
+      assert(epoch_p == nullptr);
       (void)epoch_p;
       return;
     }
