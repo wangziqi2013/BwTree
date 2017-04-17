@@ -62,6 +62,7 @@ using NodeID = uint64_t;
 #include "sorted_small_set.h"
 #include "bloom_filter.h"
 #include "atomic_stack.h"
+#include "thread_local.h"
 
 // Copied from Linux kernel code to facilitate branch prediction unit on CPU
 // if there is one
