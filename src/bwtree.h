@@ -198,6 +198,21 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 // Whether BwTree supports non-unique key
 #define BWTREE_UNIQUE_KEY
 
+// Whether or not to collect statistics information and save them in
+// the thread-local storage for each thread
+// The driver program is responsible for clearing them after thread
+// finishes
+#define BWTREE_COLLECT_STATISTICS
+
+#ifdef BWTREE_COLLECT_STATISTICS
+#define INC_COUNTER(name, value) do { \
+                                   GetCurrentGCMetaData()->counters[ \
+                                     GCMetaData::CounterType::name] += \
+                                       value; } while(false);
+#else
+#define INC_COUNTER(name, value) do {} while(false);
+#endif
+
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
  *                               initialize it using placement new and then 
@@ -272,6 +287,8 @@ class BwTreeBase {
       next_p{nullptr}
     {}
   };
+
+ public:
   
   /*
    * class GCMetaData - Metadata for performing GC on per-thread basis
@@ -300,6 +317,42 @@ class BwTreeBase {
     // We use this as a threshold to trigger GC
     uint64_t node_count;
     
+#ifdef BWTREE_COLLECT_STATISTICS
+    // The type of counter values
+    using CounterValueType = int;
+
+    static const char *COUNTER_NAME_LIST[];
+
+    /*
+     * enum CounterType - Type of counters used to collect statistics
+     */
+    enum CounterType {
+      INSERT = 0,
+      UPSERT,
+      DELETE,
+      READ,
+      
+      LEAF_SPLIT,
+      INNER_SPLIT,
+      LEAF_MERGE,
+      INNER_MERGE,
+      LEAF_CONSOLIDATE,
+      INNER_CONSOLIDATE,
+      
+      MODIFY_ABORT,
+      READ_ABORT,
+      
+      ADD_TO_GC,
+      SCAN_GC_CHAIN,
+      
+      // This is the number of counters
+      COUNTER_COUNT,
+    };
+    
+    // This is an array holding information about counters
+    CounterValueType counters[CounterType::COUNTER_COUNT];
+#endif
+    
     /*
      * Default constructor
      */
@@ -307,13 +360,16 @@ class BwTreeBase {
       last_active_epoch{0UL},
       header{},
       last_p{&header},
-      node_count{0UL}
-    {}
+      node_count{0UL} {
+#ifdef BWTREE_COLLECT_STATISTICS
+      // Also initialize counters for statistical purpose
+      // They are all initialized to 0
+      memset(counters, 0x00, sizeof(counters));
+#endif
+
+      return;
+    }
   };
-  
-  // Make sure class Data does not exceed one cache line
-  static_assert(sizeof(GCMetaData) < CACHE_LINE_SIZE,
-                "class Data size exceeds cache line length!");
   
   /*
    * class PaddedData - Padded data to the length of a cache line 
@@ -337,12 +393,12 @@ class BwTreeBase {
     {}
     
    private:
-    char padding[ALIGNMENT - sizeof(DataType)];  
+    char padding[ALIGNMENT - (sizeof(DataType) % ALIGNMENT)];
   };
   
   using PaddedGCMetadata = PaddedData<GCMetaData, CACHE_LINE_SIZE>;
   
-  static_assert(sizeof(PaddedGCMetadata) == PaddedGCMetadata::ALIGNMENT, 
+  static_assert(sizeof(PaddedGCMetadata) % PaddedGCMetadata::ALIGNMENT == 0,
                 "class PaddedGCMetadata size does"
                 " not conform to the alignment!");
  
@@ -414,10 +470,10 @@ class BwTreeBase {
     bwt_printf("Preparing %lu thread local slots\n", thread_num);
     
     // This is the unaligned base address
-    // We allocate one more element than requested as the buffer
+    // We allocate one more cache line than requested size as the buffer
     // for doing alignment
     original_p = static_cast<unsigned char *>(
-      malloc(CACHE_LINE_SIZE * (thread_num + 1)));
+      malloc(sizeof(PaddedGCMetadata) * thread_num + CACHE_LINE_SIZE));
     assert(original_p != nullptr);
     
     // Align the address to cache line boundary
@@ -473,7 +529,7 @@ class BwTreeBase {
     // Frees all metadata
     DestroyThreadLocal();
     
-    bwt_printf("Finished destroying class BwTreeBase\n")
+    bwt_printf("Finished destroying class BwTreeBase\n");
     
     return;
   }
@@ -1972,11 +2028,11 @@ class BwTree : public BwTreeBase {
     NodeSnapshot() {}
 
     /*
-     * IsLeaf() - Test whether current snapshot is on leaf delta chain
+     * IsLeafLevel() - Test whether current snapshot is on leaf delta chain
      *
      * This function is just a wrapper of IsOnLeafDeltaChain() in BaseNode
      */
-    inline bool IsLeaf() const {
+    inline bool IsLeafLevel() const {
       return node_p->IsOnLeafDeltaChain();
     }
   };
@@ -3188,8 +3244,8 @@ class BwTree : public BwTreeBase {
                p_thread_num);
     
     // 1. Frees all pending memory chunks
-    // 2. Frees the thread local array
     ClearThreadLocalGarbage(); 
+    // 2. Frees the thread local array
     DestroyThreadLocal();
     
     SetThreadNum(p_thread_num);
@@ -3417,6 +3473,95 @@ class BwTree : public BwTreeBase {
 
     assert(false);
     return 0;
+  }
+  
+  /*
+   * DebugConsolidateAllRecursive() - This function traverses and consolidates
+   *                                  all delta chains
+   *
+   * Note that currently this function leaks memory because it does not try to
+   * reclaim the freed delta chain
+   *
+   * This function must be called under single threaded environment
+   *
+   * This function also accepts statistical information about delta chain depth
+   * and node count. These information are passed through pointers in the
+   * argument list
+   */
+  int DebugConsolidateAllRecursive(NodeID node_id,
+                                   int *inner_depth_total,
+                                   int *leaf_depth_total,
+                                   int *inner_node_total,
+                                   int *leaf_node_total,
+                                   int *inner_size_total,
+                                   int *leaf_size_total) {
+    const BaseNode *node_p = GetNode(node_id);
+    NodeType type = node_p->GetType();
+    NodeSnapshot snapshot{node_id, node_p};
+    
+    int ret = 0;
+    
+    if(node_p->IsOnLeafDeltaChain() == true) {
+      if(type == NodeType::LeafSplitType ||
+         type == NodeType::LeafMergeType ||
+         type == NodeType::LeafRemoveType) {
+        fprintf(stderr,
+                "Unexpected leaf node type: %d\n",
+                static_cast<int>(type));
+        exit(1);
+      }
+      
+      (*leaf_depth_total) += node_p->GetDepth();
+      
+      LeafNode *leaf_node_p = CollectAllValuesOnLeaf(&snapshot);
+      mapping_table[node_id].store(leaf_node_p);
+      
+      ret = 1;
+      (*leaf_node_total)++;
+      (*leaf_size_total) += leaf_node_p->GetItemCount();
+    } else {
+      if(type == NodeType::InnerSplitType ||
+         type == NodeType::InnerMergeType ||
+         type == NodeType::InnerRemoveType ||
+         type == NodeType::InnerAbortType) {
+        fprintf(stderr,
+                "Unexpected inner node type: %d\n",
+                static_cast<int>(type));
+        exit(1);
+      }
+      
+      // For inner nodes since we could see inner node
+      // with non-zero depth this should be hardcoded
+      if(type == NodeType::InnerType) {
+        (*inner_depth_total) += 0;
+      } else {
+        (*inner_depth_total) += node_p->GetDepth();
+      }
+      
+      InnerNode *inner_node_p = CollectAllSepsOnInner(&snapshot);
+      mapping_table[node_id].store(inner_node_p);
+      
+      ret++;
+      (*inner_node_total)++;
+      (*inner_size_total) += inner_node_p->GetItemCount();
+      
+      // All node IDs must be unique because we use the inner node
+      // after consolidation, so there will not be invalid
+      // node IDs which have been slited to the sibling
+      for(NodeID *p = inner_node_p->NodeIDBegin(); \
+          p != inner_node_p->NodeIDEnd(); \
+          p++) {
+        ret += DebugConsolidateAllRecursive(*p,
+                                            inner_depth_total,
+                                            leaf_depth_total,
+                                            inner_node_total,
+                                            leaf_node_total,
+                                            inner_size_total,
+                                            leaf_size_total);
+      }
+    }
+    
+    return ret;
   }
 
   /*
@@ -3708,7 +3853,7 @@ retry_traverse:
       // This is the node we have just loaded
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-      if(snapshot_p->IsLeaf() == true) {
+      if(snapshot_p->IsLeafLevel() == true) {
         bwt_printf("The next node is a leaf\n");
 
         break;
@@ -3758,6 +3903,11 @@ abort_traverse:
     context_p->abort_counter++;
     
     #endif
+    
+    // Only do this if we are not doing iteration
+    if(value_p != nullptr) {
+      INC_COUNTER(MODIFY_ABORT, 1);
+    }
     
     // This is used to identify root node
     context_p->current_snapshot.node_id = INVALID_NODE_ID;
@@ -3974,7 +4124,7 @@ abort_traverse:
     const BaseNode *node_p = snapshot_p->node_p;
 
     // Make sure the structure is valid
-    assert(snapshot_p->IsLeaf() == false);
+    assert(snapshot_p->IsLeafLevel() == false);
     assert(snapshot_p->node_p != nullptr);
     
     // For read only workload this is always true since we do not need
@@ -4157,7 +4307,7 @@ abort_traverse:
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    assert(snapshot_p->IsLeaf() == false);
+    assert(snapshot_p->IsLeafLevel() == false);
     assert(snapshot_p->node_p != nullptr);
     bwt_printf("Navigating inner node delta chain for BI...\n");
 
@@ -4286,6 +4436,7 @@ abort_traverse:
    */
   InnerNode *CollectAllSepsOnInner(NodeSnapshot *snapshot_p,
                                    int p_depth = 0) {
+    INC_COUNTER(INNER_CONSOLIDATE, 1);
 
     // Note that in the recursive call node_p might change
     // but we should not change the metadata
@@ -4688,7 +4839,7 @@ abort_traverse:
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    assert(snapshot_p->IsLeaf() == true);
+    assert(snapshot_p->IsLeafLevel() == true);
 
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
@@ -4972,7 +5123,7 @@ abort_traverse:
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    assert(snapshot_p->IsLeaf() == true);
+    assert(snapshot_p->IsLeafLevel() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -5232,7 +5383,7 @@ abort_traverse:
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    assert(snapshot_p->IsLeaf() == true);
+    assert(snapshot_p->IsLeafLevel() == true);
 
     const KeyType &search_key = context_p->search_key;
 
@@ -5406,7 +5557,9 @@ abort_traverse:
    */
   LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p,
                                    LeafNode *leaf_node_p=nullptr) {
-    assert(snapshot_p->IsLeaf() == true);
+    assert(snapshot_p->IsLeafLevel() == true);
+
+    INC_COUNTER(LEAF_CONSOLIDATE, 1);
 
     const BaseNode *node_p = snapshot_p->node_p;
     
@@ -5884,7 +6037,7 @@ abort_traverse:
 
     // Get its parent node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
-    assert(parent_snapshot_p->IsLeaf() == false);
+    assert(parent_snapshot_p->IsLeafLevel() == false);
     
     // If the parent has changed then abort
     // This is to avoid missing InnerInsertNode which is fatal in our case
@@ -6002,7 +6155,7 @@ abort_traverse:
 
     // Assume we always use this function to traverse on the same
     // level
-    assert(node_p->IsOnLeafDeltaChain() == snapshot_p->IsLeaf());
+    assert(node_p->IsOnLeafDeltaChain() == snapshot_p->IsLeafLevel());
 
     // Make sure we are not switching to itself
     assert(snapshot_p->node_id != node_id);
@@ -6222,7 +6375,7 @@ retry_traverse:
       }
 
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-      if(snapshot_p->IsLeaf() == true) {
+      if(snapshot_p->IsLeafLevel() == true) {
         bwt_printf("The next node is a leaf (BI)\n");
 
         // After reaching leaf level just traverse the sibling chain
@@ -6254,6 +6407,9 @@ abort_traverse:
     return;
   }
   
+  /*
+   * TraverseReadOptimized() - Traverse the tree without handling any SMO
+   */
   void TraverseReadOptimized(Context *context_p,
                              std::vector<ValueType> *value_list_p) {
 retry_traverse:
@@ -6307,7 +6463,7 @@ retry_traverse:
       // This is the node we have just loaded
       NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
-      if(snapshot_p->IsLeaf() == true) {
+      if(snapshot_p->IsLeafLevel() == true) {
         bwt_printf("The next node is a leaf (RO)\n");
 
         NavigateLeafNode(context_p, *value_list_p);
@@ -6344,6 +6500,10 @@ abort_traverse:
     context_p->abort_counter++;
     
     #endif
+    
+    // If read operation aborts above we need to add it to
+    // statistics counters
+    INC_COUNTER(READ_ABORT, 1);
     
     context_p->current_snapshot.node_id = INVALID_NODE_ID;
 
@@ -6590,7 +6750,7 @@ before_switch:
         bool ret;
 
         // If we are currently on leaf, just post leaf merge delta
-        if(left_snapshot_p->IsLeaf() == true) {
+        if(left_snapshot_p->IsLeafLevel() == true) {
           ret = \
             PostLeafMergeNode(left_snapshot_p,
                               &merge_key,
@@ -7046,7 +7206,7 @@ before_switch:
     // If depth does not exceed threshold then we check recommendation flag
     int depth = node_p->GetDepth();
 
-    if(snapshot_p->IsLeaf() == true) {
+    if(snapshot_p->IsLeafLevel() == true) {
       if(depth < LEAF_DELTA_CHAIN_LENGTH_THRESHOLD) {
         return;
       }
@@ -7092,7 +7252,7 @@ before_switch:
 
     NodeID node_id = snapshot_p->node_id;
 
-    if(snapshot_p->IsLeaf() == true) {
+    if(snapshot_p->IsLeafLevel() == true) {
       const LeafNode *leaf_node_p = \
         static_cast<const LeafNode *>(node_p);
 
@@ -7143,7 +7303,7 @@ before_switch:
         // Note that although split node only stores the new node ID
         // we still need its pointer to compute item_count
         const LeafSplitNode *split_node_p = \
-          LeafInlineAllocateOfType(LeafSplitNode, 
+          LeafInlineAllocateOfType(LeafSplitNode,
                                    node_p, 
                                    std::make_pair(split_key, new_node_id),
                                    node_p,
@@ -7161,6 +7321,8 @@ before_switch:
                      node_id,
                      new_node_id);
 
+          INC_COUNTER(LEAF_SPLIT, 1);
+          
           // TODO: WE ABORT HERE TO AVOID THIS THREAD POSTING ANYTHING
           // ON TOP OF IT WITHOUT HELPING ALONG AND ALSO BLOCKING OTHER
           // THREAD TO HELP ALONG
@@ -7320,6 +7482,7 @@ before_switch:
           bwt_printf("Inner split delta (from %lu to %lu) CAS succeeds."
                      " ABORT\n", node_id, new_node_id);
 
+          INC_COUNTER(INNER_SPLIT, 1);
           // Same reason as in leaf node
           context_p->abort_flag = true;
 
@@ -7947,6 +8110,7 @@ before_switch:
     if(ret == false) {
       merge_node_p->~InnerMergeNode();
     } else {
+      INC_COUNTER(INNER_MERGE, 1);
       *node_p_p = merge_node_p;
     }
 
@@ -7985,6 +8149,7 @@ before_switch:
     if(ret == false) {
       merge_node_p->~LeafMergeNode();
     } else {
+      INC_COUNTER(LEAF_MERGE, 1);
       *node_p_p = merge_node_p;
     }
 
@@ -8000,9 +8165,8 @@ before_switch:
   bool Insert(const KeyType &key, const ValueType &value) {
     bwt_printf("Insert called\n");
 
-    #ifdef BWTREE_DEBUG
-    insert_op_count.fetch_add(1);
-    #endif
+    // If staitics is turned on this will increament INSERT counter
+    INC_COUNTER(INSERT, 1);
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -8049,26 +8213,9 @@ before_switch:
       } else {
         bwt_printf("Leaf insert delta CAS failed\n");
 
-        #ifdef BWTREE_DEBUG
-
-        context.abort_counter++;
-        
-        #endif
-
+        INC_COUNTER(MODIFY_ABORT, 1);
         insert_node_p->~LeafInsertNode();
       }
-
-      #ifdef BWTREE_DEBUG
-      
-      // Update abort counter
-      // NOTE 1: We could not do this before return since the context
-      // object is cleared at the end of loop
-      // NOTE 2: Since Traverse() might abort due to other CAS failures
-      // context.abort_counter might be larger than 1 when
-      // LeafInsertNode installation fails
-      insert_abort_count.fetch_add(context.abort_counter);
-      
-      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf insert delta from the root\n");
@@ -8090,6 +8237,8 @@ before_switch:
 #endif
               const ValueType &new_value) {
     bwt_printf("Upsert called\n");
+
+    INC_COUNTER(UPSERT, 1);
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
     bool new_key;
@@ -8136,6 +8285,7 @@ before_switch:
           break;
         } else {
           update_node_p->~LeafUpdateNode();
+          INC_COUNTER(MODIFY_ABORT, 1);
         }
       } else {
         new_key = true; 
@@ -8155,6 +8305,7 @@ before_switch:
           break;
         } else {
           insert_node_p->~LeafInsertNode();
+          INC_COUNTER(MODIFY_ABORT, 1);
         }
       }
     }
@@ -8288,9 +8439,7 @@ before_switch:
   bool Delete(const KeyType &key, const ValueType &value) {
     bwt_printf("Delete called\n");
 
-    #ifdef BWTREE_DEBUG
-    delete_op_count.fetch_add(1);
-    #endif
+    INC_COUNTER(DELETE, 1);
 
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
@@ -8337,21 +8486,10 @@ before_switch:
         break;
       } else {
         bwt_printf("Leaf Delete delta CAS failed\n");
-
-        delete_node_p->~LeafDeleteNode();
-
-        #ifdef BWTREE_DEBUG
-
-        context.abort_counter++;
         
-        #endif
+        delete_node_p->~LeafDeleteNode();
+        INC_COUNTER(MODIFY_ABORT, 1);
       }
-
-      #ifdef BWTREE_DEBUG
-
-      delete_abort_count.fetch_add(context.abort_counter);
-      
-      #endif
 
       // We reach here only because CAS failed
       bwt_printf("Retry installing leaf delete delta from the root\n");
@@ -8375,10 +8513,11 @@ before_switch:
                 std::vector<ValueType> &value_list) {
     bwt_printf("GetValue()\n");
 
+    INC_COUNTER(READ, 1);
+
     EpochNode *epoch_node_p = epoch_manager.JoinEpoch();
 
     Context context{search_key};
-
     TraverseReadOptimized(&context, &value_list);
 
     epoch_manager.LeaveEpoch(epoch_node_p);
@@ -8933,7 +9072,7 @@ try_join_again:
      */
     void FreeEpochDeltaChain(const BaseNode *node_p) {
       const BaseNode *next_node_p = node_p;
-
+      
       while(1) {
         node_p = next_node_p;
         assert(node_p != nullptr);
@@ -10138,6 +10277,8 @@ try_join_again:
    * do not have to worry about thread identity issues
    */
   void AddGarbageNode(const BaseNode *node_p) {
+    INC_COUNTER(ADD_TO_GC, 1);
+
     GarbageNode *garbage_node_p = \
       new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
     assert(garbage_node_p != nullptr);
@@ -10174,6 +10315,8 @@ try_join_again:
    * GetCurrentGCMetaData()
    */
   void PerformGC(int thread_id) {
+    INC_COUNTER(SCAN_GC_CHAIN, 1);
+
     // First of all get the minimum epoch of all active threads
     // This is the upper bound for deleted epoch in garbage node
     uint64_t min_epoch = SummarizeGCEpoch();
