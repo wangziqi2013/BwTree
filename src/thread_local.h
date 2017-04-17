@@ -60,7 +60,7 @@ class GarbageNode {
 class GarbageGroup {
  public:
   // There are 1024 slots in each garbage group before it is full
-  static constexpr GROUP_SIZE = 1024;
+  static constexpr int GROUP_SIZE = 1024;
   
   // Number of nodes in this object
   // We use this as a next index into the array
@@ -134,7 +134,7 @@ class GarbageGroup {
   inline EpochType GetLatestDeleteEpoch() const {
     // Empty group does not have defined epoch and we do not
     // allow empty garbage group
-    asserr(IsEmpty() == false);
+    assert(IsEmpty() == false);
     assert(node_count > 0 && node_count <= GROUP_SIZE);
     
     // Use the last garbage node
@@ -172,7 +172,7 @@ class ThreadLocalBlock {
 #ifndef CACHE_LINE_SIZE
   // This will define only within this class. Later included
   // files could redefine this without a name clash
-  static constexpr CACHE_LINE_SIZE = 64;
+  static constexpr size_t CACHE_LINE_SIZE = 64UL;
 #endif
 
   // Note sure whether this works or not
@@ -184,7 +184,8 @@ class ThreadLocalBlock {
    *         objects
    */
   static ThreadLocalBlock *Get() {
-
+    // TODO: Finish this
+    return nullptr;
   }
 
 
