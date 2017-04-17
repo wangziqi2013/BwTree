@@ -10,6 +10,9 @@ namespace bwtree {
 
 // This is the type we use for epoch counter
 using EpochType = uint64_t;
+// Use the maximum uint64_t value to indicate that a thread do not care
+// GC and its presence should not be considered for the GC process
+static constexpr EpochType EPOCH_DO_NOT_CARE = static_cast<EpochType>(-1UL);
 
 /*
  * class GarbageNode - Representation of garbages
@@ -122,6 +125,7 @@ class GarbageGroup {
     return;
   }
   
+  
   /*
    * GetLatestDeleteEpoch() - Returns the delete epoch of the last node
    *
@@ -141,18 +145,47 @@ class GarbageGroup {
 
 
 /*
- * class BwTreeThreadLocal - The thread local class that holds per-thread
- *                           data
+ * class ThreadLocalBlock - The thread local class that holds per-thread
+ *                          data
  */
-class BwTreeThreadLocal {
-// Since this is a common macro (e.g. Masstree defines it as a macro)
-// we first check whether it is already available
+class ThreadLocalBlock {
+ public:
+  // This is initialized to nullptr, and is used to traverse all
+  // ThreadLocalBlock instances
+  // We make use of this
+  static ThreadLocalBlock *tlb_head_p;
+  
+  // This is also set to nullptr on creation of the
+  // TLB instance
+  GarbageGroup *gg_head_p;
+  // We also need this in order to hook a GG object in contant time
+  GarbageGroup *gg_tail_p;
+  
+  // This is the thread local epoch. We use the following rule
+  // to update it:
+  //   1. On begin of an operation we update it to global epoch
+  //   2. On end of an operation we update it to EPOCH_DO_NOT_CARE
+  EpochType current_epoch;
+
+  // Since this is a common macro (e.g. Masstree defines it as a macro)
+  // we first check whether it is already available
 #ifndef CACHE_LINE_SIZE
   // This will define only within this class. Later included
   // files could redefine this without a name clash
   static constexpr CACHE_LINE_SIZE = 64;
 #endif
- public:
+
+  // Note sure whether this works or not
+  //static constexpr TLB_CACHE_LINE_COUNT = sizeof(ThreadLocalBlock);
+
+  /*
+   * Get() - Returns a newly created thread local block instance and chain
+   *         it into a linked list which is used to access all thread local
+   *         objects
+   */
+  static ThreadLocalBlock *Get() {
+
+  }
 
 
 };
