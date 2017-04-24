@@ -2239,6 +2239,59 @@ class BwTree : public BwTreeBase {
       
       return;
     }
+
+    /*
+     * GetStatistics() - This function returns the allocation statistics
+     *
+     * We traverse the linked list of allocation meta objects using the 
+     * next atomic pointer, and use the number of elements multiplied
+     * by the chunk size (which is a constant) to compute the total
+     * allocation size; For used sizes since all previous chunks must
+     * have been exhausted so we only need to compute the last chunk
+     *
+     * Note that if this function is called in multithreaded environment
+     * then the result is undefined because as it scans the linked list
+     * there might be another thread coming and adds another element
+     * to the end of the linked list
+     *
+     * The caller should set all arguments to 0 prior to calling this function.
+     * This function will only accumulate values onto the original value.
+     */
+    void GetStatistics(size_t *total_size_p, size_t *used_size_p) const {
+      const AM *alloc_meta_p = this;
+      while(alloc_meta_p != nullptr) {
+        // If the next is nullptr then the current one 
+        // may not be fully utilized
+        const AM *next_meta_p = alloc_meta_p->next.load();
+
+        // This is always added as long as we process a 
+        // new meta object
+        (*total_size_p) += chunk_size;
+
+        // If the next meta is present then the current meta
+        // must also be fully utilized
+        // Otherwise need to compute the difference between
+        // tail and limit
+        if(next_meta_p != nullptr) {
+          (*used_size_p) += chunk_size;
+        } else {
+          // Must only load once otherwise this might be 
+          const char *tail_p_temp = alloc_meta_p->tail.load();
+
+          if(tail_p_temp < alloc_meta_p->limit) {
+            (*used_size_p) += chunk_size;
+          } else {
+            (*used_size_p) += (tail_p_temp - alloc_meta_p->limit);
+          }
+        }
+
+        // Start processing the next meta object or break
+        // depening on its value
+        alloc_meta_p = next_meta_p;
+      }
+
+      return;
+    }
   };
   
   /*
@@ -2452,6 +2505,32 @@ class BwTree : public BwTreeBase {
       assert(p != nullptr);
       
       return p;
+    }
+
+    /*
+     * GetAllocationStatistics() - Gets the allocation statistics of the
+     *                             preallocated space
+     *
+     * This function is simply a wrapper over the allocation meta
+     * object's method. It requires a low key of the current ealstic node
+     * in order to locate the node header and then the allocation header.
+     *
+     * Note that this function has two versions, one for leaf delta chain
+     * and another for inner delta chain, via template instantiation. Please
+     * use the correct version otherwise the allocation meta's address will
+     * be wrong.
+     */
+    static void GetAllocationStatistics(const KeyNodeIDPair *low_key_p,
+                                        size_t *alloc_size_p, 
+                                        size_t *used_size_p) {
+      // This is copied and pasted from InlineAllocate()
+      const EN *node_p = EN::GetNodeHeader(low_key_p);
+      AM *meta_p = EN::GetAllocationHeader(node_p);
+
+      // This is the statistics of allocation meta
+      meta_p->GetStatistics(alloc_size_p, used_size_p);
+
+      return;
     }
   };
   
@@ -3494,7 +3573,11 @@ class BwTree : public BwTreeBase {
                                    int *inner_node_total,
                                    int *leaf_node_total,
                                    int *inner_size_total,
-                                   int *leaf_size_total) {
+                                   int *leaf_size_total,
+                                   size_t *inner_alloc_total,
+                                   size_t *inner_used_total,
+                                   size_t *leaf_alloc_total,
+                                   size_t *leaf_used_total) {
     const BaseNode *node_p = GetNode(node_id);
     NodeType type = node_p->GetType();
     NodeSnapshot snapshot{node_id, node_p};
@@ -3512,6 +3595,10 @@ class BwTree : public BwTreeBase {
       }
       
       (*leaf_depth_total) += node_p->GetDepth();
+      LeafNode::GetAllocationStatistics(&node_p->GetLowKeyPair(), 
+                                        leaf_alloc_total,
+                                        leaf_used_total); 
+      
       
       LeafNode *leaf_node_p = CollectAllValuesOnLeaf(&snapshot);
       mapping_table[node_id].store(leaf_node_p);
@@ -3537,6 +3624,10 @@ class BwTree : public BwTreeBase {
       } else {
         (*inner_depth_total) += node_p->GetDepth();
       }
+
+      InnerNode::GetAllocationStatistics(&node_p->GetLowKeyPair(), 
+                                         inner_alloc_total,
+                                         inner_used_total);
       
       InnerNode *inner_node_p = CollectAllSepsOnInner(&snapshot);
       mapping_table[node_id].store(inner_node_p);
@@ -3557,7 +3648,11 @@ class BwTree : public BwTreeBase {
                                             inner_node_total,
                                             leaf_node_total,
                                             inner_size_total,
-                                            leaf_size_total);
+                                            leaf_size_total,
+                                            inner_alloc_total,
+                                            inner_used_total,
+                                            leaf_alloc_total,
+                                            leaf_used_total);
       }
     }
     
