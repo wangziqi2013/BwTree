@@ -9206,7 +9206,11 @@ try_join_again:
           case NodeType::LeafInsertType:
             next_node_p = ((LeafInsertNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((LeafInsertNode *)node_p)->~LeafInsertNode();
+#else
+            delete (LeafInsertNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9215,7 +9219,11 @@ try_join_again:
           case NodeType::LeafDeleteType:
             next_node_p = ((LeafDeleteNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((LeafDeleteNode *)node_p)->~LeafDeleteNode();
+#else
+            delete (LeafDeleteNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9225,7 +9233,11 @@ try_join_again:
           case NodeType::LeafUpdateType:
             next_node_p = ((LeafUpdateNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((LeafUpdateNode *)node_p)->~LeafUpdateNode();
+#else
+            delete (LeafUpdateNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9235,7 +9247,11 @@ try_join_again:
           case NodeType::LeafSplitType:
             next_node_p = ((LeafSplitNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((LeafSplitNode *)node_p)->~LeafSplitNode();
+#else
+            delete (LeafSplitNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9246,7 +9262,11 @@ try_join_again:
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((LeafMergeNode *)node_p)->right_merge_p);
 
+#ifdef BWTREE_PREALLOCATION
             ((LeafMergeNode *)node_p)->~LeafMergeNode();
+#else
+            delete (LeafMergeNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9282,7 +9302,11 @@ try_join_again:
           case NodeType::InnerInsertType:
             next_node_p = ((InnerInsertNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((InnerInsertNode *)node_p)->~InnerInsertNode();
+#else
+            delete (InnerInsertNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9292,7 +9316,11 @@ try_join_again:
           case NodeType::InnerDeleteType:
             next_node_p = ((InnerDeleteNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((InnerDeleteNode *)node_p)->~InnerDeleteNode();
+#else
+            delete (InnerDeleteNode *)node_p;
+#endif            
             
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9302,7 +9330,11 @@ try_join_again:
           case NodeType::InnerSplitType:
             next_node_p = ((InnerSplitNode *)node_p)->child_node_p;
 
+#ifdef BWTREE_PREALLOCATION
             ((InnerSplitNode *)node_p)->~InnerSplitNode();
+#else
+            delete (InnerSplitNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
@@ -9313,7 +9345,11 @@ try_join_again:
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->child_node_p);
             FreeEpochDeltaChain(((InnerMergeNode *)node_p)->right_merge_p);
 
+#ifdef BWTREE_PREALLOCATION
             ((InnerMergeNode *)node_p)->~InnerMergeNode();
+#else
+            delete (InnerMergeNode *)node_p;
+#endif
 
             #ifdef BWTREE_DEBUG
             freed_count++;
