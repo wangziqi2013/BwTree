@@ -2548,7 +2548,11 @@ class BwTree : public BwTreeBase {
       return;
     }
   };
-  
+
+  // If preallocation is enabled then the preallocated storage is of size
+  // threshold * union size  
+  // Otherwise preallocate 0 bytes
+#ifdef BWTREE_PREALLOCATION
   // This is the base type of inner nodes
   using InnerBaseType = ElasticNode<INNER_DELTA_CHAIN_LENGTH_THRESHOLD *
                                       sizeof(InnerDeltaNodeUnion),
@@ -2557,6 +2561,15 @@ class BwTree : public BwTreeBase {
   using LeafBaseType = ElasticNode<LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * 
                                      sizeof(LeafDeltaNodeUnion),
                                    char[0]>;
+#else
+  // This is the base type of inner nodes
+  using InnerBaseType = ElasticNode<0UL,
+                                    NodeID *>;
+  // This is the base type of leaf nodes
+  using LeafBaseType = ElasticNode<0UL,
+                                   char[0]>;
+#endif
+
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
    *
