@@ -213,6 +213,10 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 #define INC_COUNTER(name, value) do {} while(false);
 #endif
 
+// This determines whether bwtree will use preallocation
+#define BWTREE_PREALLOCATION
+
+
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
  *                               initialize it using placement new and then 
@@ -220,11 +224,17 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  *
  * This is used for InnerNode delta chains
  */
+
+#ifdef BWTREE_PREALLOCATION
 #define InnerInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
                                                      new(InnerNode::InlineAllocate( \
                                                          &node_p->GetLowKeyPair(), \
                                                          sizeof(T)) \
                                                      ) T{ __VA_ARGS__ } ))
+#else
+// If preallocation is not enabled this is simply an operator new
+#define InnerInlineAllocateOfType(T, node_p, ...) (new T{ __VA_ARGS__ })
+#endif
                                                      
 /*
  * LeafInlineAllocateOfType() - allocates a chunk of memory from base node and
@@ -233,11 +243,16 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
  *
  * This is used for LeafNode delta chains
  */
+#ifdef BWTREE_PREALLOCATION
 #define LeafInlineAllocateOfType(T, node_p, ...) (static_cast<T *>( \
                                                     new(LeafNode::InlineAllocate( \
                                                         &node_p->GetLowKeyPair(), \
                                                         sizeof(T)) \
                                                     ) T{__VA_ARGS__} ))
+#else
+// If preallocation is not enabled this is simply an operator new
+#define LeafInlineAllocateOfType(T, node_p, ...) (new T{ __VA_ARGS__ })
+#endif
 
 /*
  * class BwTreeBase - Base class of BwTree that stores some common members
