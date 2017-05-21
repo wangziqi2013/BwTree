@@ -216,6 +216,8 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 // This determines whether bwtree will use preallocation
 #define BWTREE_PREALLOCATION
 
+#define BWTREE_SEARCH_SHORTCUT
+
 
 /*
  * InnerInlineAllocateOfType() - allocates a chunk of memory from base node and
@@ -4305,10 +4307,13 @@ abort_traverse:
 
               return insert_item.second;
             }
-            
+#ifdef BWTREE_SEARCH_SHORTCUT
             start_index = std::max(start_index, insert_node_p->location);
+#endif
           } else {
+#ifdef BWTREE_SEARCH_SHORTCUT
             end_index = std::min(end_index, insert_node_p->location);
+#endif
           }
           
           break;
@@ -4343,7 +4348,8 @@ abort_traverse:
               return prev_item.second;
             }
           }
-          
+
+#ifdef BWTREE_SEARCH_SHORTCUT
           // Use the deleted key to do a divide - all keys less than
           // it is on the left of the index recorded in this InnerInsertNode
           // Otherwise it is to the right of it
@@ -4352,6 +4358,7 @@ abort_traverse:
           } else {
             end_index = std::min(delete_node_p->location, end_index);
           } 
+#endif
 
           break;
         } // InnerDeleteType
@@ -5072,9 +5079,13 @@ abort_traverse:
               return; 
 #endif
           } else if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
+#ifdef BWTREE_SEARCH_SHORTCUT
             start_index = insert_node_p->GetIndexPair().first;
+#endif
           } else {
+#ifdef BWTREE_SEARCH_SHORTCUT
             end_index = insert_node_p->GetIndexPair().first;
+#endif
           }
 
           node_p = insert_node_p->child_node_p;
@@ -5101,9 +5112,13 @@ abort_traverse:
             return;
 #endif
           } else if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
+#ifdef BWTREE_SEARCH_SHORTCUT
             start_index = delete_node_p->GetIndexPair().first;
+#endif
           } else {
+#ifdef BWTREE_SEARCH_SHORTCUT
             end_index = delete_node_p->GetIndexPair().first;
+#endif
           }
           
           node_p = delete_node_p->child_node_p;
@@ -5139,9 +5154,13 @@ abort_traverse:
             return;
 #endif
           } else if(KeyCmpGreater(search_key, update_node_p->item.first)) {
+#ifdef BWTREE_SEARCH_SHORTCUT
             start_index = update_node_p->GetIndexPair().first;
+#endif
           } else {
+#ifdef BWTREE_SEARCH_SHORTCUT
             end_index = update_node_p->GetIndexPair().first;
+#endif
           }
 
           node_p = update_node_p->child_node_p;
@@ -5170,6 +5189,11 @@ abort_traverse:
 
             node_p = merge_node_p->child_node_p;
           }
+
+          // Since we changed base node now we need to 
+          // readjust the range
+          start_index = 0;
+          end_index = -1;
 
           break;
         } // case LeafMergeType
@@ -5253,6 +5277,9 @@ abort_traverse:
     // Save some typing
     const KeyType &search_key = context_p->search_key;
 
+    int start_index = 0;
+    int end_index = -1;
+
     while(1) {
       NodeType type = node_p->GetType();
 
@@ -5261,12 +5288,17 @@ abort_traverse:
           const LeafNode *leaf_node_p = \
             static_cast<const LeafNode *>(node_p);
 
+          auto start_it = leaf_node_p->Begin() + start_index;
+          auto end_it = (end_index == -1) ? \
+                        leaf_node_p->End() : \
+                        leaf_node_p->Begin() + end_index;
+
           // Here we know the search key < high key of current node
           // NOTE: We only compare keys here, so it will get to the first
           // element >= search key
           auto scan_start_it = \
-            std::lower_bound(leaf_node_p->Begin(),
-                             leaf_node_p->End(),
+            std::lower_bound(start_it,
+                             end_it,
                              std::make_pair(search_key, ValueType{}),
                              key_value_pair_cmp_obj);
 
@@ -5345,6 +5377,14 @@ abort_traverse:
           }
 #endif
 
+#ifdef BWTREE_SEARCH_SHORTCUT
+          if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
+            start_index = insert_node_p->GetIndexPair().first;
+          } else {
+            end_index = insert_node_p->GetIndexPair().second;
+          }
+#endif
+
           node_p = insert_node_p->child_node_p;
 
           break;
@@ -5372,6 +5412,14 @@ abort_traverse:
             *index_pair_p = delete_node_p->GetIndexPair();
             
             return nullptr;
+          }
+#endif
+
+#ifdef BWTREE_SEARCH_SHORTCUT
+          if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
+            start_index = delete_node_p->GetIndexPair().first;
+          } else {
+            end_index = delete_node_p->GetIndexPair().second;
           }
 #endif
 
@@ -5404,6 +5452,14 @@ abort_traverse:
             *index_pair_p = update_node_p->GetIndexPair();
             // Note that we return the new value item
             return &update_node_p->item;
+          }
+#endif
+
+#ifdef BWTREE_SEARCH_SHORTCUT
+          if(KeyCmpGreater(search_key, update_node_p->item.first)) {
+            start_index = update_node_p->GetIndexPair().first;
+          } else {
+            end_index = update_node_p->GetIndexPair().second;
           }
 #endif
           
