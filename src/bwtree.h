@@ -5381,7 +5381,7 @@ abort_traverse:
           if(KeyCmpGreater(search_key, insert_node_p->item.first)) {
             start_index = insert_node_p->GetIndexPair().first;
           } else {
-            end_index = insert_node_p->GetIndexPair().second;
+            end_index = insert_node_p->GetIndexPair().first;
           }
 #endif
 
@@ -5419,7 +5419,7 @@ abort_traverse:
           if(KeyCmpGreater(search_key, delete_node_p->item.first)) {
             start_index = delete_node_p->GetIndexPair().first;
           } else {
-            end_index = delete_node_p->GetIndexPair().second;
+            end_index = delete_node_p->GetIndexPair().first;
           }
 #endif
 
@@ -5459,7 +5459,7 @@ abort_traverse:
           if(KeyCmpGreater(search_key, update_node_p->item.first)) {
             start_index = update_node_p->GetIndexPair().first;
           } else {
-            end_index = update_node_p->GetIndexPair().second;
+            end_index = update_node_p->GetIndexPair().first;
           }
 #endif
           
@@ -5489,6 +5489,9 @@ abort_traverse:
 
             node_p = merge_node_p->child_node_p;
           }
+
+          start_index = 0;
+          end_index = -1;
 
           break;
         } // case LeafMergeType
