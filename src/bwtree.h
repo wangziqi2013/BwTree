@@ -2572,6 +2572,20 @@ class BwTree : public BwTreeBase {
                                    char[0]>;
 #endif
 
+ public:
+
+#ifdef BWTREE_PREALLOCATION
+  static const size_t INNER_PREALLOCATION_SIZE = \
+    INNER_DELTA_CHAIN_LENGTH_THRESHOLD * sizeof(InnerDeltaNodeUnion);
+  static const size_t LEAF_PREALLOCATION_SIZE = \
+    LEAF_DELTA_CHAIN_LENGTH_THRESHOLD * sizeof(LeafDeltaNodeUnion);
+#else
+  static const size_t INNER_PREALLOCATION_SIZE = 0UL;
+  static const size_t LEAF_PREALLOCATION_SIZE = 0UL;
+#endif
+
+ private:
+
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
    *
