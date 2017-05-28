@@ -216,7 +216,11 @@ static constexpr int PREALLOCATE_THREAD_NUM = 1024;
 // This determines whether bwtree will use preallocation
 #define BWTREE_PREALLOCATION
 
+// This determines whether search shortcut is enabled
 #define BWTREE_SEARCH_SHORTCUT
+
+// This determines whether leaf fast consolidation will be used
+//#define BWTREE_LEAF_FAST_CONSOLIDATION
 
 
 /*
@@ -2584,7 +2588,7 @@ class BwTree : public BwTreeBase {
   static const size_t LEAF_PREALLOCATION_SIZE = 0UL;
 #endif
 
- private:
+ public:
 
   /*
    * class InnerNode - Inner node that holds keys and NodeID arrays
@@ -2901,6 +2905,8 @@ class BwTree : public BwTreeBase {
       return inner_node_p;
     }
   };
+
+ public: 
   
   /*
    * class LeafNode - Leaf node that holds data
@@ -5738,6 +5744,8 @@ abort_traverse:
   
 #endif
 
+#ifdef BWTREE_LEAF_FAST_CONSOLIDATION
+
   /*
    * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
    *                            leaf node
@@ -6123,6 +6131,233 @@ abort_traverse:
 
     return;
   }
+
+#else // Leaf fast consolidation
+
+  /*
+   * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
+   *                            leaf node
+   *
+   * This function is the non-recursive wrapper of the resursive core function.
+   * It calls the recursive version to collect all base leaf nodes, and then
+   * it replays delta records on top of them.
+   */
+  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
+    assert(snapshot_p->IsLeaf() == true);
+
+    const BaseNode *node_p = snapshot_p->node_p;
+
+    // This is the number of delta records inside the logical node
+    // including merged delta chains
+    int delta_change_num = node_p->GetDepth();
+
+    // We only need to keep those on the delta chian into a set
+    // and those in the data list of leaf page do not need to be
+    // put in the set
+    const KeyValuePair *present_set_data_p[delta_change_num];
+    const KeyValuePair *deleted_set_data_p[delta_change_num];
+
+    LeafNode *leaf_node_p = new LeafNode{node_p->GetHighKeyPair(),
+                                         // The item count of the consolidated
+                                         // leaf node is the set of items still
+                                         // present in the node
+                                         node_p->GetItemCount()};
+
+    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
+
+    // Reserve that much space for items to avoid allocation in the future
+    // Since the iterator from unordered_set is not a RamdomAccessIterator
+    // std::vector could not decide the size from these two iterators
+    data_list_p->reserve(node_p->GetItemCount());
+
+    // These two are used to replay the log
+    // NOTE: We use the threshold for splitting leaf node
+    // as the number of bucket
+    KeyValuePairBloomFilter present_set{present_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+    KeyValuePairBloomFilter deleted_set{deleted_set_data_p,
+                                        key_value_pair_eq_obj,
+                                        key_value_pair_hash_obj};
+
+    // We collect all valid values in present_set
+    // and deleted_set is just for bookkeeping
+    CollectAllValuesOnLeafRecursive(node_p,
+                                    node_p,
+                                    present_set,
+                                    deleted_set,
+                                    leaf_node_p);
+
+    // Item count would not change during consolidation
+    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
+           node_p->GetItemCount());
+
+    // This is the key value pair comparator object
+    auto key_value_pair_cmp_obj = \
+      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
+        return this->key_cmp_obj(kvp1.first, kvp2.first);
+      };
+
+    // Sort using only key value
+    // All items with the same key are grouped together, and their
+    // orderes are not defined (we do not use unstable sort)
+    std::sort(data_list_p->begin(),
+              data_list_p->end(),
+              key_value_pair_cmp_obj);
+
+    return leaf_node_p;
+  }
+
+  /*
+   * CollectAllValuesOnLeafRecursive() - Collect all values given a
+   *                                     pointer recursively
+   *
+   * It does not need NodeID to collect values since only read-only
+   * routine calls this one, so no validation is ever needed even in
+   * its caller.
+   *
+   * This function only travels using physical pointer, which implies
+   * that it does not deal with LeafSplitNode and LeafRemoveNode
+   * For LeafSplitNode it only collects value on child node
+   * For LeafRemoveNode it fails assertion
+   * If LeafRemoveNode is not the topmost node it also fails assertion
+   *
+   * NOTE: This function calls itself to collect values in a merge node
+   * since logically speaking merge node consists of two delta chains
+   * DO NOT CALL THIS DIRECTLY - Always use the wrapper (the one without
+   * "Recursive" suffix)
+   */
+  void
+  CollectAllValuesOnLeafRecursive(const BaseNode *node_p,
+                                  const BaseNode *top_node_p,
+                                  KeyValuePairBloomFilter &present_set,
+                                  KeyValuePairBloomFilter &deleted_set,
+                                  LeafNode *new_leaf_node_p) const {
+    // The top node is used to derive high key
+    // NOTE: Low key for Leaf node and its delta chain is nullptr
+    const KeyNodeIDPair &high_key_pair = top_node_p->GetHighKeyPair();
+
+    while(1) {
+      NodeType type = node_p->GetType();
+
+      switch(type) {
+        // When we see a leaf node, just copy all keys together with
+        // all values into the value set
+        case NodeType::LeafType: {
+          const LeafNode *leaf_node_p = \
+            static_cast<const LeafNode *>(node_p);
+
+          // We compute end iterator based on the high key
+          typename std::vector<KeyValuePair>::const_iterator copy_end_it{};
+
+          // If the high key is +Inf then all items could be copied
+          if((high_key_pair.second == INVALID_NODE_ID)) {
+            copy_end_it = leaf_node_p->data_list.end();
+          } else {
+            // This points copy_end_it to the first element >= current high key
+            // If no such element exists then copy_end_it is end() iterator
+            // which is also consistent behavior
+            copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
+                                           leaf_node_p->data_list.end(),
+                                           // It only compares key so we
+                                           // just use high key pair
+                                           std::make_pair(high_key_pair.first, ValueType{}),
+                                           [this](const KeyValuePair &kvp1,
+                                                  const KeyValuePair &kvp2) {
+                                             return this->key_cmp_obj(kvp1.first, kvp2.first);
+                                           });
+          }
+
+          // If data list is empty then copy_end_it == begin() iterator
+          // And this happens if the leaf page was initially empty
+          // (i.e. the first leaf page created by constructor)
+          //assert(copy_end_it != leaf_node_p->data_list.begin());
+
+          for(auto it = leaf_node_p->data_list.begin();
+              it != copy_end_it;
+              it++) {
+            if(deleted_set.Exists(*it) == false) {
+              if(present_set.Exists(*it) == false) {
+                new_leaf_node_p->data_list.push_back(*it);
+              }
+            }
+          }
+
+          return;
+        } // case LeafType
+        case NodeType::LeafInsertType: {
+          const LeafInsertNode *insert_node_p = \
+            static_cast<const LeafInsertNode *>(node_p);
+
+          if(deleted_set.Exists(insert_node_p->insert_item) == false) {
+            if(present_set.Exists(insert_node_p->insert_item) == false) {
+              present_set.Insert(insert_node_p->insert_item);
+
+              new_leaf_node_p->data_list.push_back(insert_node_p->insert_item);
+            }
+          }
+
+          node_p = insert_node_p->child_node_p;
+
+          break;
+        } // case LeafInsertType
+        case NodeType::LeafDeleteType: {
+          const LeafDeleteNode *delete_node_p = \
+            static_cast<const LeafDeleteNode *>(node_p);
+
+          if(present_set.Exists(delete_node_p->delete_item) == false) {
+            deleted_set.Insert(delete_node_p->delete_item);
+          }
+
+          node_p = delete_node_p->child_node_p;
+
+          break;
+        } // case LeafDeleteType
+        case NodeType::LeafRemoveType: {
+          bwt_printf("ERROR: LeafRemoveNode not allowed\n");
+
+          assert(false);
+        } // case LeafRemoveType
+        case NodeType::LeafSplitType: {
+          const LeafSplitNode *split_node_p = \
+            static_cast<const LeafSplitNode *>(node_p);
+
+          node_p = split_node_p->child_node_p;
+
+          break;
+        } // case LeafSplitType
+        case NodeType::LeafMergeType: {
+          const LeafMergeNode *merge_node_p = \
+            static_cast<const LeafMergeNode *>(node_p);
+
+          /**** RECURSIVE CALL ON LEFT AND RIGHT SUB-TREE ****/
+          CollectAllValuesOnLeafRecursive(merge_node_p->child_node_p,
+                                          top_node_p,
+                                          present_set,
+                                          deleted_set,
+                                          new_leaf_node_p);
+
+          CollectAllValuesOnLeafRecursive(merge_node_p->right_merge_p,
+                                          top_node_p,
+                                          present_set,
+                                          deleted_set,
+                                          new_leaf_node_p);
+
+          return;
+        } // case LeafMergeType
+        default: {
+          bwt_printf("ERROR: Unknown node type: %d\n",
+                     static_cast<int>(type));
+
+          assert(false);
+        } // default
+      } // switch
+    } // while(1)
+
+    return;
+}
+
+#endif // Leaf fast consolidation
 
   ///////////////////////////////////////////////////////////////////
   // Control Core
