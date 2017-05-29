@@ -6132,7 +6132,7 @@ abort_traverse:
     return;
   }
 
-#else // Leaf fast consolidation
+#else // If leaf fast consolidation is not enabled
 
   /*
    * CollectAllValuesOnLeaf() - Consolidate delta chain for a single logical
@@ -6142,13 +6142,29 @@ abort_traverse:
    * It calls the recursive version to collect all base leaf nodes, and then
    * it replays delta records on top of them.
    */
-  inline LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p) {
-    assert(snapshot_p->IsLeaf() == true);
+  LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p,
+                                   LeafNode *leaf_node_p=nullptr) {
+    assert(snapshot_p->IsLeafLevel() == true);
+
+    INC_COUNTER(LEAF_CONSOLIDATE, 1);
 
     const BaseNode *node_p = snapshot_p->node_p;
+    
+    /////////////////////////////////////////////////////////////////
+    // Prepare new node
+    /////////////////////////////////////////////////////////////////
 
-    // This is the number of delta records inside the logical node
-    // including merged delta chains
+    if(likely(leaf_node_p == nullptr)) {
+      leaf_node_p = \
+        LeafNode::Get(0,
+                      node_p->GetItemCount(),
+                      node_p->GetLowKeyPair(),
+                      node_p->GetHighKeyPair());
+    }
+    
+    assert(leaf_node_p != nullptr);
+
+    // This is the number of delta records
     int delta_change_num = node_p->GetDepth();
 
     // We only need to keep those on the delta chian into a set
@@ -6156,19 +6172,6 @@ abort_traverse:
     // put in the set
     const KeyValuePair *present_set_data_p[delta_change_num];
     const KeyValuePair *deleted_set_data_p[delta_change_num];
-
-    LeafNode *leaf_node_p = new LeafNode{node_p->GetHighKeyPair(),
-                                         // The item count of the consolidated
-                                         // leaf node is the set of items still
-                                         // present in the node
-                                         node_p->GetItemCount()};
-
-    std::vector<KeyValuePair> *data_list_p = &leaf_node_p->data_list;
-
-    // Reserve that much space for items to avoid allocation in the future
-    // Since the iterator from unordered_set is not a RamdomAccessIterator
-    // std::vector could not decide the size from these two iterators
-    data_list_p->reserve(node_p->GetItemCount());
 
     // These two are used to replay the log
     // NOTE: We use the threshold for splitting leaf node
@@ -6189,20 +6192,14 @@ abort_traverse:
                                     leaf_node_p);
 
     // Item count would not change during consolidation
-    assert(static_cast<int>(leaf_node_p->data_list.size()) == \
+    assert(static_cast<int>(leaf_node_p->GetSize()) == \
            node_p->GetItemCount());
-
-    // This is the key value pair comparator object
-    auto key_value_pair_cmp_obj = \
-      [this](const KeyValuePair &kvp1, const KeyValuePair &kvp2) {
-        return this->key_cmp_obj(kvp1.first, kvp2.first);
-      };
 
     // Sort using only key value
     // All items with the same key are grouped together, and their
     // orderes are not defined (we do not use unstable sort)
-    std::sort(data_list_p->begin(),
-              data_list_p->end(),
+    std::sort(leaf_node_p->Begin(),
+              leaf_node_p->End(),
               key_value_pair_cmp_obj);
 
     return leaf_node_p;
@@ -6248,17 +6245,17 @@ abort_traverse:
             static_cast<const LeafNode *>(node_p);
 
           // We compute end iterator based on the high key
-          typename std::vector<KeyValuePair>::const_iterator copy_end_it{};
+          const KeyValuePair *copy_end_it;
 
           // If the high key is +Inf then all items could be copied
           if((high_key_pair.second == INVALID_NODE_ID)) {
-            copy_end_it = leaf_node_p->data_list.end();
+            copy_end_it = leaf_node_p->End();
           } else {
             // This points copy_end_it to the first element >= current high key
             // If no such element exists then copy_end_it is end() iterator
             // which is also consistent behavior
-            copy_end_it = std::lower_bound(leaf_node_p->data_list.begin(),
-                                           leaf_node_p->data_list.end(),
+            copy_end_it = std::lower_bound(leaf_node_p->Begin(),
+                                           leaf_node_p->End(),
                                            // It only compares key so we
                                            // just use high key pair
                                            std::make_pair(high_key_pair.first, ValueType{}),
@@ -6273,12 +6270,12 @@ abort_traverse:
           // (i.e. the first leaf page created by constructor)
           //assert(copy_end_it != leaf_node_p->data_list.begin());
 
-          for(auto it = leaf_node_p->data_list.begin();
+          for(const KeyValuePair *it = leaf_node_p->Begin();
               it != copy_end_it;
               it++) {
             if(deleted_set.Exists(*it) == false) {
               if(present_set.Exists(*it) == false) {
-                new_leaf_node_p->data_list.push_back(*it);
+                new_leaf_node_p->PushBack(*it);
               }
             }
           }
@@ -6289,11 +6286,11 @@ abort_traverse:
           const LeafInsertNode *insert_node_p = \
             static_cast<const LeafInsertNode *>(node_p);
 
-          if(deleted_set.Exists(insert_node_p->insert_item) == false) {
-            if(present_set.Exists(insert_node_p->insert_item) == false) {
-              present_set.Insert(insert_node_p->insert_item);
+          if(deleted_set.Exists(insert_node_p->item) == false) {
+            if(present_set.Exists(insert_node_p->item) == false) {
+              present_set.Insert(insert_node_p->item);
 
-              new_leaf_node_p->data_list.push_back(insert_node_p->insert_item);
+              new_leaf_node_p->PushBack(insert_node_p->item);
             }
           }
 
@@ -6305,8 +6302,8 @@ abort_traverse:
           const LeafDeleteNode *delete_node_p = \
             static_cast<const LeafDeleteNode *>(node_p);
 
-          if(present_set.Exists(delete_node_p->delete_item) == false) {
-            deleted_set.Insert(delete_node_p->delete_item);
+          if(present_set.Exists(delete_node_p->item) == false) {
+            deleted_set.Insert(delete_node_p->item);
           }
 
           node_p = delete_node_p->child_node_p;
