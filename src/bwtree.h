@@ -6310,6 +6310,26 @@ abort_traverse:
 
           break;
         } // case LeafDeleteType
+        case NodeType::LeafUpdateType: {
+          const LeafUpdateNode *update_node_p = \
+            static_cast<const LeafUpdateNode *>(node_p);
+
+          if(deleted_set.Exists(update_node_p->item) == false) {
+            if(present_set.Exists(update_node_p->item) == false) {
+              present_set.Insert(update_node_p->item);
+
+              new_leaf_node_p->PushBack(update_node_p->item);
+            }
+          }
+
+          if(present_set.Exists(update_node_p->old_item) == false) {
+            deleted_set.Insert(update_node_p->old_item);
+          }
+
+          node_p = update_node_p->child_node_p;
+
+          break;
+        } // case LeafUpdateType
         case NodeType::LeafRemoveType: {
           bwt_printf("ERROR: LeafRemoveNode not allowed\n");
 
