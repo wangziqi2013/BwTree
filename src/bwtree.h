@@ -407,6 +407,9 @@ class BwTreeBase {
     
     return;
   }
+  void SetDebugLogging(bool flag) {
+	  print_flag = flag;
+  }
   
  public: 
 
